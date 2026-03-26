@@ -1,0 +1,61 @@
+export const BALANCE = {
+  roomba: {
+    hp: 10,
+    atk: 2,
+    atkSpd: 2,
+    atkRad: 5,
+    spd: 5,
+    inventorySlots: 10,
+    fogRevealRadius: 12,
+  },
+  turret: {
+    hp: 5,
+    atk: 1,
+    atkSpd: 1,
+    atkRad: 5,
+    goodieDropCount: 1,
+  },
+  nodeBonuses: {
+    moveAttack: { atkMultiplier: 1.2 },
+    moveAvoid: { spdMultiplier: 0.9, fleeSpdMultiplier: 1.2, hpMultiplier: 1.1 },
+    moveRush: { spdMultiplier: 1.15, damageTakenMultiplier: 1.1 },
+  },
+  expedition: {
+    prepTimeSeconds: 20,
+    execTimeSeconds: 180,
+    stageCount: 3,
+    maxNodes: 10,
+  },
+  map: {
+    tileSize: 32,
+    turretCountRange: [10, 20] as [number, number],
+    goodieCountRange: [20, 30] as [number, number],
+    spawnCount: 10,
+    exitCountEdge: 12,
+    exitCountInterior: 8,
+  },
+  simulation: {
+    tickRate: 30,
+    tickDuration: 1000 / 30,
+  },
+  risk: {
+    1: { turretCountRange: [2, 5] as [number, number] },
+    2: { turretCountRange: [5, 10] as [number, number] },
+    3: { turretCountRange: [7, 15] as [number, number] },
+    4: { turretCountRange: [10, 20] as [number, number] },
+    5: { turretCountRange: [15, 25] as [number, number] },
+  } as Record<number, { turretCountRange: [number, number] }>,
+  reward: {
+    1: { goodieCountRange: [5, 10] as [number, number] },
+    2: { goodieCountRange: [7, 15] as [number, number] },
+    3: { goodieCountRange: [10, 20] as [number, number] },
+    4: { goodieCountRange: [15, 25] as [number, number] },
+    5: { goodieCountRange: [20, 30] as [number, number] },
+  } as Record<number, { goodieCountRange: [number, number] }>,
+  lobby: {
+    visibleExpeditions: 3,
+    expeditionInterval: 5,
+    countdownDuration: 30,
+    maxPlayersPerExpedition: 4,
+  },
+} as const;

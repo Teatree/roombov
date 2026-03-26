@@ -1,0 +1,24 @@
+{
+  "name": "roombov",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "node --import tsx src/server/index.ts",
+    "preview": "vite preview",
+    "convert-map": "tsx tools/tiled-to-roombov.ts"
+  },
+  "dependencies": {
+    "easystarjs": "^0.4.4",
+    "express": "^5.2.1",
+    "phaser": "^3.80.1",
+    "tsx": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "typescript": "^5.4.5",
+    "vite": "^5.4.19"
+  }
+}
