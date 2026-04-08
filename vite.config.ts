@@ -15,7 +15,13 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
-    port: 3000,
+    port: 5173,
     open: true,
+    proxy: {
+      '/socket.io': {
+        target: 'http://localhost:3000',
+        ws: true,
+      },
+    },
   },
 });

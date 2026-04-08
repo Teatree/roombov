@@ -3,6 +3,7 @@ import { MapRenderer } from '../systems/MapRenderer.ts';
 import { CameraController } from '../systems/CameraController.ts';
 import { FogOfWarRenderer } from '../systems/FogOfWarRenderer.ts';
 import { EntityRenderer } from '../systems/EntityRenderer.ts';
+import { NetworkManager } from '../NetworkManager.ts';
 import { FogOfWarSystem } from '@shared/systems/FogOfWarSystem.ts';
 import { PathfindingSystem } from '@shared/systems/PathfindingSystem.ts';
 import { MovementSystem } from '@shared/systems/MovementSystem.ts';
@@ -16,6 +17,7 @@ import { ExpeditionStore } from '@shared/ExpeditionStore.ts';
 import type { ExpeditionData } from '@shared/types/expedition.ts';
 import type { BehaviorNode } from '@shared/types/nodes.ts';
 import type { RoombaState, TurretState, GoodieState } from '@shared/types/entities.ts';
+import type { PlayerPositions, TurretKilledBroadcast, GoodieCollectedBroadcast, GoodieRejectedMsg, StageResultMsg } from '@shared/types/messages.ts';
 
 export class ExecutionScene extends Phaser.Scene {
   private mapRenderer!: MapRenderer;
@@ -37,6 +39,11 @@ export class ExecutionScene extends Phaser.Scene {
   private ended = false;
   private deathAnimTimer = 0;
   private deathAnimActive = false;
+
+  // Multiplayer
+  private otherPlayers: PlayerPositions = {};
+  private positionBroadcastTimer = 0;
+  private otherPlayerGraphics!: Phaser.GameObjects.Graphics;
 
   // HUD elements
   private timerText!: Phaser.GameObjects.Text;
@@ -203,7 +210,108 @@ export class ExecutionScene extends Phaser.Scene {
 
     this.createHUD();
 
+    // Other player rendering layer
+    this.otherPlayerGraphics = this.add.graphics().setDepth(28);
+    this.otherPlayers = {};
+    this.positionBroadcastTimer = 0;
+
+    // Multiplayer network listeners
+    this.setupNetworkListeners();
+
     this.addLogLine(`Stage ${this.expedition.currentStage} started`);
+  }
+
+  private setupNetworkListeners(): void {
+    if (!NetworkManager.isConnected()) return;
+    const socket = NetworkManager.getSocket();
+    const myId = NetworkManager.getSocketId();
+
+    // Receive other players' positions
+    socket.on('players', (positions: PlayerPositions) => {
+      this.otherPlayers = {};
+      for (const [sid, pos] of Object.entries(positions)) {
+        if (sid !== myId) {
+          this.otherPlayers[sid] = pos;
+        }
+      }
+    });
+
+    // Server says a turret was killed by another player
+    socket.on('turret_killed', (msg: TurretKilledBroadcast) => {
+      if (msg.killedBy === myId) return; // we already handled our own kill
+      const ts = BALANCE.map.tileSize;
+      for (const turret of this.world.turrets) {
+        const tileX = Math.floor(turret.x / ts);
+        const tileY = Math.floor(turret.y / ts);
+        if (`${tileX},${tileY}` === msg.key && turret.alive) {
+          turret.alive = false;
+          turret.deathTimer = 1.5;
+          this.addLogLine('Another player destroyed a turret!');
+        }
+      }
+    });
+
+    // Server says a goodie was collected by another player
+    socket.on('goodie_collected', (msg: GoodieCollectedBroadcast) => {
+      if (msg.collectedBy === myId) return;
+      for (const goodie of this.world.goodies) {
+        const ts = BALANCE.map.tileSize;
+        const tileX = Math.floor(goodie.x / ts);
+        const tileY = Math.floor(goodie.y / ts);
+        if (`${tileX},${tileY}` === msg.key && !goodie.collected) {
+          goodie.collected = true;
+          goodie.collectedBy = msg.collectedBy;
+        }
+      }
+    });
+
+    // Server rejected our goodie pickup (someone else got it first)
+    socket.on('goodie_rejected', (msg: GoodieRejectedMsg) => {
+      // Undo the local collection
+      for (const goodie of this.world.goodies) {
+        const ts = BALANCE.map.tileSize;
+        const tileX = Math.floor(goodie.x / ts);
+        const tileY = Math.floor(goodie.y / ts);
+        if (`${tileX},${tileY}` === msg.key && goodie.collected) {
+          goodie.collected = false;
+          goodie.collectedBy = null;
+          // Remove from roomba inventory
+          const roomba = this.world.roombas[0];
+          if (roomba) {
+            const idx = roomba.inventory.findIndex(g => g.id === goodie.id);
+            if (idx >= 0) roomba.inventory.splice(idx, 1);
+          }
+        }
+      }
+    });
+
+    // Server says stage is over for everyone
+    socket.on('stage_result', (msg: StageResultMsg) => {
+      if (msg.expeditionOver) {
+        ExpeditionStore.clear();
+        this.scene.start('ResultsScene', {
+          totalGoodiesCollected: this.expedition.totalGoodiesCollected,
+          roombasExtracted: this.expedition.roombasExtracted,
+          roombasLost: this.expedition.roombasLost,
+          stagesCompleted: this.expedition.totalStages,
+        });
+      } else if (msg.nextStage) {
+        this.expedition.currentStage = msg.nextStage;
+        ExpeditionStore.set(this.expedition);
+        this.scene.start('PlanningScene');
+      }
+    });
+  }
+
+  shutdown(): void {
+    if (NetworkManager.isConnected()) {
+      const socket = NetworkManager.getSocket();
+      socket.off('players');
+      socket.off('turret_killed');
+      socket.off('goodie_collected');
+      socket.off('goodie_rejected');
+      socket.off('stage_result');
+    }
   }
 
   private createHUD(): void {
@@ -352,13 +460,103 @@ export class ExecutionScene extends Phaser.Scene {
       this.world.projectiles, (tx, ty) => this.fogSystem.isRevealed(tx, ty),
     );
 
+    // Render other players' roombas
+    this.renderOtherPlayers();
+
+    // Broadcast local roomba position to server
+    this.broadcastPosition(delta / 1000);
+
     this.updateHUD();
+
+    // Check for turret kills and goodie pickups to sync with server
+    this.syncKillsAndGoodies();
 
     while (this.world.events.length > 0) {
       const event = this.world.events.shift()!;
       this.processEvent(event);
     }
     this.eventLog.setText(this.logLines.slice(-8).join('\n'));
+  }
+
+  private broadcastPosition(dt: number): void {
+    if (!NetworkManager.isConnected()) return;
+    this.positionBroadcastTimer += dt;
+    if (this.positionBroadcastTimer < 0.1) return; // 100ms interval
+    this.positionBroadcastTimer = 0;
+
+    const roomba = this.world.roombas[0];
+    if (!roomba) return;
+
+    NetworkManager.getSocket().emit('position', {
+      x: roomba.x,
+      y: roomba.y,
+      state: roomba.state,
+      hp: roomba.hp,
+      barrelAngle: roomba.barrelAngle,
+    });
+  }
+
+  private renderOtherPlayers(): void {
+    this.otherPlayerGraphics.clear();
+    const TS = BALANCE.map.tileSize;
+
+    for (const [, pos] of Object.entries(this.otherPlayers)) {
+      const x = pos.x;
+      const y = pos.y;
+      const r = TS / 2.2;
+
+      // Ghost-style other player roomba (semi-transparent, different color)
+      this.otherPlayerGraphics.fillStyle(0x444466, 0.5);
+      this.otherPlayerGraphics.fillCircle(x, y, r);
+      this.otherPlayerGraphics.lineStyle(2, 0x8888aa, 0.6);
+      this.otherPlayerGraphics.strokeCircle(x, y, r);
+
+      // Barrel
+      const bLen = r * 1.1;
+      const bx = x + Math.cos(pos.barrelAngle) * bLen;
+      const by = y + Math.sin(pos.barrelAngle) * bLen;
+      this.otherPlayerGraphics.lineStyle(2, 0x8888aa, 0.5);
+      this.otherPlayerGraphics.lineBetween(x, y, bx, by);
+
+      // HP bar
+      const barW = TS * 0.8;
+      const ratio = Math.max(0, pos.hp / BALANCE.roomba.hp);
+      this.otherPlayerGraphics.fillStyle(0x333333, 0.5);
+      this.otherPlayerGraphics.fillRect(x - barW / 2, y - r - 6, barW, 3);
+      this.otherPlayerGraphics.fillStyle(0x8888cc, 0.7);
+      this.otherPlayerGraphics.fillRect(x - barW / 2, y - r - 6, barW * ratio, 3);
+    }
+  }
+
+  /** Track turret kills and goodie pickups, emit to server */
+  private syncKillsAndGoodies(): void {
+    if (!NetworkManager.isConnected()) return;
+    const ts = BALANCE.map.tileSize;
+    const socket = NetworkManager.getSocket();
+
+    for (const turret of this.world.turrets) {
+      if (!turret.alive && turret.deathTimer > 0) {
+        const tileX = Math.floor(turret.x / ts);
+        const tileY = Math.floor(turret.y / ts);
+        const key = `${tileX},${tileY}`;
+        if (!this.expedition.killedTurrets[key]) {
+          this.expedition.killedTurrets[key] = true;
+          socket.emit('turret_killed', { key });
+        }
+      }
+    }
+
+    for (const goodie of this.world.goodies) {
+      if (goodie.collected && goodie.collectedBy) {
+        const tileX = Math.floor(goodie.x / ts);
+        const tileY = Math.floor(goodie.y / ts);
+        const key = `${tileX},${tileY}`;
+        if (!this.expedition.collectedGoodies[key]) {
+          this.expedition.collectedGoodies[key] = true;
+          socket.emit('goodie_collected', { key });
+        }
+      }
+    }
   }
 
   private updateHUD(): void {
@@ -492,21 +690,34 @@ export class ExecutionScene extends Phaser.Scene {
       }
     }
 
-    const stage = this.expedition.currentStage;
-    const totalStages = this.expedition.totalStages;
+    ExpeditionStore.set(this.expedition);
 
-    if (stage < totalStages) {
-      this.expedition.currentStage++;
-      ExpeditionStore.set(this.expedition);
-      this.scene.start('PlanningScene');
-    } else {
-      ExpeditionStore.clear();
-      this.scene.start('ResultsScene', {
-        totalGoodiesCollected: this.expedition.totalGoodiesCollected,
-        roombasExtracted: this.expedition.roombasExtracted,
-        roombasLost: this.expedition.roombasLost,
-        stagesCompleted: totalStages,
+    // Notify server that this player finished the stage
+    if (NetworkManager.isConnected()) {
+      NetworkManager.getSocket().emit('stage_done', {
+        extracted: roombaExtracted,
+        goodiesCollected: this.expedition.totalGoodiesCollected,
       });
+      // Server will send 'stage_result' to coordinate transition for all players
+      // (handled in setupNetworkListeners)
+    } else {
+      // Offline/single-player fallback: transition immediately
+      const stage = this.expedition.currentStage;
+      const totalStages = this.expedition.totalStages;
+
+      if (stage < totalStages) {
+        this.expedition.currentStage++;
+        ExpeditionStore.set(this.expedition);
+        this.scene.start('PlanningScene');
+      } else {
+        ExpeditionStore.clear();
+        this.scene.start('ResultsScene', {
+          totalGoodiesCollected: this.expedition.totalGoodiesCollected,
+          roombasExtracted: this.expedition.roombasExtracted,
+          roombasLost: this.expedition.roombasLost,
+          stagesCompleted: totalStages,
+        });
+      }
     }
   }
 }

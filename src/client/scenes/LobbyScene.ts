@@ -1,19 +1,25 @@
 import Phaser from 'phaser';
-import { ExpeditionScheduler, generateExpeditionEntities } from '@shared/ExpeditionManager.ts';
+import { NetworkManager } from '../NetworkManager.ts';
+import { generateExpeditionEntities } from '@shared/ExpeditionManager.ts';
 import { ExpeditionStore } from '@shared/ExpeditionStore.ts';
 import { loadMapById } from '@shared/maps/map-loader.ts';
 import { BALANCE } from '@shared/config/balance.ts';
 import type { ExpeditionConfig, ExpeditionListing } from '@shared/types/expedition.ts';
+import type { JoinedMsg, StageResultMsg } from '@shared/types/messages.ts';
 
 const CARD_WIDTH = 260;
 const CARD_HEIGHT = 320;
 const CARD_GAP = 24;
 
 export class LobbyScene extends Phaser.Scene {
-  private scheduler!: ExpeditionScheduler;
+  private listings: ExpeditionListing[] = [];
   private joinedExpeditionId: string | null = null;
+  private joinedConfig: ExpeditionConfig | null = null;
+  private joinedSpawnId = 0;
+  private joinedExitIndices: number[] = [];
   private cardContainers: Phaser.GameObjects.Container[] = [];
   private transitioning = false;
+  private connectionText!: Phaser.GameObjects.Text;
 
   constructor() {
     super({ key: 'LobbyScene' });
@@ -21,14 +27,14 @@ export class LobbyScene extends Phaser.Scene {
 
   create(): void {
     ExpeditionStore.clearAll();
-    this.scheduler = new ExpeditionScheduler();
     this.joinedExpeditionId = null;
+    this.joinedConfig = null;
     this.transitioning = false;
     this.cardContainers = [];
+    this.listings = [];
 
     const { width, height } = this.scale;
 
-    // Title
     this.add.text(width / 2, 40, 'ROOMBOV', {
       fontSize: '48px', color: '#e0e0e0', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5);
@@ -37,54 +43,75 @@ export class LobbyScene extends Phaser.Scene {
       fontSize: '18px', color: '#888888', fontFamily: 'monospace',
     }).setOrigin(0.5);
 
-    // Render initial cards
-    this.rebuildCards();
+    this.connectionText = this.add.text(width / 2, height - 20, 'Connecting...', {
+      fontSize: '12px', color: '#666666', fontFamily: 'monospace',
+    }).setOrigin(0.5);
+
+    // Connect to server
+    const socket = NetworkManager.connect();
+
+    // Receive expedition listings from server
+    socket.on('listings', (listings) => {
+      this.listings = listings;
+      this.rebuildCards();
+    });
+
+    // Server confirmed our join
+    socket.on('joined', (msg: JoinedMsg) => {
+      this.joinedExpeditionId = msg.expeditionId;
+      this.joinedSpawnId = msg.spawnId;
+      this.joinedExitIndices = msg.assignedExitIndices;
+      // Find the config from current listings
+      const listing = this.listings.find(l => l.config.id === msg.expeditionId);
+      if (listing) this.joinedConfig = listing.config;
+      this.rebuildCards();
+    });
+
+    // Server says expedition is starting
+    socket.on('expedition_start', (msg) => {
+      if (this.joinedExpeditionId === msg.configId && this.joinedConfig) {
+        this.launchExpedition(this.joinedConfig);
+      }
+    });
+
+    socket.on('connect', () => {
+      this.connectionText.setText(`Connected: ${socket.id}`);
+      this.connectionText.setColor('#44ff88');
+    });
+
+    socket.on('disconnect', () => {
+      this.connectionText.setText('Disconnected — reconnecting...');
+      this.connectionText.setColor('#ff4444');
+    });
   }
 
-  update(_time: number, _delta: number): void {
-    if (this.transitioning) return;
+  shutdown(): void {
+    // Remove listeners when leaving this scene to avoid duplicates
+    const socket = NetworkManager.getSocket();
+    socket.off('listings');
+    socket.off('joined');
+    socket.off('expedition_start');
+  }
 
-    const started = this.scheduler.tick();
-
-    // Update card contents
-    const listings = this.scheduler.getListings();
-    for (let i = 0; i < this.cardContainers.length && i < listings.length; i++) {
-      this.updateCardContent(this.cardContainers[i], listings[i]);
-    }
-
-    // An expedition started
-    if (started) {
-      if (this.joinedExpeditionId === started.id) {
-        this.launchExpedition(started);
-      } else {
-        // Rebuild cards (the departed one is gone, a new one appeared)
-        this.rebuildCards();
-      }
-    }
-
-    // Check if joined expedition timer ran out (backup check)
-    if (this.joinedExpeditionId) {
-      const joined = listings.find(l => l.config.id === this.joinedExpeditionId);
-      if (joined && joined.countdown <= 0) {
-        this.launchExpedition(joined.config);
-      }
-    }
+  update(): void {
+    // Cards are rebuilt reactively when `listings` event fires
   }
 
   private rebuildCards(): void {
-    // Destroy old cards
     for (const c of this.cardContainers) c.destroy();
     this.cardContainers = [];
 
-    const listings = this.scheduler.getListings();
     const { width, height } = this.scale;
-    const totalWidth = listings.length * CARD_WIDTH + (listings.length - 1) * CARD_GAP;
+    const count = this.listings.length;
+    if (count === 0) return;
+
+    const totalWidth = count * CARD_WIDTH + (count - 1) * CARD_GAP;
     const startX = (width - totalWidth) / 2 + CARD_WIDTH / 2;
     const cardY = height / 2 + 20;
 
-    for (let i = 0; i < listings.length; i++) {
+    for (let i = 0; i < count; i++) {
       const x = startX + i * (CARD_WIDTH + CARD_GAP);
-      const container = this.createCard(x, cardY, listings[i]);
+      const container = this.createCard(x, cardY, this.listings[i]);
       this.cardContainers.push(container);
     }
   }
@@ -94,7 +121,6 @@ export class LobbyScene extends Phaser.Scene {
     const cfg = listing.config;
     const isJoined = this.joinedExpeditionId === cfg.id;
 
-    // Card background
     const bg = this.add.graphics();
     const borderColor = isJoined ? 0x44ff88 : 0x333355;
     bg.fillStyle(0x1a1a2e, 0.95);
@@ -103,121 +129,76 @@ export class LobbyScene extends Phaser.Scene {
     bg.strokeRoundedRect(-CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT, 8);
     container.add(bg);
 
-    // Map name
-    const nameText = this.add.text(0, -CARD_HEIGHT / 2 + 20, cfg.mapName, {
+    container.add(this.add.text(0, -CARD_HEIGHT / 2 + 20, cfg.mapName, {
       fontSize: '16px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setOrigin(0.5);
-    container.add(nameText);
+    }).setOrigin(0.5));
 
-    // Risk stars
-    const riskLabel = this.add.text(-CARD_WIDTH / 2 + 16, -CARD_HEIGHT / 2 + 50, `Risk:   ${stars(cfg.risk)}`, {
+    container.add(this.add.text(-CARD_WIDTH / 2 + 16, -CARD_HEIGHT / 2 + 50, `Risk:   ${stars(cfg.risk)}`, {
       fontSize: '14px', color: '#ff6644', fontFamily: 'monospace',
-    });
-    container.add(riskLabel);
+    }));
 
-    // Reward stars
-    const rewardLabel = this.add.text(-CARD_WIDTH / 2 + 16, -CARD_HEIGHT / 2 + 74, `Reward: ${stars(cfg.reward)}`, {
+    container.add(this.add.text(-CARD_WIDTH / 2 + 16, -CARD_HEIGHT / 2 + 74, `Reward: ${stars(cfg.reward)}`, {
       fontSize: '14px', color: '#ffdd44', fontFamily: 'monospace',
-    });
-    container.add(rewardLabel);
+    }));
 
-    // Stages
-    const stagesLabel = this.add.text(-CARD_WIDTH / 2 + 16, -CARD_HEIGHT / 2 + 98, `Stages: ${cfg.stages}`, {
+    container.add(this.add.text(-CARD_WIDTH / 2 + 16, -CARD_HEIGHT / 2 + 98, `Stages: ${cfg.stages}`, {
       fontSize: '14px', color: '#88ccff', fontFamily: 'monospace',
-    });
-    container.add(stagesLabel);
+    }));
 
-    // Players
     const playersText = this.add.text(0, -CARD_HEIGHT / 2 + 132, `Players: ${listing.playerCount}/${cfg.maxPlayers}`, {
       fontSize: '13px', color: '#aaaaaa', fontFamily: 'monospace',
     }).setOrigin(0.5);
     container.add(playersText);
-    container.setData('playersText', playersText);
 
-    // Countdown
-    const countdownText = this.add.text(0, -CARD_HEIGHT / 2 + 170, '', {
-      fontSize: '28px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
+    const secs = Math.ceil(listing.countdown);
+    const countdownColor = secs <= 5 ? '#ff4444' : secs <= 15 ? '#ffcc44' : '#ffffff';
+    const countdownText = this.add.text(0, -CARD_HEIGHT / 2 + 170, `${secs}s`, {
+      fontSize: '28px', color: countdownColor, fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5);
     container.add(countdownText);
-    container.setData('countdownText', countdownText);
 
-    // Join / Waiting button
     if (isJoined) {
-      const waitText = this.add.text(0, CARD_HEIGHT / 2 - 40, 'JOINED - WAITING...', {
+      container.add(this.add.text(0, CARD_HEIGHT / 2 - 40, 'JOINED - WAITING...', {
         fontSize: '13px', color: '#44ff88', fontFamily: 'monospace', fontStyle: 'bold',
-      }).setOrigin(0.5);
-      container.add(waitText);
+      }).setOrigin(0.5));
     } else if (this.joinedExpeditionId === null) {
       const joinBtn = this.add.text(0, CARD_HEIGHT / 2 - 40, '[ JOIN ]', {
         fontSize: '18px', color: '#44aaff', fontFamily: 'monospace', fontStyle: 'bold',
-        backgroundColor: '#222244',
-        padding: { x: 24, y: 8 },
+        backgroundColor: '#222244', padding: { x: 24, y: 8 },
       }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
       joinBtn.on('pointerover', () => joinBtn.setColor('#88ccff'));
       joinBtn.on('pointerout', () => joinBtn.setColor('#44aaff'));
       joinBtn.on('pointerdown', () => {
-        this.joinExpedition(cfg.id);
+        NetworkManager.getSocket().emit('join', { expeditionId: cfg.id });
       });
       container.add(joinBtn);
     }
 
-    container.setData('configId', cfg.id);
     return container;
-  }
-
-  private updateCardContent(container: Phaser.GameObjects.Container, listing: ExpeditionListing): void {
-    const countdownText = container.getData('countdownText') as Phaser.GameObjects.Text;
-    const playersText = container.getData('playersText') as Phaser.GameObjects.Text;
-    if (!countdownText || !playersText) return;
-
-    const secs = Math.ceil(listing.countdown);
-    countdownText.setText(`${secs}s`);
-
-    if (secs <= 5) {
-      countdownText.setColor('#ff4444');
-    } else if (secs <= 15) {
-      countdownText.setColor('#ffcc44');
-    } else {
-      countdownText.setColor('#ffffff');
-    }
-
-    playersText.setText(`Players: ${listing.playerCount}/${listing.config.maxPlayers}`);
-  }
-
-  private joinExpedition(expeditionId: string): void {
-    const config = this.scheduler.joinExpedition(expeditionId);
-    if (!config) return;
-    this.joinedExpeditionId = expeditionId;
-    this.rebuildCards();
   }
 
   private async launchExpedition(config: ExpeditionConfig): Promise<void> {
     if (this.transitioning) return;
     this.transitioning = true;
 
-    // Show loading text
     const { width, height } = this.scale;
-    const loadingText = this.add.text(width / 2, height - 40, 'Loading map...', {
+    const loadingText = this.add.text(width / 2, height - 60, 'Loading map...', {
       fontSize: '16px', color: '#ffffff', fontFamily: 'monospace',
     }).setOrigin(0.5);
 
     try {
-      // Async map load
       const mapData = await loadMapById(config.mapId);
 
-      // Pick random spawn
-      const spawnIndex = Math.floor(Math.random() * mapData.spawns.length);
-      const assignedSpawnId = mapData.spawns[spawnIndex].id;
+      // Use server-assigned spawn (clamped to available spawns)
+      const assignedSpawnId = mapData.spawns[this.joinedSpawnId % mapData.spawns.length].id;
 
       // Deterministic entity placement from seed
       const { turretPositions, goodiePositions } = generateExpeditionEntities(config, mapData, assignedSpawnId);
 
-      // Pick initial exits
-      const shuffledExits = [...mapData.exits].sort(() => Math.random() - 0.5);
-      const assignedExits = shuffledExits.slice(0, 3);
+      // Resolve exit indices to actual ExitPoints
+      const assignedExits = this.joinedExitIndices.map(idx => mapData.exits[idx % mapData.exits.length]);
 
-      // Create expedition data and store it
       const expeditionData = {
         configId: config.id,
         totalStages: config.stages,

@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { MapRenderer } from '../systems/MapRenderer.ts';
 import { CameraController } from '../systems/CameraController.ts';
 import { FogOfWarRenderer } from '../systems/FogOfWarRenderer.ts';
+import { NetworkManager } from '../NetworkManager.ts';
 import { FogOfWarSystem } from '@shared/systems/FogOfWarSystem.ts';
 import { ExpeditionStore } from '@shared/ExpeditionStore.ts';
 import { BALANCE } from '@shared/config/balance.ts';
@@ -369,7 +370,20 @@ export class PlanningScene extends Phaser.Scene {
     this.expedition.fogGrid = this.fogSystem.getGrid();
     ExpeditionStore.set(this.expedition);
     ExpeditionStore.setNodes(this.nodes);
-    this.scene.start('ExecutionScene');
+
+    // Tell server we're ready (server waits for all players)
+    if (NetworkManager.isConnected()) {
+      const socket = NetworkManager.getSocket();
+      socket.emit('ready', { configId: this.expedition.configId });
+
+      // Listen for all_ready — server says everyone uploaded nodes
+      socket.once('all_ready', () => {
+        this.scene.start('ExecutionScene');
+      });
+    } else {
+      // Offline fallback
+      this.scene.start('ExecutionScene');
+    }
   }
 
   private skipStage(): void {
