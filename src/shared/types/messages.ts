@@ -1,94 +1,148 @@
-import type { ExpeditionListing } from './expedition.ts';
+/**
+ * Socket.io message contract between client and server.
+ *
+ * Single source of truth for networked events. Steps add sections as they
+ * land — keep in sync with NetworkManager and GameServer.
+ */
 
-// --- Lobby Phase ---
+import type { PlayerProfile } from './player-profile.ts';
+import type { BombermanTemplate } from './bomberman.ts';
+import type { BombType } from './bombs.ts';
+import type { MatchListing, MatchState, PlayerAction } from './match.ts';
+import type { TurnEvent } from '../systems/TurnResolver.ts';
 
-export interface JoinMsg {
-  expeditionId: string;
+// --- Auth / profile (Step 2) ---
+
+export interface AuthMsg {
+  playerId: string;
 }
 
-export interface JoinedMsg {
-  expeditionId: string;
-  spawnId: number;
-  assignedExitIndices: number[];
+export interface ProfileMsg {
+  profile: PlayerProfile;
 }
 
-// --- Planning Phase ---
-
-export interface ReadyMsg {
-  configId: string;
+/** Dev-only: wipe profile back to an empty starter state. */
+export interface DebugResetMsg {
+  confirm: true;
 }
 
-// --- Execution Phase ---
+// --- Bomberman shop (Step 4) ---
 
-export interface PositionMsg {
-  x: number;
-  y: number;
-  state: string;
-  hp: number;
-  barrelAngle: number;
+export interface BombermanShopCycleMsg {
+  cycleId: string;
+  endsAt: number;
+  bombermen: BombermanTemplate[];
 }
 
-export interface PlayerPositions {
-  [socketId: string]: {
-    x: number;
-    y: number;
-    state: string;
-    hp: number;
-    barrelAngle: number;
-  };
+export interface BuyBombermanMsg {
+  templateId: string;
 }
 
-export interface TurretKilledMsg {
-  key: string;
+export interface EquipBombermanMsg {
+  ownedId: string;
 }
 
-export interface TurretKilledBroadcast {
-  key: string;
-  killedBy: string;
+// --- Bombs shop (Step 5) ---
+
+export interface BombsCatalogEntry {
+  type: BombType;
+  name: string;
+  price: number;
+  description: string;
 }
 
-export interface GoodieCollectedMsg {
-  key: string;
+export interface BombsCatalogMsg {
+  catalog: BombsCatalogEntry[];
 }
 
-export interface GoodieCollectedBroadcast {
-  key: string;
-  collectedBy: string;
+export interface BuyBombMsg {
+  type: BombType;
+  quantity: number;
 }
 
-export interface GoodieRejectedMsg {
-  key: string;
+export interface EquipBombMsg {
+  type: BombType;
+  slotIndex: number;
+  quantity: number;
 }
 
-export interface StageDoneMsg {
-  extracted: boolean;
-  goodiesCollected: number;
+export interface UnequipBombMsg {
+  slotIndex: number;
 }
 
-export interface StageResultMsg {
-  nextStage?: number;
-  expeditionOver?: boolean;
+// --- Lobby + match (Step 7/8) ---
+
+export interface MatchListingsMsg {
+  listings: MatchListing[];
 }
 
-// --- Server → Client event map (for typed listeners) ---
+export interface JoinMatchMsg {
+  matchId: string;
+}
+
+export interface JoinedMatchMsg {
+  matchId: string;
+}
+
+export interface MatchStartMsg {
+  matchId: string;
+}
+
+export interface MatchStateMsg {
+  state: MatchState;
+}
+
+export interface PlayerActionMsg {
+  action: PlayerAction;
+}
+
+export interface TurnResultMsg {
+  events: TurnEvent[];
+}
+
+export interface MatchEndMsg {
+  endReason: 'all_escaped' | 'all_dead' | 'turn_limit' | 'last_standing';
+  escapedPlayerIds: string[];
+  coinsEarned: Record<string, number>;
+}
+
+/** Server → client result of a shop action. Usable for user-facing toast. */
+export interface ShopResultMsg {
+  ok: boolean;
+  action: 'buy_bomberman' | 'equip_bomberman' | 'buy_bomb' | 'equip_bomb';
+  reason?: string;
+  message?: string;
+}
+
+// --- Server → client event map ---
 
 export interface ServerToClientEvents {
-  listings: (listings: ExpeditionListing[]) => void;
-  joined: (msg: JoinedMsg) => void;
-  expedition_start: (msg: { configId: string }) => void;
-  all_ready: (msg: Record<string, never>) => void;
-  players: (positions: PlayerPositions) => void;
-  turret_killed: (msg: TurretKilledBroadcast) => void;
-  goodie_collected: (msg: GoodieCollectedBroadcast) => void;
-  goodie_rejected: (msg: GoodieRejectedMsg) => void;
-  stage_result: (msg: StageResultMsg) => void;
+  profile: (msg: ProfileMsg) => void;
+  bomberman_shop_cycle: (msg: BombermanShopCycleMsg) => void;
+  bombs_catalog: (msg: BombsCatalogMsg) => void;
+  shop_result: (msg: ShopResultMsg) => void;
+  match_listings: (msg: MatchListingsMsg) => void;
+  joined_match: (msg: JoinedMatchMsg) => void;
+  match_start: (msg: MatchStartMsg) => void;
+  match_state: (msg: MatchStateMsg) => void;
+  turn_result: (msg: TurnResultMsg) => void;
+  match_end: (msg: MatchEndMsg) => void;
 }
 
+// --- Client → server event map ---
+
 export interface ClientToServerEvents {
-  join: (msg: JoinMsg) => void;
-  ready: (msg: ReadyMsg) => void;
-  position: (msg: PositionMsg) => void;
-  turret_killed: (msg: TurretKilledMsg) => void;
-  goodie_collected: (msg: GoodieCollectedMsg) => void;
-  stage_done: (msg: StageDoneMsg) => void;
+  auth: (msg: AuthMsg) => void;
+  debug_reset: (msg: DebugResetMsg) => void;
+  bomberman_shop_request: () => void;
+  buy_bomberman: (msg: BuyBombermanMsg) => void;
+  equip_bomberman: (msg: EquipBombermanMsg) => void;
+  bombs_shop_request: () => void;
+  buy_bomb: (msg: BuyBombMsg) => void;
+  equip_bomb: (msg: EquipBombMsg) => void;
+  unequip_bomb: (msg: UnequipBombMsg) => void;
+  match_listings_request: () => void;
+  join_match: (msg: JoinMatchMsg) => void;
+  leave_match: () => void;
+  player_action: (msg: PlayerActionMsg) => void;
 }

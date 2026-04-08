@@ -1,61 +1,41 @@
+/**
+ * Central tuning constants for the Bomberman core.
+ *
+ * All gameplay values live here and should be editable without touching logic
+ * code. As new systems come online (shops, bombs, matches) each gets its own
+ * section.
+ */
+
 export const BALANCE = {
-  roomba: {
-    hp: 10,
-    atk: 2,
-    atkSpd: 2,
-    atkRad: 5,
-    spd: 5,
-    inventorySlots: 10,
-    fogRevealRadius: 12,
-  },
-  turret: {
-    hp: 5,
-    atk: 1,
-    atkSpd: 1,
-    atkRad: 5,
-    goodieDropCount: 1,
-  },
-  nodeBonuses: {
-    moveAttack: { atkMultiplier: 1.2 },
-    moveAvoid: { spdMultiplier: 0.9, fleeSpdMultiplier: 1.2, hpMultiplier: 1.1 },
-    moveRush: { spdMultiplier: 1.15, damageTakenMultiplier: 1.1 },
-  },
-  expedition: {
-    prepTimeSeconds: 20,
-    execTimeSeconds: 180,
-    stageCount: 3,
-    maxNodes: 10,
-  },
   map: {
     tileSize: 32,
-    turretCountRange: [10, 20] as [number, number],
-    goodieCountRange: [20, 30] as [number, number],
-    spawnCount: 10,
-    exitCountEdge: 12,
-    exitCountInterior: 8,
   },
-  simulation: {
-    tickRate: 30,
-    tickDuration: 1000 / 30,
-  },
-  risk: {
-    1: { turretCountRange: [2, 5] as [number, number] },
-    2: { turretCountRange: [5, 10] as [number, number] },
-    3: { turretCountRange: [7, 15] as [number, number] },
-    4: { turretCountRange: [10, 20] as [number, number] },
-    5: { turretCountRange: [15, 25] as [number, number] },
-  } as Record<number, { turretCountRange: [number, number] }>,
-  reward: {
-    1: { goodieCountRange: [5, 10] as [number, number] },
-    2: { goodieCountRange: [7, 15] as [number, number] },
-    3: { goodieCountRange: [10, 20] as [number, number] },
-    4: { goodieCountRange: [15, 25] as [number, number] },
-    5: { goodieCountRange: [20, 30] as [number, number] },
-  } as Record<number, { goodieCountRange: [number, number] }>,
   lobby: {
-    visibleExpeditions: 3,
-    expeditionInterval: 5,
+    visibleMatches: 3,
+    matchIntervalSeconds: 5,
     countdownDuration: 30,
-    maxPlayersPerExpedition: 4,
+    maxPlayersPerMatch: 4,
+    // Dev: allow solo matches so you can test controls without a second tab.
+    // Raise back to 2 before shipping.
+    minPlayersToStart: 1,
+  },
+  match: {
+    turnLimit: 50,
+    turnsLeftWarning: 10,
+    inputPhaseSeconds: 2,
+    transitionPhaseSeconds: 1,
+    /** Minimum tile distance between spawning Bombermen (falls back if impossible). */
+    minSpawnDistance: 5,
+    bombermanMaxHp: 2,
+    bleedingDurationTurns: 3,
+    bombSlotStackLimit: 5,
+    /** Tile radius for per-player line-of-sight fog of war. */
+    losRadius: 5,
+  },
+  player: {
+    /** Coins granted to a brand-new profile. */
+    startingCoins: 500,
+    /** Hard cap on how many Bombermen a player can own at once. */
+    ownedBombermenCap: 5,
   },
 } as const;

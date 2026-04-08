@@ -1,0 +1,41 @@
+{
+  "id": "p_3a9ad8b22613",
+  "createdAt": 1775689726570,
+  "updatedAt": 1775689776056,
+  "coins": 525,
+  "ownedBombermen": [
+    {
+      "id": "owned_p_3a9ad8b22613_1775689744800_vffw",
+      "tier": "free",
+      "colors": {
+        "shirt": 5128919,
+        "pants": 9054325,
+        "hair": 8467634
+      },
+      "inventory": {
+        "slots": [
+          {
+            "type": "delay",
+            "count": 3
+          },
+          {
+            "type": "molotov",
+            "count": 1
+          },
+          {
+            "type": "delay_big",
+            "count": 1
+          },
+          {
+            "type": "flare",
+            "count": 1
+          }
+        ]
+      },
+      "purchasedAt": 1775689744800,
+      "sourceTemplateId": "cycle_1775689714450_1_free"
+    }
+  ],
+  "equippedBombermanId": "owned_p_3a9ad8b22613_1775689744800_vffw",
+  "bombStockpile": {}
+}

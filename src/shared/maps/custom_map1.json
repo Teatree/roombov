@@ -1270,113 +1270,87 @@
     {
       "id": 0,
       "x": 4,
-      "y": 1,
-      "edge": "north"
+      "y": 1
     },
     {
       "id": 1,
       "x": 14,
-      "y": 1,
-      "edge": "north"
+      "y": 1
     },
     {
       "id": 2,
       "x": 25,
-      "y": 1,
-      "edge": "north"
+      "y": 1
     },
     {
       "id": 3,
       "x": 35,
-      "y": 1,
-      "edge": "north"
+      "y": 1
     },
     {
       "id": 4,
       "x": 38,
-      "y": 14,
-      "edge": "east"
+      "y": 14
     },
     {
       "id": 5,
       "x": 25,
-      "y": 28,
-      "edge": "south"
+      "y": 28
     },
     {
       "id": 6,
       "x": 35,
-      "y": 28,
-      "edge": "south"
+      "y": 28
     },
     {
       "id": 7,
       "x": 4,
-      "y": 28,
-      "edge": "south"
+      "y": 28
     }
   ],
-  "exits": [
+  "escapeTiles": [
     {
       "id": 0,
       "x": 38,
-      "y": 5,
-      "type": "edge"
+      "y": 5
     },
     {
       "id": 1,
       "x": 32,
-      "y": 10,
-      "type": "interior"
+      "y": 10
     },
     {
       "id": 2,
       "x": 38,
-      "y": 23,
-      "type": "edge"
+      "y": 23
     },
     {
       "id": 3,
       "x": 22,
-      "y": 28,
-      "type": "edge"
+      "y": 28
     },
     {
       "id": 4,
       "x": 14,
-      "y": 28,
-      "type": "edge"
+      "y": 28
     },
     {
       "id": 5,
       "x": 1,
-      "y": 14,
-      "type": "edge"
+      "y": 14
     },
     {
       "id": 6,
       "x": 12,
-      "y": 1,
-      "type": "edge"
+      "y": 1
     },
     {
       "id": 7,
       "x": 28,
-      "y": 1,
-      "type": "edge"
+      "y": 1
     }
   ],
-  "turrets": [],
-  "goodies": [],
-  "turretZones": [
-    {
-      "x": 3,
-      "y": 5,
-      "w": 31,
-      "h": 19
-    }
-  ],
-  "goodieZones": [
+  "coinZones": [
     {
       "x": 1,
       "y": 10,
@@ -1418,6 +1392,14 @@
       "y": 20,
       "w": 9,
       "h": 3
+    }
+  ],
+  "bombZones": [
+    {
+      "x": 3,
+      "y": 5,
+      "w": 31,
+      "h": 19
     }
   ]
 }

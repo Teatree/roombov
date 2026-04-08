@@ -1,5 +1,4 @@
 import Phaser from 'phaser';
-import { ExpeditionStore } from '@shared/ExpeditionStore.ts';
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -7,11 +6,10 @@ export class BootScene extends Phaser.Scene {
   }
 
   create(): void {
-    ExpeditionStore.clearAll();
     const { width, height } = this.scale;
 
     this.add
-      .text(width / 2, height / 2 - 40, 'ROOMBOV', {
+      .text(width / 2, height / 2 - 40, 'BOMBERMAN', {
         fontSize: '64px',
         color: '#e0e0e0',
         fontFamily: 'monospace',
@@ -20,7 +18,7 @@ export class BootScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     this.add
-      .text(width / 2, height / 2 + 30, 'Autonomous Roomba Missions', {
+      .text(width / 2, height / 2 + 30, 'Turn-based PvP Arena', {
         fontSize: '20px',
         color: '#888888',
         fontFamily: 'monospace',
@@ -28,7 +26,7 @@ export class BootScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     const startBtn = this.add
-      .text(width / 2, height / 2 + 90, '[ ENTER LOBBY ]', {
+      .text(width / 2, height / 2 + 90, '[ START ]', {
         fontSize: '24px',
         color: '#44aaff',
         fontFamily: 'monospace',
@@ -39,7 +37,7 @@ export class BootScene extends Phaser.Scene {
     startBtn.on('pointerover', () => startBtn.setColor('#88ccff'));
     startBtn.on('pointerout', () => startBtn.setColor('#44aaff'));
     startBtn.on('pointerdown', () => {
-      this.scene.start('LobbyScene');
+      this.scene.start('MainMenuScene');
     });
   }
 }

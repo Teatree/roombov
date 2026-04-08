@@ -1,8 +1,10 @@
 import Phaser from 'phaser';
 import { BootScene } from './scenes/BootScene.ts';
+import { MainMenuScene } from './scenes/MainMenuScene.ts';
 import { LobbyScene } from './scenes/LobbyScene.ts';
-import { PlanningScene } from './scenes/PlanningScene.ts';
-import { ExecutionScene } from './scenes/ExecutionScene.ts';
+import { BombermanShopScene } from './scenes/BombermanShopScene.ts';
+import { BombsShopScene } from './scenes/BombsShopScene.ts';
+import { MatchScene } from './scenes/MatchScene.ts';
 import { ResultsScene } from './scenes/ResultsScene.ts';
 
 const config: Phaser.Types.Core.GameConfig = {
@@ -15,7 +17,7 @@ const config: Phaser.Types.Core.GameConfig = {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [BootScene, LobbyScene, PlanningScene, ExecutionScene, ResultsScene],
+  scene: [BootScene, MainMenuScene, LobbyScene, BombermanShopScene, BombsShopScene, MatchScene, ResultsScene],
 };
 
 new Phaser.Game(config);

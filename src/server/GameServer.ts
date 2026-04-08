@@ -1,311 +1,261 @@
 import type { Server, Socket } from 'socket.io';
-import { ExpeditionScheduler, generateExpeditionEntities } from '../shared/ExpeditionManager.ts';
-import type { ExpeditionConfig, ExpeditionListing } from '../shared/types/expedition.ts';
-import type { ExitPoint } from '../shared/types/map.ts';
 import type {
-  JoinMsg, JoinedMsg, ReadyMsg, PositionMsg, PlayerPositions,
-  TurretKilledMsg, GoodieCollectedMsg, StageDoneMsg, StageResultMsg,
+  AuthMsg, BuyBombermanMsg, BuyBombMsg, ClientToServerEvents, EquipBombermanMsg,
+  EquipBombMsg, JoinMatchMsg, PlayerActionMsg, ServerToClientEvents, UnequipBombMsg,
 } from '../shared/types/messages.ts';
+import type { MatchConfig } from '../shared/types/match.ts';
+import { PlayerStore } from './PlayerStore.ts';
+import { BombermanShopService } from './BombermanShopService.ts';
+import { BombsShopService } from './BombsShopService.ts';
+import { MatchScheduler } from './MatchScheduler.ts';
+import { MatchRoom, loadMapForMatch, type MatchRoomParticipant } from './MatchRoom.ts';
 
-interface PlayerState {
-  socketId: string;
-  expeditionId: string | null;
-  spawnId: number;
-  assignedExits: ExitPoint[];
-  ready: boolean;
-  currentStage: number;
-  position: { x: number; y: number; state: string; hp: number; barrelAngle: number } | null;
-}
+type TypedSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
+type TypedServer = Server<ClientToServerEvents, ServerToClientEvents>;
 
-interface ExpeditionRoom {
-  config: ExpeditionConfig;
-  players: Map<string, PlayerState>;
-  /** Server-authoritative: which turrets are dead */
-  killedTurrets: Record<string, string>; // key → killedBy socketId
-  /** Server-authoritative: which goodies are collected */
-  collectedGoodies: Record<string, string>; // key → collectedBy socketId
-  phase: 'lobby' | 'planning' | 'execution' | 'done';
-  currentStage: number;
-  stagesDone: Map<string, boolean>;
+/** Tracks which match (if any) a socket has joined in the lobby or in play. */
+interface PlayerSession {
+  playerId: string;
+  joinedMatchId: string | null;
 }
 
 export class GameServer {
-  private io: Server;
-  private scheduler: ExpeditionScheduler;
-  private players = new Map<string, PlayerState>();
-  private rooms = new Map<string, ExpeditionRoom>();
-  private listingInterval: ReturnType<typeof setInterval> | null = null;
+  private io: TypedServer;
+  private playerStore: PlayerStore;
+  private bombermanShop: BombermanShopService;
+  private bombsShop: BombsShopService;
+  private matchScheduler: MatchScheduler;
+  /** active MatchRooms keyed by matchId */
+  private matchRooms = new Map<string, MatchRoom>();
+  /** socketId → session info */
+  private sessions = new Map<string, PlayerSession>();
+  private tickInterval: ReturnType<typeof setInterval> | null = null;
 
-  constructor(io: Server) {
+  constructor(io: TypedServer, playerStore: PlayerStore) {
     this.io = io;
-    this.scheduler = new ExpeditionScheduler();
+    this.playerStore = playerStore;
+    this.bombermanShop = new BombermanShopService(playerStore, (cycle) => {
+      this.io.emit('bomberman_shop_cycle', cycle);
+    });
+    this.bombsShop = new BombsShopService(playerStore);
+    this.matchScheduler = new MatchScheduler();
 
-    // Broadcast listings every second
-    this.listingInterval = setInterval(() => {
-      this.tickScheduler();
-    }, 1000);
+    this.tickInterval = setInterval(() => this.tickLobby(), 1000);
 
     io.on('connection', (socket) => {
-      console.log(`Player connected: ${socket.id}`);
-      this.onConnect(socket);
+      console.log(`[Server] Socket connected: ${socket.id}`);
+
+      socket.on('auth', (msg) => this.onAuth(socket, msg));
+      socket.on('debug_reset', () => this.onDebugReset(socket));
+      socket.on('bomberman_shop_request', () => this.onBombermanShopRequest(socket));
+      socket.on('buy_bomberman', (msg) => this.onBuyBomberman(socket, msg));
+      socket.on('equip_bomberman', (msg) => this.onEquipBomberman(socket, msg));
+      socket.on('bombs_shop_request', () => this.onBombsShopRequest(socket));
+      socket.on('buy_bomb', (msg) => this.onBuyBomb(socket, msg));
+      socket.on('equip_bomb', (msg) => this.onEquipBomb(socket, msg));
+      socket.on('unequip_bomb', (msg) => this.onUnequipBomb(socket, msg));
+      socket.on('match_listings_request', () => this.sendListings(socket));
+      socket.on('join_match', (msg) => this.onJoinMatch(socket, msg));
+      socket.on('leave_match', () => this.onLeaveMatch(socket));
+      socket.on('player_action', (msg) => this.onPlayerAction(socket, msg));
 
       socket.on('disconnect', () => {
-        console.log(`Player disconnected: ${socket.id}`);
-        this.onDisconnect(socket);
+        const session = this.sessions.get(socket.id);
+        console.log(`[Server] Socket disconnected: ${socket.id} (player ${session?.playerId ?? 'unknown'})`);
+        if (session?.joinedMatchId) {
+          this.matchScheduler.leaveMatch(session.joinedMatchId);
+        }
+        this.sessions.delete(socket.id);
       });
-
-      socket.on('join', (msg: JoinMsg) => this.onJoin(socket, msg));
-      socket.on('ready', (msg: ReadyMsg) => this.onReady(socket, msg));
-      socket.on('position', (msg: PositionMsg) => this.onPosition(socket, msg));
-      socket.on('turret_killed', (msg: TurretKilledMsg) => this.onTurretKilled(socket, msg));
-      socket.on('goodie_collected', (msg: GoodieCollectedMsg) => this.onGoodieCollected(socket, msg));
-      socket.on('stage_done', (msg: StageDoneMsg) => this.onStageDone(socket, msg));
     });
   }
 
-  private tickScheduler(): void {
-    const started = this.scheduler.tick();
-    const listings = this.scheduler.getListings();
-
-    // Broadcast current listings to all clients in the default namespace
-    this.io.emit('listings', listings);
-
-    // If an expedition started, notify joined players
-    if (started) {
-      const room = this.rooms.get(started.id);
-      if (room) {
-        room.phase = 'planning';
-        room.currentStage = 1;
-        this.io.to(started.id).emit('expedition_start', { configId: started.id });
-        console.log(`Expedition ${started.id} started with ${room.players.size} players`);
-      }
+  private tickLobby(): void {
+    const launched = this.matchScheduler.tick();
+    this.io.emit('match_listings', { listings: this.matchScheduler.getListings() });
+    if (launched) {
+      void this.launchMatch(launched);
     }
   }
 
-  private onConnect(socket: Socket): void {
-    const player: PlayerState = {
-      socketId: socket.id,
-      expeditionId: null,
-      spawnId: 0,
-      assignedExits: [],
-      ready: false,
-      currentStage: 1,
-      position: null,
-    };
-    this.players.set(socket.id, player);
-
-    // Send current listings immediately
-    socket.emit('listings', this.scheduler.getListings());
-  }
-
-  private onDisconnect(socket: Socket): void {
-    const player = this.players.get(socket.id);
-    if (player?.expeditionId) {
-      const room = this.rooms.get(player.expeditionId);
-      if (room) {
-        room.players.delete(socket.id);
-        socket.leave(player.expeditionId);
-        // Update listing player count
-        const listing = this.scheduler.getListings().find(l => l.config.id === player.expeditionId);
-        if (listing) {
-          (listing as ExpeditionListing).playerCount = room.players.size;
-        }
-        if (room.players.size === 0 && room.phase !== 'lobby') {
-          this.rooms.delete(player.expeditionId);
-        }
-      }
-    }
-    this.players.delete(socket.id);
-  }
-
-  private onJoin(socket: Socket, msg: JoinMsg): void {
-    const player = this.players.get(socket.id);
-    if (!player) return;
-
-    // Can't join if already in an expedition
-    if (player.expeditionId) return;
-
-    const config = this.scheduler.joinExpedition(msg.expeditionId);
-    if (!config) return;
-
-    // Create room if it doesn't exist
-    if (!this.rooms.has(config.id)) {
-      this.rooms.set(config.id, {
-        config,
-        players: new Map(),
-        killedTurrets: {},
-        collectedGoodies: {},
-        phase: 'lobby',
-        currentStage: 1,
-        stagesDone: new Map(),
-      });
+  private async launchMatch(config: MatchConfig): Promise<void> {
+    // Gather participants from sessions
+    const participants: MatchRoomParticipant[] = [];
+    for (const [socketId, session] of this.sessions) {
+      if (session.joinedMatchId !== config.id) continue;
+      const profile = this.playerStore.get(session.playerId);
+      if (!profile) continue;
+      participants.push({ playerId: session.playerId, socketId, profile });
     }
 
-    const room = this.rooms.get(config.id)!;
-
-    // Assign a unique spawn from the map (we don't have map data on server,
-    // so assign spawn index based on join order)
-    const spawnId = room.players.size;
-
-    // Assign 3 random exits (deterministic from seed + player index)
-    // For now just pick indices — client will resolve to actual ExitPoints from mapData
-    const exitSeed = config.seed + spawnId;
-    const assignedExitIndices = [
-      exitSeed % 20,
-      (exitSeed * 7 + 3) % 20,
-      (exitSeed * 13 + 7) % 20,
-    ];
-
-    player.expeditionId = config.id;
-    player.spawnId = spawnId;
-    player.ready = false;
-    player.currentStage = 1;
-
-    room.players.set(socket.id, player);
-    socket.join(config.id);
-
-    const response: JoinedMsg = {
-      expeditionId: config.id,
-      spawnId,
-      assignedExitIndices,
-    };
-    socket.emit('joined', response);
-
-    console.log(`Player ${socket.id} joined expedition ${config.id} (spawn ${spawnId}, ${room.players.size} players)`);
-  }
-
-  private onReady(socket: Socket, msg: ReadyMsg): void {
-    const player = this.players.get(socket.id);
-    if (!player?.expeditionId) return;
-
-    const room = this.rooms.get(player.expeditionId);
-    if (!room || room.phase !== 'planning') return;
-
-    player.ready = true;
-
-    // Check if all players are ready
-    let allReady = true;
-    for (const [, p] of room.players) {
-      if (!p.ready) { allReady = false; break; }
+    if (participants.length === 0) {
+      console.log(`[Server] Match ${config.id} launched with 0 participants — skipping`);
+      return;
     }
 
-    if (allReady) {
-      room.phase = 'execution';
-      room.stagesDone.clear();
-      // Reset ready flags for next stage
-      for (const [, p] of room.players) p.ready = false;
-      this.io.to(player.expeditionId).emit('all_ready', {});
-      console.log(`Expedition ${player.expeditionId} stage ${room.currentStage} execution started`);
+    const map = await loadMapForMatch(config.mapId);
+    const room = new MatchRoom(config, map, participants, this.io, this.playerStore, () => {
+      this.matchRooms.delete(config.id);
+    });
+    this.matchRooms.set(config.id, room);
+
+    // Move everyone into the socket.io room and notify
+    for (const p of participants) {
+      const sock = this.io.sockets.sockets.get(p.socketId);
+      if (sock) sock.join(config.id);
     }
+    this.io.to(config.id).emit('match_start', { matchId: config.id });
+
+    // Short delay so clients can transition scenes before the first state arrives
+    setTimeout(() => room.start(), 250);
+    console.log(`[Server] Match ${config.id} started with ${participants.length} participant(s)`);
   }
 
-  private onPosition(socket: Socket, msg: PositionMsg): void {
-    const player = this.players.get(socket.id);
-    if (!player?.expeditionId) return;
-
-    player.position = {
-      x: msg.x,
-      y: msg.y,
-      state: msg.state,
-      hp: msg.hp,
-      barrelAngle: msg.barrelAngle,
-    };
-
-    // Broadcast all player positions in this expedition
-    const room = this.rooms.get(player.expeditionId);
-    if (!room) return;
-
-    const positions: PlayerPositions = {};
-    for (const [sid, p] of room.players) {
-      if (p.position) {
-        positions[sid] = p.position;
-      }
-    }
-
-    this.io.to(player.expeditionId).emit('players', positions);
+  private sendListings(socket: TypedSocket): void {
+    socket.emit('match_listings', { listings: this.matchScheduler.getListings() });
   }
 
-  private onTurretKilled(socket: Socket, msg: TurretKilledMsg): void {
-    const player = this.players.get(socket.id);
-    if (!player?.expeditionId) return;
-
-    const room = this.rooms.get(player.expeditionId);
-    if (!room) return;
-
-    // First-come-first-served: only register if not already killed
-    if (!room.killedTurrets[msg.key]) {
-      room.killedTurrets[msg.key] = socket.id;
-      // Broadcast to all players in this expedition
-      this.io.to(player.expeditionId).emit('turret_killed', {
-        key: msg.key,
-        killedBy: socket.id,
-      });
-    }
+  private getProfileForSocket(socket: TypedSocket) {
+    const session = this.sessions.get(socket.id);
+    if (!session) return null;
+    return this.playerStore.get(session.playerId);
   }
 
-  private onGoodieCollected(socket: Socket, msg: GoodieCollectedMsg): void {
-    const player = this.players.get(socket.id);
-    if (!player?.expeditionId) return;
+  private getSession(socket: TypedSocket): PlayerSession | null {
+    return this.sessions.get(socket.id) ?? null;
+  }
 
-    const room = this.rooms.get(player.expeditionId);
-    if (!room) return;
+  private async onAuth(socket: TypedSocket, msg: AuthMsg): Promise<void> {
+    const profile = await this.playerStore.loadOrCreate(msg.playerId);
+    this.sessions.set(socket.id, { playerId: profile.id, joinedMatchId: null });
+    socket.emit('profile', { profile });
+    socket.emit('match_listings', { listings: this.matchScheduler.getListings() });
+    console.log(`[Server] Auth: socket ${socket.id} → player ${profile.id} (coins=${profile.coins})`);
+  }
 
-    // First-come-first-served
-    if (!room.collectedGoodies[msg.key]) {
-      room.collectedGoodies[msg.key] = socket.id;
-      this.io.to(player.expeditionId).emit('goodie_collected', {
-        key: msg.key,
-        collectedBy: socket.id,
-      });
+  private onDebugReset(socket: TypedSocket): void {
+    const t0 = Date.now();
+    const session = this.getSession(socket);
+    if (!session) {
+      console.warn(`[Server] debug_reset from unknown socket ${socket.id}`);
+      return;
+    }
+    console.log(`[Server] debug_reset received from ${session.playerId}`);
+    if (session.joinedMatchId) this.matchScheduler.leaveMatch(session.joinedMatchId);
+    session.joinedMatchId = null;
+    const fresh = this.playerStore.resetProfile(session.playerId);
+    socket.emit('profile', { profile: fresh });
+    console.log(`[Server] debug_reset completed for ${session.playerId} in ${Date.now() - t0}ms`);
+  }
+
+  private onBombermanShopRequest(socket: TypedSocket): void {
+    const cycle = this.bombermanShop.getCurrentCycle();
+    socket.emit('bomberman_shop_cycle', cycle);
+  }
+
+  private async onBuyBomberman(socket: TypedSocket, msg: BuyBombermanMsg): Promise<void> {
+    const profile = this.getProfileForSocket(socket);
+    if (!profile) return;
+    const result = await this.bombermanShop.buyBomberman(profile, msg.templateId);
+    if (result.ok) {
+      socket.emit('profile', { profile });
+      socket.emit('shop_result', { ok: true, action: 'buy_bomberman', message: 'Purchased!' });
     } else {
-      // Already collected by someone else — tell this client to undo
-      socket.emit('goodie_rejected', { key: msg.key });
+      socket.emit('shop_result', { ok: false, action: 'buy_bomberman', reason: result.reason });
     }
   }
 
-  private onStageDone(socket: Socket, msg: StageDoneMsg): void {
-    const player = this.players.get(socket.id);
-    if (!player?.expeditionId) return;
+  private async onEquipBomberman(socket: TypedSocket, msg: EquipBombermanMsg): Promise<void> {
+    const profile = this.getProfileForSocket(socket);
+    if (!profile) return;
+    const result = await this.bombermanShop.equipBomberman(profile, msg.ownedId);
+    if (result.ok) {
+      socket.emit('profile', { profile });
+      socket.emit('shop_result', { ok: true, action: 'equip_bomberman', message: 'Equipped!' });
+    } else {
+      socket.emit('shop_result', { ok: false, action: 'equip_bomberman', reason: result.reason });
+    }
+  }
 
-    const room = this.rooms.get(player.expeditionId);
+  private onBombsShopRequest(socket: TypedSocket): void {
+    socket.emit('bombs_catalog', { catalog: this.bombsShop.getCatalog() });
+  }
+
+  private async onBuyBomb(socket: TypedSocket, msg: BuyBombMsg): Promise<void> {
+    const profile = this.getProfileForSocket(socket);
+    if (!profile) return;
+    const result = await this.bombsShop.buyBomb(profile, msg.type, msg.quantity);
+    if (result.ok) {
+      socket.emit('profile', { profile });
+      socket.emit('shop_result', { ok: true, action: 'buy_bomb', message: 'Purchased!' });
+    } else {
+      socket.emit('shop_result', { ok: false, action: 'buy_bomb', reason: result.reason });
+    }
+  }
+
+  private async onEquipBomb(socket: TypedSocket, msg: EquipBombMsg): Promise<void> {
+    const profile = this.getProfileForSocket(socket);
+    if (!profile) return;
+    const result = await this.bombsShop.equipToSlot(profile, msg.type, msg.slotIndex, msg.quantity);
+    if (result.ok) {
+      socket.emit('profile', { profile });
+      socket.emit('shop_result', { ok: true, action: 'equip_bomb', message: 'Equipped!' });
+    } else {
+      socket.emit('shop_result', { ok: false, action: 'equip_bomb', reason: result.reason });
+    }
+  }
+
+  private async onUnequipBomb(socket: TypedSocket, msg: UnequipBombMsg): Promise<void> {
+    const profile = this.getProfileForSocket(socket);
+    if (!profile) return;
+    const result = await this.bombsShop.unequipSlot(profile, msg.slotIndex);
+    if (result.ok) {
+      socket.emit('profile', { profile });
+      socket.emit('shop_result', { ok: true, action: 'equip_bomb', message: 'Unequipped' });
+    } else {
+      socket.emit('shop_result', { ok: false, action: 'equip_bomb', reason: result.reason });
+    }
+  }
+
+  private onJoinMatch(socket: TypedSocket, msg: JoinMatchMsg): void {
+    const session = this.getSession(socket);
+    if (!session) return;
+    if (session.joinedMatchId) return; // already joined something
+
+    const profile = this.playerStore.get(session.playerId);
+    if (!profile) return;
+    if (!profile.equippedBombermanId) {
+      socket.emit('shop_result', { ok: false, action: 'buy_bomberman', reason: 'no_equipped_bomberman', message: 'Equip a Bomberman first!' });
+      return;
+    }
+
+    const config = this.matchScheduler.joinMatch(msg.matchId);
+    if (!config) return;
+    session.joinedMatchId = config.id;
+    socket.emit('joined_match', { matchId: config.id });
+    this.io.emit('match_listings', { listings: this.matchScheduler.getListings() });
+  }
+
+  private onLeaveMatch(socket: TypedSocket): void {
+    const session = this.getSession(socket);
+    if (!session?.joinedMatchId) return;
+    this.matchScheduler.leaveMatch(session.joinedMatchId);
+    session.joinedMatchId = null;
+    this.io.emit('match_listings', { listings: this.matchScheduler.getListings() });
+  }
+
+  private onPlayerAction(socket: TypedSocket, msg: PlayerActionMsg): void {
+    const session = this.getSession(socket);
+    if (!session?.joinedMatchId) return;
+    const room = this.matchRooms.get(session.joinedMatchId);
     if (!room) return;
-
-    room.stagesDone.set(socket.id, true);
-
-    // Check if all players finished this stage
-    let allDone = true;
-    for (const [sid] of room.players) {
-      if (!room.stagesDone.has(sid)) { allDone = false; break; }
-    }
-
-    if (allDone) {
-      room.stagesDone.clear();
-
-      if (room.currentStage < room.config.stages) {
-        room.currentStage++;
-        room.phase = 'planning';
-        // Reset ready flags
-        for (const [, p] of room.players) {
-          p.ready = false;
-          p.position = null;
-        }
-
-        const result: StageResultMsg = { nextStage: room.currentStage };
-        this.io.to(player.expeditionId).emit('stage_result', result);
-      } else {
-        room.phase = 'done';
-        const result: StageResultMsg = { expeditionOver: true };
-        this.io.to(player.expeditionId).emit('stage_result', result);
-
-        // Cleanup room after a delay
-        setTimeout(() => {
-          this.rooms.delete(room.config.id);
-        }, 5000);
-      }
-    }
+    room.submitAction(session.playerId, msg.action);
   }
 
-  destroy(): void {
-    if (this.listingInterval) clearInterval(this.listingInterval);
+  async destroy(): Promise<void> {
+    if (this.tickInterval) clearInterval(this.tickInterval);
+    for (const room of this.matchRooms.values()) room.destroy();
+    this.matchRooms.clear();
+    await this.playerStore.flush();
   }
 }

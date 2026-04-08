@@ -5,37 +5,36 @@ export enum TileType {
   FURNITURE = 3,
 }
 
-export interface SpawnPoint {
-  id: number;
+/** Tile pairs used throughout map data. */
+export interface TileCoord {
   x: number;
   y: number;
-  edge: 'north' | 'south' | 'east' | 'west';
 }
 
-export interface ExitPoint {
-  id: number;
-  x: number;
-  y: number;
-  type: 'edge' | 'interior';
-}
-
-export interface TurretPlacement {
-  x: number;
-  y: number;
-  stage: number;
-}
-
-export interface GoodiePlacement {
-  x: number;
-  y: number;
-  stage: number;
-}
-
+/** Rectangular zone (tile coords, width/height in tiles). */
 export interface Zone {
   x: number;
   y: number;
   w: number;
   h: number;
+}
+
+/** A tile where Bombermen can spawn at match start. */
+export interface SpawnPoint {
+  id: number;
+  x: number;
+  y: number;
+}
+
+/**
+ * A tile the Bomberman can stand on at turn transition to escape the match.
+ * Per the design: standing on an escape tile at turn transition extracts the
+ * Bomberman and they keep all collected coins.
+ */
+export interface EscapeTile {
+  id: number;
+  x: number;
+  y: number;
 }
 
 export interface MapManifestEntry {
@@ -52,9 +51,15 @@ export interface MapData {
   tileSize: number;
   grid: TileType[][];
   spawns: SpawnPoint[];
-  exits: ExitPoint[];
-  turrets: TurretPlacement[];
-  goodies: GoodiePlacement[];
-  turretZones?: Zone[];
-  goodieZones?: Zone[];
+  escapeTiles: EscapeTile[];
+  /**
+   * Zones where coin bags may spawn. Each match seeds random positions
+   * inside these zones. Empty array → no coin bags on this map.
+   */
+  coinZones: Zone[];
+  /**
+   * Zones where collectible bombs may spawn. Same seeded-random behavior
+   * as coinZones.
+   */
+  bombZones: Zone[];
 }
