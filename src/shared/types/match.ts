@@ -88,7 +88,7 @@ export interface MatchState {
   /** Escape points from the map (copied for client rendering). */
   escapeTiles: { x: number; y: number }[];
   /** Match end data, populated once phase === 'ended'. */
-  endReason?: 'all_escaped' | 'all_dead' | 'turn_limit' | 'last_standing';
+  endReason?: 'all_escaped' | 'all_dead' | 'turn_limit';
   /** Ids of players who successfully escaped. */
   escapedPlayerIds?: string[];
 }

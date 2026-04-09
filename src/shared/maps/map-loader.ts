@@ -1,6 +1,6 @@
 import type { MapData } from '../types/map.ts';
 import { MAP_MANIFEST } from './map-manifest.ts';
-import testArena from './test_arena.json';
+import mainMap from './main_map.json';
 
 /**
  * Map loading with three resolution strategies, tried in order:
@@ -14,7 +14,7 @@ import testArena from './test_arena.json';
  */
 
 const STATIC_MAPS: Record<string, MapData> = {
-  test_arena: testArena as unknown as MapData,
+  main_map: mainMap as unknown as MapData,
 };
 
 export function loadMap(json: unknown): MapData {

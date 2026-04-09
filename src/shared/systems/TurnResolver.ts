@@ -130,11 +130,11 @@ export function resolveTurn(
     }
   }
 
-  // --- 2. Interaction pass (pickup coins, collectible bombs, body loot, flag escape) ---
+  // --- 2. Interaction pass (auto-collect coins + escape; bomb looting is manual) ---
   for (const bomberman of actors) {
     if (!bomberman.alive) continue;
 
-    // Coin bags — auto-collect
+    // Coin bags — auto-collect on walk-over
     const coinIdx = state.coinBags.findIndex(c => c.x === bomberman.x && c.y === bomberman.y);
     if (coinIdx >= 0) {
       const bag = state.coinBags[coinIdx];
@@ -143,17 +143,7 @@ export function resolveTurn(
       state.coinBags.splice(coinIdx, 1);
     }
 
-    // Collectible bombs — auto-loot into first compatible slot
-    const pickupIdx = state.collectibleBombs.findIndex(p => p.x === bomberman.x && p.y === bomberman.y);
-    if (pickupIdx >= 0) {
-      const pickup = state.collectibleBombs[pickupIdx];
-      const picked = tryStashBomb(bomberman.inventory, pickup.type, pickup.count);
-      if (picked > 0) {
-        state.collectibleBombs.splice(pickupIdx, 1);
-      }
-    }
-
-    // Body loot — auto-transfer coins and any bombs that fit
+    // Body coins — auto-transfer on walk-over (bombs are looted manually via loot panel)
     const bodyIdx = state.bodies.findIndex(b => b.x === bomberman.x && b.y === bomberman.y);
     if (bodyIdx >= 0) {
       const body = state.bodies[bodyIdx];
@@ -162,12 +152,6 @@ export function resolveTurn(
         events.push({ kind: 'body_looted', playerId: bomberman.playerId, bodyId: body.id, coins: body.coins });
         body.coins = 0;
       }
-      // Try to stash each bomb type; keep whatever doesn't fit on the body
-      for (const bomb of body.bombs) {
-        const taken = tryStashBomb(bomberman.inventory, bomb.type, bomb.count);
-        bomb.count -= taken;
-      }
-      body.bombs = body.bombs.filter(b => b.count > 0);
     }
 
     // Escape tile
@@ -359,16 +343,16 @@ export function resolveTurn(
   }
 
   // --- 11. Match-end check ---
+  // Match ends when: everyone is dead/escaped, OR the turn limit is reached.
+  // A sole surviving Bomberman does NOT end the match — they must escape or
+  // wait out the timer. Per the brief: "If Players all Escape from the Level
+  // or all die the Match will end as well."
   const aliveAndActive = state.bombermen.filter(b => b.alive && !b.escaped);
   if (aliveAndActive.length === 0) {
     state.phase = 'ended';
     const anyEscaped = state.bombermen.some(b => b.escaped);
-    const anyAlive = state.bombermen.some(b => b.alive);
-    if (anyEscaped && !anyAlive) state.endReason = 'all_escaped';
+    if (anyEscaped) state.endReason = 'all_escaped';
     else state.endReason = 'all_dead';
-  } else if (aliveAndActive.length === 1 && state.bombermen.filter(b => b.alive).length === 1 && state.bombermen.length > 1) {
-    state.phase = 'ended';
-    state.endReason = 'last_standing';
   } else if (state.turnNumber >= BALANCE.match.turnLimit) {
     // Everyone still alive dies at the turn limit per the brief
     for (const b of aliveAndActive) {

@@ -186,6 +186,7 @@ export class BombRenderer {
         case 'delay': this.fireBoom(tile, { core: 0xffffaa, mid: 0xffaa33, outer: 0xff5511, maxRadius: 0.55, duration: 500, emberCount: 5 }); break;
         case 'delay_big': this.fireBoom(tile, { core: 0xffffaa, mid: 0xff8822, outer: 0xcc2200, maxRadius: 0.7, duration: 600, emberCount: 7 }); break;
         case 'contact': this.fireBoom(tile, { core: 0xffeeaa, mid: 0xff6633, outer: 0xaa0000, maxRadius: 0.5, duration: 400, emberCount: 4 }); break;
+        case 'banana_child': this.fireBoom(tile, { core: 0xffee44, mid: 0xffcc22, outer: 0xaa8811, maxRadius: 0.5, duration: 450, emberCount: 4 }); break;
         case 'delay_tricky': this.plasmaBurst(tile); break;
         case 'flare': this.flareFlash(tile); break;
         case 'molotov': this.fireSplash(tile); break;
@@ -623,6 +624,7 @@ function bombLook(type: BombType): BombLook {
     case 'delay_tricky':  return { body: 0x2a1144, stroke: 0xcc88ff, accent: 0xff44cc, glyph: 'T', shape: 'diamond' };
     case 'contact':       return { body: 0x441111, stroke: 0xff4444, accent: 0xffcc44, glyph: 'C', shape: 'circle' };
     case 'banana':        return { body: 0xffcc33, stroke: 0x886611, accent: 0xaa8822, glyph: 'N', shape: 'curve' };
+    case 'banana_child':  return { body: 0xffee55, stroke: 0xaa8822, accent: 0xffcc33, glyph: 'n', shape: 'circle' };
     case 'flare':         return { body: 0xffffcc, stroke: 0xffaa33, accent: 0xffffff, glyph: 'F', shape: 'star' };
     case 'molotov':       return { body: 0x225522, stroke: 0x88cc44, accent: 0xff6633, glyph: 'M', shape: 'bottle' };
   }

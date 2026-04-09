@@ -18,6 +18,7 @@ export type BombType =
   | 'delay_tricky'
   | 'contact'
   | 'banana'
+  | 'banana_child'
   | 'flare'
   | 'molotov';
 

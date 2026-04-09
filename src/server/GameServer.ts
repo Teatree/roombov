@@ -1,7 +1,7 @@
 import type { Server, Socket } from 'socket.io';
 import type {
   AuthMsg, BuyBombermanMsg, BuyBombMsg, ClientToServerEvents, EquipBombermanMsg,
-  EquipBombMsg, JoinMatchMsg, PlayerActionMsg, ServerToClientEvents, UnequipBombMsg,
+  EquipBombMsg, JoinMatchMsg, LootBombMsg, PlayerActionMsg, ServerToClientEvents, UnequipBombMsg,
 } from '../shared/types/messages.ts';
 import type { MatchConfig } from '../shared/types/match.ts';
 import { PlayerStore } from './PlayerStore.ts';
@@ -58,6 +58,7 @@ export class GameServer {
       socket.on('join_match', (msg) => this.onJoinMatch(socket, msg));
       socket.on('leave_match', () => this.onLeaveMatch(socket));
       socket.on('player_action', (msg) => this.onPlayerAction(socket, msg));
+      socket.on('loot_bomb', (msg) => this.onLootBomb(socket, msg));
 
       socket.on('disconnect', () => {
         const session = this.sessions.get(socket.id);
@@ -96,6 +97,11 @@ export class GameServer {
     const map = await loadMapForMatch(config.mapId);
     const room = new MatchRoom(config, map, participants, this.io, this.playerStore, () => {
       this.matchRooms.delete(config.id);
+      // Clear joinedMatchId for all participants so they can join a new match
+      for (const p of participants) {
+        const sess = this.sessions.get(p.socketId);
+        if (sess) sess.joinedMatchId = null;
+      }
     });
     this.matchRooms.set(config.id, room);
 
@@ -250,6 +256,14 @@ export class GameServer {
     const room = this.matchRooms.get(session.joinedMatchId);
     if (!room) return;
     room.submitAction(session.playerId, msg.action);
+  }
+
+  private onLootBomb(socket: TypedSocket, msg: LootBombMsg): void {
+    const session = this.getSession(socket);
+    if (!session?.joinedMatchId) return;
+    const room = this.matchRooms.get(session.joinedMatchId);
+    if (!room) return;
+    room.handleLoot(session.playerId, msg);
   }
 
   async destroy(): Promise<void> {

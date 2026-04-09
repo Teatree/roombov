@@ -94,16 +94,22 @@ describe('resolveBombTrigger', () => {
   });
 
   describe('banana', () => {
-    it('scatters 4 child bombs diagonally, no immediate damage', () => {
+    it('scatters 4 banana_child bombs diagonally, no immediate damage', () => {
       const r = resolveBombTrigger('banana', 5, 5);
       expect(r.damageTiles).toHaveLength(0);
       expect(r.scatterSpawns).toHaveLength(4);
       const scatterCoords = r.scatterSpawns.map(s => `${s.x},${s.y}`).sort();
       expect(scatterCoords).toEqual(tileSet([4, 4], [6, 4], [4, 6], [6, 6]));
-      // Each child is a contact bomb per the brief
       for (const s of r.scatterSpawns) {
-        expect(s.type).toBe('contact');
+        expect(s.type).toBe('banana_child');
       }
+    });
+  });
+
+  describe('banana_child', () => {
+    it('explodes in + pattern x1 (5 tiles)', () => {
+      const r = resolveBombTrigger('banana_child', 5, 5);
+      expect(r.damageTiles).toHaveLength(5);
     });
   });
 

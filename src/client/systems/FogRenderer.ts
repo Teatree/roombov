@@ -87,6 +87,10 @@ export class FogRenderer {
     }
   }
 
+  ignoreFromCamera(camera: Phaser.Cameras.Scene2D.Camera): void {
+    camera.ignore(this.graphics);
+  }
+
   destroy(): void {
     this.graphics.destroy();
     this.state.clear();

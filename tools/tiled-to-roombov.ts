@@ -1,18 +1,29 @@
 /**
  * Tiled .tmj → Bomberman map JSON converter.
  *
- * Usage:  npx tsx tools/tiled-to-roombov.ts src/shared/maps/custom_map1.tmj
- * Output: src/shared/maps/custom_map1.json
+ * Usage:  npx tsx tools/tiled-to-roombov.ts src/shared/maps/main_map.tmj
+ * Output: src/shared/maps/main_map.json
  *
- * Recognized object layers (in order of preference; aliases allow migration
- * from the old Roombov maps without touching Tiled files):
- *  - Spawns        → SpawnPoint[]
- *  - EscapeTiles   (alias: Exits) → EscapeTile[]
- *  - BombZones     (alias: TurretZones) → Zone[]
- *  - CoinZones     (alias: GoodiesZones, GoodieZones) → Zone[]
+ * ## Tile layers
  *
- * Tile layer: grid int = (gid - firstGid), clamped to 0. Mapping:
- *   0=floor, 1=wall, 2=door, 3=furniture
+ * The converter supports two modes for building the walkability grid:
+ *
+ * **Mode 1 — Collision layer (recommended for complex maps)**
+ *   Create a tile layer named exactly `Collision`. Paint any tile on cells
+ *   that should block movement (walls, abyss, obstacles). Leave walkable
+ *   floor cells empty (gid 0). The converter builds the grid from this
+ *   layer only — all other tile layers are purely visual.
+ *
+ * **Mode 2 — Legacy single-layer (for test_arena / simple maps)**
+ *   If there is no `Collision` layer, the converter falls back to the first
+ *   tile layer and maps gid→tileId: 0=floor, 1=wall, 2=door, 3=furniture.
+ *
+ * ## Object layers
+ *
+ *  - Spawns        → SpawnPoint[] (point objects)
+ *  - EscapeTiles   → EscapeTile[] (point objects)
+ *  - BombZones     → Zone[] (rectangle objects)
+ *  - CoinZones     → Zone[] (rectangle objects)
  */
 
 import { readFileSync, writeFileSync } from 'fs';
@@ -25,24 +36,44 @@ interface TiledMap {
   height: number;
   tilewidth: number;
   tileheight: number;
-  tilesets: { firstgid: number }[];
+  tilesets: { firstgid: number; name?: string; source?: string }[];
   layers: TiledLayer[];
 }
 
-type TiledLayer = TiledTileLayer | TiledObjectLayer;
+type TiledLayer = TiledTileLayer | TiledObjectLayer | TiledGroupLayer;
+
+interface TiledChunk {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  data: number[];
+}
 
 interface TiledTileLayer {
   type: 'tilelayer';
   name: string;
-  data: number[];
+  /** Flat data array (fixed-size maps). */
+  data?: number[];
+  /** Chunked data (infinite maps). */
+  chunks?: TiledChunk[];
+  startx?: number;
+  starty?: number;
   width: number;
   height: number;
+  visible: boolean;
 }
 
 interface TiledObjectLayer {
   type: 'objectgroup';
   name: string;
   objects: TiledObject[];
+}
+
+interface TiledGroupLayer {
+  type: 'group';
+  name: string;
+  layers: TiledLayer[];
 }
 
 interface TiledObject {
@@ -56,7 +87,7 @@ interface TiledObject {
   ellipse?: boolean;
 }
 
-// ------- Bomberman output schema -------
+// ------- Output schema -------
 
 interface BombermanMap {
   id: string;
@@ -71,6 +102,21 @@ interface BombermanMap {
   bombZones: { x: number; y: number; w: number; h: number }[];
 }
 
+// ------- Helpers -------
+
+/** Recursively flatten all layers (handles group layers). */
+function flattenLayers(layers: TiledLayer[]): TiledLayer[] {
+  const out: TiledLayer[] = [];
+  for (const l of layers) {
+    if (l.type === 'group') {
+      out.push(...flattenLayers((l as TiledGroupLayer).layers));
+    } else {
+      out.push(l);
+    }
+  }
+  return out;
+}
+
 // ------- Main -------
 
 const inputPath = process.argv[2];
@@ -81,50 +127,177 @@ if (!inputPath) {
 
 const raw = readFileSync(inputPath, 'utf-8');
 const tiled: TiledMap = JSON.parse(raw);
-const firstGid = tiled.tilesets[0]?.firstgid ?? 1;
 const ts = tiled.tilewidth;
 const mapW = tiled.width;
 const mapH = tiled.height;
 
-console.log(`Map: ${mapW}x${mapH}, tileSize: ${ts}, firstGid: ${firstGid}`);
+console.log(`Map: ${mapW}x${mapH}, tileSize: ${ts}`);
+console.log(`Tilesets: ${tiled.tilesets.map(t => `${t.name ?? t.source}(gid ${t.firstgid})`).join(', ')}`);
 
-// Tile layer → 2D grid
-const tileLayer = tiled.layers.find((l): l is TiledTileLayer => l.type === 'tilelayer');
-if (!tileLayer) { console.error('No tile layer found'); process.exit(1); }
+const allLayers = flattenLayers(tiled.layers);
+const tileLayers = allLayers.filter((l): l is TiledTileLayer => l.type === 'tilelayer');
+const objectLayers = allLayers.filter((l): l is TiledObjectLayer => l.type === 'objectgroup');
 
-const grid: number[][] = [];
-for (let row = 0; row < mapH; row++) {
-  const gridRow: number[] = [];
-  for (let col = 0; col < mapW; col++) {
-    const gid = tileLayer.data[row * mapW + col];
-    const tileId = gid - firstGid;
-    gridRow.push(Math.max(0, tileId));
+console.log(`Tile layers: ${tileLayers.map(l => l.name).join(', ')}`);
+console.log(`Object layers: ${objectLayers.map(l => l.name).join(', ')}`);
+
+/**
+ * Read a gid from a tile layer at (tileX, tileY), handling both flat data
+ * arrays (fixed-size maps) and chunked arrays (infinite maps).
+ */
+function readGid(layer: TiledTileLayer, tileX: number, tileY: number): number {
+  if (layer.data) {
+    // Flat data — tileX/tileY are relative to (0,0).
+    const idx = tileY * mapW + tileX;
+    return layer.data[idx] ?? 0;
   }
-  grid.push(gridRow);
+  if (layer.chunks) {
+    // Chunked (infinite) — convert zero-based grid coords back to absolute
+    // Tiled tile coords by adding the chunk-space origin (which is the
+    // min chunk x/y across all layers).
+    let minChunkX = Infinity, minChunkY = Infinity;
+    for (const c of layer.chunks) {
+      minChunkX = Math.min(minChunkX, c.x);
+      minChunkY = Math.min(minChunkY, c.y);
+    }
+    const absX = tileX + minChunkX;
+    const absY = tileY + minChunkY;
+    for (const chunk of layer.chunks) {
+      if (absX >= chunk.x && absX < chunk.x + chunk.width &&
+          absY >= chunk.y && absY < chunk.y + chunk.height) {
+        const localX = absX - chunk.x;
+        const localY = absY - chunk.y;
+        return chunk.data[localY * chunk.width + localX] ?? 0;
+      }
+    }
+    return 0;
+  }
+  return 0;
 }
 
+/**
+ * For infinite (chunked) maps, derive the true map dimensions from the
+ * union of all tile layer chunks. The header's width/height is just a
+ * viewport hint and is unreliable.
+ */
+const isInfinite = tileLayers.some(l => !!l.chunks);
+let actualW = mapW;
+let actualH = mapH;
+if (isInfinite) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const layer of tileLayers) {
+    if (!layer.chunks) continue;
+    for (const chunk of layer.chunks) {
+      minX = Math.min(minX, chunk.x);
+      minY = Math.min(minY, chunk.y);
+      maxX = Math.max(maxX, chunk.x + chunk.width);
+      maxY = Math.max(maxY, chunk.y + chunk.height);
+    }
+  }
+  actualW = maxX - minX;
+  actualH = maxY - minY;
+  console.log(`\nInfinite map detected. Chunk bounds: (${minX},${minY}) to (${maxX},${maxY}) = ${actualW}x${actualH}`);
+}
+
+// Override map dimensions for infinite maps
+const finalW = isInfinite ? actualW : mapW;
+const finalH = isInfinite ? actualH : mapH;
+
+/**
+ * For infinite maps, objects and chunks use absolute Tiled coordinates that
+ * can be negative. We need an origin offset to translate them into our
+ * zero-based grid. The origin is the top-left corner of the chunk bounding
+ * box, expressed in pixels.
+ */
+let originPixelX = 0;
+let originPixelY = 0;
+if (isInfinite) {
+  let minChunkX = Infinity, minChunkY = Infinity;
+  for (const layer of tileLayers) {
+    if (!layer.chunks) continue;
+    for (const chunk of layer.chunks) {
+      minChunkX = Math.min(minChunkX, chunk.x);
+      minChunkY = Math.min(minChunkY, chunk.y);
+    }
+  }
+  originPixelX = minChunkX * ts;
+  originPixelY = minChunkY * ts;
+  console.log(`Origin offset: (${originPixelX}, ${originPixelY}) pixels = (${minChunkX}, ${minChunkY}) tiles`);
+}
+
+// Build the walkability grid
+const grid: number[][] = [];
+
+const collisionLayer = tileLayers.find(l => l.name.toLowerCase() === 'collision');
+
+if (collisionLayer) {
+  // Mode 1: Collision layer. Any non-zero gid = wall (1), zero = floor (0).
+  console.log(`Using Collision layer for walkability`);
+  for (let row = 0; row < finalH; row++) {
+    const gridRow: number[] = [];
+    for (let col = 0; col < finalW; col++) {
+      const gid = readGid(collisionLayer, col, row);
+      gridRow.push(gid === 0 ? 0 : 1);
+    }
+    grid.push(gridRow);
+  }
+} else {
+  // Mode 2: Legacy single-layer fallback (only works for non-chunked maps).
+  console.log(`\n⚠ No "Collision" layer found — using legacy first-tile-layer mode`);
+  const firstTileLayer = tileLayers[0];
+  if (!firstTileLayer) { console.error('No tile layers found at all'); process.exit(1); }
+  if (firstTileLayer.chunks) {
+    console.error('ERROR: Infinite (chunked) map requires a "Collision" tile layer.');
+    console.error('In Tiled, create a new Tile Layer named "Collision".');
+    console.error('Paint any tile on cells that should block movement (walls, abyss).');
+    console.error('Leave walkable floors empty.');
+    process.exit(1);
+  }
+  const firstGid = tiled.tilesets[0]?.firstgid ?? 1;
+  for (let row = 0; row < finalH; row++) {
+    const gridRow: number[] = [];
+    for (let col = 0; col < finalW; col++) {
+      const gid = readGid(firstTileLayer, col, row);
+      const tileId = gid - firstGid;
+      gridRow.push(Math.max(0, tileId));
+    }
+    grid.push(gridRow);
+  }
+}
+
+// Count walkable vs blocked
+let walkable = 0;
+let blocked = 0;
+for (let y = 0; y < finalH; y++) {
+  for (let x = 0; x < finalW; x++) {
+    if (grid[y][x] === 0) walkable++; else blocked++;
+  }
+}
+console.log(`Grid: ${walkable} walkable, ${blocked} blocked (${((blocked / (finalW * finalH)) * 100).toFixed(0)}% walls)`);
+
+// Object layer lookup
 function findObjectLayer(...names: string[]): TiledObjectLayer | undefined {
   for (const name of names) {
-    const l = tiled.layers.find((layer): layer is TiledObjectLayer =>
-      layer.type === 'objectgroup' && layer.name === name,
-    );
+    const l = objectLayers.find(layer => layer.name === name);
     if (l) return l;
   }
   return undefined;
 }
 
 function toTile(px: number, py: number): { x: number; y: number } {
-  let tx = Math.floor(px / ts);
-  let ty = Math.floor(py / ts);
-  tx = Math.max(0, Math.min(mapW - 1, tx));
-  ty = Math.max(0, Math.min(mapH - 1, ty));
+  // Subtract the origin so negative Tiled coords become zero-based grid coords
+  let tx = Math.floor((px - originPixelX) / ts);
+  let ty = Math.floor((py - originPixelY) / ts);
+  tx = Math.max(0, Math.min(finalW - 1, tx));
+  ty = Math.max(0, Math.min(finalH - 1, ty));
+  // If landing on a wall, nudge to nearest floor tile
   if (grid[ty][tx] !== 0) {
     for (let r = 1; r <= 3; r++) {
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
           const ny = ty + dy;
           const nx = tx + dx;
-          if (ny >= 0 && ny < mapH && nx >= 0 && nx < mapW && grid[ny][nx] === 0) {
+          if (ny >= 0 && ny < finalH && nx >= 0 && nx < finalW && grid[ny][nx] === 0) {
             return { x: nx, y: ny };
           }
         }
@@ -149,8 +322,8 @@ function rectLayerToZones(layer: TiledObjectLayer | undefined): { x: number; y: 
   return layer.objects
     .filter(o => o.width > 0 && o.height > 0)
     .map(o => ({
-      x: Math.floor(o.x / ts),
-      y: Math.floor(o.y / ts),
+      x: Math.floor((o.x - originPixelX) / ts),
+      y: Math.floor((o.y - originPixelY) / ts),
       w: Math.ceil(o.width / ts),
       h: Math.ceil(o.height / ts),
     }));
@@ -161,17 +334,29 @@ const escapeTiles = pointLayerToTiles(findObjectLayer('EscapeTiles', 'Exits'));
 const bombZones = rectLayerToZones(findObjectLayer('BombZones', 'TurretZones'));
 const coinZones = rectLayerToZones(findObjectLayer('CoinZones', 'GoodiesZones', 'GoodieZones'));
 
-console.log(`Spawns: ${spawns.length}`);
-console.log(`EscapeTiles: ${escapeTiles.length}`);
+console.log(`\nSpawns: ${spawns.length}${spawns.length > 0 ? ' → ' + spawns.map(s => `(${s.x},${s.y})`).join(', ') : ''}`);
+console.log(`EscapeTiles: ${escapeTiles.length}${escapeTiles.length > 0 ? ' → ' + escapeTiles.map(e => `(${e.x},${e.y})`).join(', ') : ''}`);
 console.log(`BombZones: ${bombZones.length}`);
 console.log(`CoinZones: ${coinZones.length}`);
+
+// Validate spawns land on walkable tiles
+for (const s of spawns) {
+  if (grid[s.y]?.[s.x] !== 0) {
+    console.warn(`⚠ Spawn ${s.id} at (${s.x},${s.y}) is on a blocked tile!`);
+  }
+}
+for (const e of escapeTiles) {
+  if (grid[e.y]?.[e.x] !== 0) {
+    console.warn(`⚠ EscapeTile ${e.id} at (${e.x},${e.y}) is on a blocked tile!`);
+  }
+}
 
 const mapId = basename(inputPath, '.tmj');
 const output: BombermanMap = {
   id: mapId,
   name: mapId.replace(/[-_]/g, ' '),
-  width: mapW,
-  height: mapH,
+  width: finalW,
+  height: finalH,
   tileSize: ts,
   grid,
   spawns,
@@ -182,4 +367,4 @@ const output: BombermanMap = {
 
 const outPath = join(dirname(inputPath), `${mapId}.json`);
 writeFileSync(outPath, JSON.stringify(output, null, 2));
-console.log(`\nWritten: ${outPath}`);
+console.log(`\n✓ Written: ${outPath}`);

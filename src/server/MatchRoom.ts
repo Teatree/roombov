@@ -14,7 +14,8 @@
 
 import type { Server } from 'socket.io';
 import type { ClientToServerEvents, ServerToClientEvents } from '../shared/types/messages.ts';
-import type { MatchConfig, MatchState, PlayerAction, CoinBag, CollectibleBomb } from '../shared/types/match.ts';
+import type { MatchConfig, MatchState, PlayerAction, CoinBag, CollectibleBomb, DroppedBody } from '../shared/types/match.ts';
+import type { LootBombMsg } from '../shared/types/messages.ts';
 import type { BombermanState } from '../shared/types/bomberman.ts';
 import type { MapData } from '../shared/types/map.ts';
 import type { PlayerProfile } from '../shared/types/player-profile.ts';
@@ -183,10 +184,113 @@ export class MatchRoom {
 
   submitAction(playerId: string, action: PlayerAction): void {
     if (this.state.phase !== 'input') return;
-    // Validate: playerId must be in this room and bomberman alive/not escaped
     const b = this.state.bombermen.find(bb => bb.playerId === playerId);
     if (!b || !b.alive || b.escaped) return;
     this.pendingActions.set(playerId, action);
+  }
+
+  /**
+   * Real-time loot handler — not turn-gated.
+   *
+   * Validates the player is alive, on the source tile, and the slot logic
+   * from the brief:
+   *  - Empty slot: fill with the looted bomb (up to stack limit)
+   *  - Same-type slot: top up (up to stack limit)
+   *  - Different-type slot: swap — old stack returns to the source
+   *
+   * On success, mutates MatchState in place and broadcasts a fresh snapshot.
+   */
+  handleLoot(playerId: string, msg: LootBombMsg): void {
+    const me = this.state.bombermen.find(b => b.playerId === playerId);
+    if (!me || !me.alive || me.escaped) return;
+
+    // Target slot must be 1..4 (slot 0 is Rock, never writable)
+    if (msg.targetSlotIndex < 1 || msg.targetSlotIndex > 4) return;
+    const invIdx = msg.targetSlotIndex - 1;
+
+    const stackLimit = BALANCE.match.bombSlotStackLimit;
+
+    if (msg.sourceKind === 'collectible') {
+      const pickup = this.state.collectibleBombs.find(
+        p => p.id === msg.sourceId && p.x === me.x && p.y === me.y,
+      );
+      if (!pickup) return;
+      if (pickup.type !== msg.bombType) return;
+
+      const slot = me.inventory.slots[invIdx];
+      if (!slot) {
+        // Empty slot — fill it
+        const take = Math.min(pickup.count, stackLimit);
+        me.inventory.slots[invIdx] = { type: pickup.type, count: take };
+        pickup.count -= take;
+      } else if (slot.type === pickup.type) {
+        // Same type — top up
+        const room = stackLimit - slot.count;
+        const take = Math.min(pickup.count, room);
+        slot.count += take;
+        pickup.count -= take;
+      } else {
+        // Different type — swap: old stack → create a new collectible at this tile
+        const oldType = slot.type;
+        const oldCount = slot.count;
+        const take = Math.min(pickup.count, stackLimit);
+        me.inventory.slots[invIdx] = { type: pickup.type, count: take };
+        pickup.count -= take;
+        // Drop old bombs as a new collectible on this tile
+        this.state.collectibleBombs.push({
+          id: `swap_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+          x: me.x,
+          y: me.y,
+          type: oldType,
+          count: oldCount,
+        });
+      }
+
+      // Remove the pickup if fully consumed
+      if (pickup.count <= 0) {
+        this.state.collectibleBombs = this.state.collectibleBombs.filter(p => p.id !== msg.sourceId);
+      }
+
+    } else if (msg.sourceKind === 'body') {
+      const body = this.state.bodies.find(
+        b => b.id === msg.sourceId && b.x === me.x && b.y === me.y,
+      );
+      if (!body) return;
+
+      const bombEntry = body.bombs.find(b => b.type === msg.bombType);
+      if (!bombEntry || bombEntry.count <= 0) return;
+
+      const slot = me.inventory.slots[invIdx];
+      if (!slot) {
+        const take = Math.min(bombEntry.count, stackLimit);
+        me.inventory.slots[invIdx] = { type: bombEntry.type, count: take };
+        bombEntry.count -= take;
+      } else if (slot.type === bombEntry.type) {
+        const room = stackLimit - slot.count;
+        const take = Math.min(bombEntry.count, room);
+        slot.count += take;
+        bombEntry.count -= take;
+      } else {
+        // Swap: old bombs go back onto the body
+        const oldType = slot.type;
+        const oldCount = slot.count;
+        const take = Math.min(bombEntry.count, stackLimit);
+        me.inventory.slots[invIdx] = { type: bombEntry.type, count: take };
+        bombEntry.count -= take;
+        // Return old to body
+        const existing = body.bombs.find(b => b.type === oldType);
+        if (existing) {
+          existing.count += oldCount;
+        } else {
+          body.bombs.push({ type: oldType, count: oldCount });
+        }
+      }
+
+      body.bombs = body.bombs.filter(b => b.count > 0);
+    }
+
+    // Broadcast the updated state immediately so the client sees the change
+    this.broadcastState();
   }
 
   private scheduleInputPhaseEnd(): void {
@@ -238,17 +342,41 @@ export class MatchRoom {
   private async finalize(): Promise<void> {
     if (this.phaseTimer) clearTimeout(this.phaseTimer);
 
-    // Write coins to profiles — brief: escaped players keep coins, dead players lose
-    // (coins fall out of them and land in the body, which the living can loot)
     for (const participant of this.participants) {
       const b = this.state.bombermen.find(bb => bb.playerId === participant.playerId);
       if (!b) continue;
-      // Only coins still "on" the Bomberman count — bodies don't persist in the profile
-      participant.profile.coins += b.coins;
-      await this.playerStore.save(participant.profile);
-      // Push updated profile to that player's socket if still connected
+      const profile = participant.profile;
+      const ownedBomberman = profile.ownedBombermen.find(ob => ob.id === b.bombermanId);
+
+      if (b.escaped) {
+        // Escaped: keep coins earned during the match
+        profile.coins += b.coins;
+
+        // Sync the match-end inventory back to the profile.
+        // Spent bombs are gone, looted bombs are added.
+        if (ownedBomberman) {
+          ownedBomberman.inventory = {
+            slots: b.inventory.slots.map(s => (s ? { ...s } : null)),
+          };
+        }
+      } else {
+        // Dead: lose the Bomberman entirely — strip from the profile roster.
+        // Coins on the Bomberman were already dropped as a body in-match.
+        const idx = profile.ownedBombermen.findIndex(ob => ob.id === b.bombermanId);
+        if (idx >= 0) {
+          profile.ownedBombermen.splice(idx, 1);
+        }
+        // Clear equipped if it was the one that died
+        if (profile.equippedBombermanId === b.bombermanId) {
+          profile.equippedBombermanId = profile.ownedBombermen.length > 0
+            ? profile.ownedBombermen[0].id
+            : null;
+        }
+      }
+
+      await this.playerStore.save(profile);
       const sock = this.io.sockets.sockets.get(participant.socketId);
-      if (sock) sock.emit('profile', { profile: participant.profile });
+      if (sock) sock.emit('profile', { profile });
     }
 
     this.io.to(this.id).emit('match_end', {

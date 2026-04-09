@@ -21,6 +21,7 @@ export class MainMenuScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.events.once('shutdown', this.shutdown, this);
     const { width, height } = this.scale;
 
     this.add.text(width / 2, 60, 'BOMBERMAN', {

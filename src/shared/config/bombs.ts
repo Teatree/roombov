@@ -57,8 +57,9 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
   banana: {
     type: 'banana',
     name: 'Banana',
-    fuseTurns: 0,
-    // Spawns 4 child bananas diagonally; each child is a 1-turn-fuse contact plus-r1
+    fuseTurns: 1,
+    // Turn 1: lands and sits. Turn 2: scatters 4 children diagonally.
+    // Turn 3: each child explodes in + pattern x1.
     behavior: {
       kind: 'scatter',
       offsets: [
@@ -67,10 +68,18 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
         { dx: -1, dy: 1 },
         { dx: 1, dy: 1 },
       ],
-      childType: 'contact',
+      childType: 'banana_child',
     },
     price: 45,
-    description: 'Scatters 4 sub-bombs diagonally on impact; each explodes next turn.',
+    description: 'Lands, waits 1 turn, scatters 4 sub-bombs diagonally; each explodes next turn.',
+  },
+  banana_child: {
+    type: 'banana_child',
+    name: 'Banana Piece',
+    fuseTurns: 1,
+    behavior: { kind: 'explode', shape: { kind: 'plus', radius: 1 } },
+    price: 0, // internal only, not purchasable
+    description: 'A scattered banana piece. Explodes in + pattern x1 after 1 turn.',
   },
   flare: {
     type: 'flare',

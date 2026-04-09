@@ -101,9 +101,33 @@ export interface TurnResultMsg {
 }
 
 export interface MatchEndMsg {
-  endReason: 'all_escaped' | 'all_dead' | 'turn_limit' | 'last_standing';
+  endReason: 'all_escaped' | 'all_dead' | 'turn_limit';
   escapedPlayerIds: string[];
   coinsEarned: Record<string, number>;
+}
+
+// --- Loot (real-time during match, not turn-gated) ---
+
+/**
+ * Client → server: pick up a bomb from a collectible or body on the player's
+ * current tile. Server validates proximity and slot logic, then broadcasts
+ * an updated match_state if the loot succeeds.
+ *
+ * `targetSlotIndex` uses the same convention as bomb throws:
+ *   1..4 → inventory.slots[0..3]  (slot 0 = Rock is never a valid target)
+ *
+ * If `targetSlotIndex` already contains a different bomb type, the existing
+ * stack is swapped back to the source (per the brief).
+ */
+export interface LootBombMsg {
+  /** 'collectible' for floor pickups, 'body' for corpse loot. */
+  sourceKind: 'collectible' | 'body';
+  /** Id of the CollectibleBomb or DroppedBody. */
+  sourceId: string;
+  /** The bomb type the player wants to take. */
+  bombType: BombType;
+  /** Which inventory slot to put it in (1..4). */
+  targetSlotIndex: number;
 }
 
 /** Server → client result of a shop action. Usable for user-facing toast. */
@@ -145,4 +169,5 @@ export interface ClientToServerEvents {
   join_match: (msg: JoinMatchMsg) => void;
   leave_match: () => void;
   player_action: (msg: PlayerActionMsg) => void;
+  loot_bomb: (msg: LootBombMsg) => void;
 }

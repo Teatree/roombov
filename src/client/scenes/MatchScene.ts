@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { NetworkManager } from '../NetworkManager.ts';
 import { ProfileStore } from '../ClientState.ts';
-import { MapRenderer } from '../systems/MapRenderer.ts';
+import { MapRenderer, preloadTiledMap } from '../systems/MapRenderer.ts';
 import { CameraController } from '../systems/CameraController.ts';
 import { drawBomberman } from '../systems/BombermanRenderer.ts';
 import { FogRenderer } from '../systems/FogRenderer.ts';
@@ -49,8 +49,10 @@ export class MatchScene extends Phaser.Scene {
   private myPlayerId: string | null = null;
   private inputMode: InputMode = { kind: 'idle' };
   private lastPhase: string | null = null;
-  /** Set when the player's own Bomberman dies, so match_end knows to delay. */
   private myDeathAt: number | null = null;
+  private tiledInfo: ReturnType<typeof preloadTiledMap> = null;
+  /** Dedicated HUD camera that ignores world zoom/pan. */
+  private hudCamera: Phaser.Cameras.Scene2D.Camera | null = null;
 
   // World-space display layers (draw order enforced by setDepth)
   // Depths: map=0, fog=50, path=60, bombs=80, entities=100, highlights=150, HUD=1000
@@ -75,11 +77,26 @@ export class MatchScene extends Phaser.Scene {
   private slotHighlights: Phaser.GameObjects.Graphics[] = [];
   private errorText!: Phaser.GameObjects.Text;
 
+  // Loot panel — appears above the bomb tray when standing on loot
+  private lootPanelObjects: Phaser.GameObjects.GameObject[] = [];
+  private lootPanelVisible = false;
+  /** If set, the player clicked a loot bomb that doesn't fit — highlight it
+   * and the next inventory-slot click will swap. */
+  private lootPendingSwap: { sourceKind: 'collectible' | 'body'; sourceId: string; bombType: import('@shared/types/bombs.ts').BombType; count: number } | null = null;
+
   constructor() {
     super({ key: 'MatchScene' });
   }
 
+  preload(): void {
+    // Pre-queue Tiled assets so they're ready by create(). If main_map
+    // doesn't have a .tmj in public/maps/ this returns null and we fall
+    // back to procedural rendering.
+    this.tiledInfo = preloadTiledMap(this, 'main_map');
+  }
+
   create(): void {
+    this.events.once('shutdown', this.shutdown, this);
     const profile = ProfileStore.get();
     this.myPlayerId = profile?.id ?? null;
     console.log(`[MatchScene] create(): myPlayerId = ${this.myPlayerId}`);
@@ -96,48 +113,38 @@ export class MatchScene extends Phaser.Scene {
     this.effectsLayer.add(this.highlightGraphics);
     this.pathGraphics = this.add.graphics().setDepth(60);
 
+    // HUD uses a second camera that never zooms/scrolls. It ignores all world
+    // containers so it only draws HUD objects. The main camera ignores HUD objects
+    // so it only draws the world.
+    this.hudCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height, false, 'hud');
+    this.hudCamera.setScroll(0, 0);
+    // Tell the HUD camera to ignore all world-space containers
+    this.hudCamera.ignore([this.bombLayer, this.entitiesLayer, this.effectsLayer, this.highlightGraphics, this.pathGraphics]);
+
     this.buildHud();
 
-    this.errorText = this.add.text(this.scale.width / 2, this.scale.height / 2, '', {
+    this.errorText = this.hud(this.add.text(this.scale.width / 2, this.scale.height / 2, '', {
       fontSize: '18px',
       color: '#ff4444',
       fontFamily: 'monospace',
       align: 'center',
       backgroundColor: '#1a0a0a',
       padding: { x: 24, y: 16 },
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(10000).setVisible(false);
+    }).setOrigin(0.5).setDepth(10000).setVisible(false));
 
     const socket = NetworkManager.getSocket();
     socket.on('match_state', (msg) => this.onMatchState(msg.state));
     socket.on('turn_result', (msg) => this.onTurnResult(msg.events));
     socket.on('match_end', (msg) => {
-      const transition = (): void => {
-        const me = this.state?.bombermen.find(b => b.playerId === this.myPlayerId);
-        const coinsEarned = msg.coinsEarned[this.myPlayerId ?? ''] ?? 0;
-        this.scene.start('ResultsScene', {
-          winnerId: msg.endReason === 'last_standing'
-            ? (this.state?.bombermen.find(b => b.alive)?.playerId ?? null)
-            : null,
-          coinsEarned,
-          escaped: msg.escapedPlayerIds.includes(this.myPlayerId ?? ''),
-          survived: me?.alive ?? false,
-          turnsPlayed: this.state?.turnNumber ?? 0,
-        });
-      };
-
-      // If our Bomberman died this turn, hold on the match screen for 3s
-      // so the death animation + final explosion can play out. `myDeathAt`
-      // is set by the `died` turn event.
-      if (this.myDeathAt !== null) {
-        const elapsed = Date.now() - this.myDeathAt;
-        const remaining = Math.max(0, 3000 - elapsed);
-        this.time.delayedCall(remaining, transition);
-      } else {
-        transition();
-      }
+      // If we already transitioned (e.g. client-side death→results), ignore.
+      if (this.myDeathAt !== null) return;
+      this.transitionToResults(msg);
     });
 
-    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => this.onClick(pointer));
+    // Only left-click triggers game actions. Middle/right are reserved for camera pan.
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (pointer.leftButtonDown()) this.onClick(pointer);
+    });
 
     // Keyboard shortcuts 1-5 for the bomb slots
     const kb = this.input.keyboard;
@@ -172,6 +179,11 @@ export class MatchScene extends Phaser.Scene {
     this.slotLabelTexts = [];
     this.slotCountTexts = [];
     this.slotHighlights = [];
+    this.hudObjects = [];
+    if (this.hudCamera) {
+      this.cameras.remove(this.hudCamera);
+      this.hudCamera = null;
+    }
     this.input.keyboard?.removeAllListeners();
   }
 
@@ -192,10 +204,15 @@ export class MatchScene extends Phaser.Scene {
         this.mapData = await loadMapById(state.mapId);
         console.log(`[MatchScene] map loaded: ${this.mapData.width}x${this.mapData.height}`);
         this.mapRenderer?.destroy();
-        this.mapRenderer = new MapRenderer(this, this.mapData, 0);
+        this.mapRenderer = new MapRenderer(this, this.mapData, 0, this.tiledInfo);
         this.mapRenderer.renderEscapeTiles(this, this.mapData.escapeTiles);
+        // Tell the HUD camera to ignore everything the map renderer created
+        if (this.hudCamera) {
+          this.mapRenderer.ignoreFromCamera(this.hudCamera);
+        }
         this.fogRenderer?.destroy();
         this.fogRenderer = new FogRenderer(this, this.mapData, BALANCE.match.losRadius, 50);
+        if (this.hudCamera) this.fogRenderer.ignoreFromCamera(this.hudCamera);
         this.bombRenderer?.destroy();
         this.bombRenderer = new BombRenderer(this, this.bombLayer, this.mapData.tileSize);
         const bounds = this.mapRenderer.getWorldBounds();
@@ -284,6 +301,17 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
+  private transitionToResults(msg?: { endReason: string; escapedPlayerIds: string[]; coinsEarned: Record<string, number> }): void {
+    const me = this.state?.bombermen.find(b => b.playerId === this.myPlayerId);
+    this.scene.start('ResultsScene', {
+      winnerId: null,
+      coinsEarned: msg?.coinsEarned?.[this.myPlayerId ?? ''] ?? 0,
+      escaped: msg?.escapedPlayerIds?.includes(this.myPlayerId ?? '') ?? false,
+      survived: me?.alive ?? false,
+      turnsPlayed: this.state?.turnNumber ?? 0,
+    });
+  }
+
   /** One-shot visuals from the server's authoritative turn resolution. */
   private onTurnResult(events: Array<{ kind: string; [k: string]: unknown }>): void {
     if (!this.bombRenderer) return;
@@ -321,9 +349,7 @@ export class MatchScene extends Phaser.Scene {
       }
     }
 
-    // Third pass: deaths. Play the toppling animation on every bomberman
-    // that died this turn and remember our own death so match_end knows
-    // to hold the match scene open for the 3s minimum.
+    // Third pass: deaths.
     for (const ev of events) {
       if (ev.kind !== 'died') continue;
       const playerId = ev.playerId as string;
@@ -332,8 +358,52 @@ export class MatchScene extends Phaser.Scene {
       this.bombRenderer.spawnDeathAnimation(x, y);
       if (playerId === this.myPlayerId) {
         this.myDeathAt = Date.now();
+        // Clear all input — dead players can't act
+        this.inputMode = { kind: 'idle' };
+        this.lootPendingSwap = null;
+        // 2 seconds after death animation finishes → Results screen
+        this.time.delayedCall(2000, () => {
+          this.transitionToResults();
+        });
       }
     }
+
+    // Fourth pass: coin collection visuals.
+    if (this.mapData) {
+      const ts = this.mapData.tileSize;
+      for (const ev of events) {
+        if (ev.kind === 'coin_collected') {
+          const me = this.state?.bombermen.find(b => b.playerId === ev.playerId as string);
+          if (me) this.spawnCoinPopup(me.x * ts + ts / 2, me.y * ts + ts / 2 - ts * 0.5, ev.amount as number);
+        }
+        if (ev.kind === 'body_looted') {
+          const me = this.state?.bombermen.find(b => b.playerId === ev.playerId as string);
+          const coins = ev.coins as number;
+          if (me && coins > 0) this.spawnCoinPopup(me.x * ts + ts / 2, me.y * ts + ts / 2 - ts * 0.5, coins);
+        }
+      }
+    }
+  }
+
+  /** Floating "+N" coin text that rises and fades out. */
+  private spawnCoinPopup(worldX: number, worldY: number, amount: number): void {
+    const popup = this.add.text(worldX, worldY, `+${amount}¢`, {
+      fontSize: '16px',
+      color: '#ffd944',
+      fontFamily: 'monospace',
+      fontStyle: 'bold',
+      stroke: '#553300',
+      strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(500);
+
+    this.tweens.add({
+      targets: popup,
+      y: worldY - 40,
+      alpha: 0,
+      duration: 1200,
+      ease: 'Cubic.easeOut',
+      onComplete: () => popup.destroy(),
+    });
   }
 
   private myBomberman(): BombermanState | null {
@@ -473,24 +543,32 @@ export class MatchScene extends Phaser.Scene {
     if (!this.state) return;
     if (!this.mapData) return;
 
-    // HUD slots always intercept first (screen-space hit test).
+    // Dead players can't interact with anything
+    const me = this.myBomberman();
+    if (!me || !me.alive) return;
+
+    // Loot panel intercepts first (it sits above the bomb tray).
+    const lootSlot = this.hitTestLootPanel(pointer.x, pointer.y);
+    if (lootSlot >= 0) {
+      this.onLootSlotClicked(lootSlot);
+      return;
+    }
+
+    // HUD bomb slots
     const hudSlot = this.hitTestHud(pointer.x, pointer.y);
     if (hudSlot >= 0) {
       this.onSlotClicked(hudSlot);
       return;
     }
 
-    // World-space tile click. Staging is allowed regardless of phase —
-    // flushStagedAction() is what decides when to actually send.
+    // World-space tile click
     const ts = this.mapData.tileSize;
     const worldPoint = pointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2;
     const tx = Math.floor(worldPoint.x / ts);
     const ty = Math.floor(worldPoint.y / ts);
 
     if (tx < 0 || ty < 0 || tx >= this.mapData.width || ty >= this.mapData.height) return;
-
-    const me = this.myBomberman();
-    if (!me || !me.alive || me.escaped) return;
+    if (me.escaped) return;
 
     // Click on self = cancel any staged action
     if (tx === me.x && ty === me.y) {
@@ -529,38 +607,49 @@ export class MatchScene extends Phaser.Scene {
     NetworkManager.getSocket().emit('player_action', { action });
   }
 
-  // --- HUD (screen-space root objects, scrollFactor 0) ---
+  // --- HUD (rendered on a separate camera that never zooms/scrolls) ---
 
   private hudTrayX = 0;
   private hudTrayY = 0;
+  private hudObjects: Phaser.GameObjects.GameObject[] = [];
+
+  /** Tag an object as HUD-only: visible on hudCamera, hidden from main cam. */
+  private hud<T extends Phaser.GameObjects.GameObject>(obj: T): T {
+    if (this.hudCamera) {
+      this.cameras.main.ignore(obj);
+    }
+    this.hudObjects.push(obj);
+    return obj;
+  }
 
   private buildHud(): void {
     const { width, height } = this.scale;
 
     // Top bar
-    const topBg = this.add.graphics().setScrollFactor(0).setDepth(1000);
+    const topBg = this.add.graphics().setDepth(1000);
     topBg.fillStyle(0x0a0a14, 0.85);
     topBg.fillRect(0, 0, width, 48);
+    this.hud(topBg);
 
-    this.phaseText = this.add.text(20, 14, 'Phase', {
+    this.phaseText = this.hud(this.add.text(20, 14, 'Phase', {
       fontSize: '16px', color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setScrollFactor(0).setDepth(1001);
+    }).setDepth(1001));
 
-    this.timerText = this.add.text(180, 14, '0.0s', {
+    this.timerText = this.hud(this.add.text(180, 14, '0.0s', {
       fontSize: '18px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setScrollFactor(0).setDepth(1001);
+    }).setDepth(1001));
 
-    this.turnText = this.add.text(width / 2, 14, 'Turn 0 / 50', {
+    this.turnText = this.hud(this.add.text(width / 2, 14, 'Turn 0 / 50', {
       fontSize: '16px', color: '#aaaaaa', fontFamily: 'monospace',
-    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(1001);
+    }).setOrigin(0.5, 0).setDepth(1001));
 
-    this.hpText = this.add.text(width - 220, 14, 'HP --', {
+    this.hpText = this.hud(this.add.text(width - 220, 14, 'HP --', {
       fontSize: '16px', color: '#ff6666', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setScrollFactor(0).setDepth(1001);
+    }).setDepth(1001));
 
-    this.coinsText = this.add.text(width - 100, 14, '0¢', {
+    this.coinsText = this.hud(this.add.text(width - 100, 14, '0¢', {
       fontSize: '16px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setScrollFactor(0).setDepth(1001);
+    }).setDepth(1001));
 
     // Bomb slot tray
     const trayWidth = SLOT_COUNT * SLOT_SIZE + (SLOT_COUNT - 1) * SLOT_GAP;
@@ -569,33 +658,32 @@ export class MatchScene extends Phaser.Scene {
     this.hudTrayX = trayX;
     this.hudTrayY = trayY;
 
-    const trayBg = this.add.graphics().setScrollFactor(0).setDepth(1000);
+    const trayBg = this.add.graphics().setDepth(1000);
     trayBg.fillStyle(0x0a0a14, 0.85);
     trayBg.fillRoundedRect(trayX - 10, trayY - 10, trayWidth + 20, SLOT_SIZE + 20, 6);
+    this.hud(trayBg);
 
     for (let i = 0; i < SLOT_COUNT; i++) {
       const sx = trayX + i * (SLOT_SIZE + SLOT_GAP);
 
-      // Filled rectangle — actual visible slot
       const rect = this.add.rectangle(sx, trayY, SLOT_SIZE, SLOT_SIZE, 0x1a1a2e, 1)
         .setOrigin(0, 0)
         .setStrokeStyle(2, 0x444466)
-        .setScrollFactor(0)
         .setDepth(1001);
-      this.slotRects.push(rect);
+      this.slotRects.push(this.hud(rect));
 
       const label = this.add.text(sx + SLOT_SIZE / 2, trayY + 12, '—', {
         fontSize: '10px', color: '#555', fontFamily: 'monospace', fontStyle: 'bold',
-      }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(1002);
-      this.slotLabelTexts.push(label);
+      }).setOrigin(0.5, 0).setDepth(1002);
+      this.slotLabelTexts.push(this.hud(label));
 
       const countTxt = this.add.text(sx + SLOT_SIZE / 2, trayY + SLOT_SIZE - 12, '', {
         fontSize: '14px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
-      }).setOrigin(0.5, 1).setScrollFactor(0).setDepth(1002);
-      this.slotCountTexts.push(countTxt);
+      }).setOrigin(0.5, 1).setDepth(1002);
+      this.slotCountTexts.push(this.hud(countTxt));
 
-      const highlight = this.add.graphics().setScrollFactor(0).setDepth(1003);
-      this.slotHighlights.push(highlight);
+      const highlight = this.add.graphics().setDepth(1003);
+      this.slotHighlights.push(this.hud(highlight));
     }
   }
 
@@ -627,14 +715,16 @@ export class MatchScene extends Phaser.Scene {
     this.turnText.setText(`Turn ${this.state.turnNumber} / ${BALANCE.match.turnLimit}`);
     this.turnText.setColor(turnsLeft <= BALANCE.match.turnsLeftWarning ? '#ff6644' : '#aaaaaa');
 
-    if (me) {
+    if (me && me.alive) {
       this.hpText.setText(`HP ${me.hp}/${BALANCE.match.bombermanMaxHp}`);
       this.hpText.setColor('#ff6666');
       this.coinsText.setText(`${me.coins}¢`);
       this.renderBombSlots(me);
+      this.renderLootPanel(me);
     } else {
       this.hpText.setText('DEAD');
       this.hpText.setColor('#666');
+      this.hideLootPanel();
     }
   }
 
@@ -697,8 +787,243 @@ export class MatchScene extends Phaser.Scene {
       this.inputMode = { kind: 'aim', slotIndex, targetX: prevTarget.x, targetY: prevTarget.y };
     }
 
+    // If a pending loot swap is active, clicking an inventory slot (1..4)
+    // triggers the swap instead of entering aim mode.
+    if (this.lootPendingSwap && slotIndex >= 1 && slotIndex <= 4) {
+      this.executeLootSwap(slotIndex);
+      return;
+    }
+
+    this.lootPendingSwap = null;
     this.flushStagedAction();
     this.rebuildEntities();
+    this.renderHud();
+  }
+
+  // --- Loot panel ---
+
+  private lootPanelY = 0;
+
+  private renderLootPanel(me: BombermanState): void {
+    this.hideLootPanel();
+    if (!this.state) return;
+
+    // Find what's on the player's tile
+    type LootSource = {
+      kind: 'collectible' | 'body';
+      id: string;
+      bombs: Array<{ type: import('@shared/types/bombs.ts').BombType; count: number }>;
+      label: string;
+    };
+
+    const sources: LootSource[] = [];
+    for (const p of this.state.collectibleBombs) {
+      if (p.x === me.x && p.y === me.y) {
+        sources.push({
+          kind: 'collectible',
+          id: p.id,
+          bombs: [{ type: p.type, count: p.count }],
+          label: 'COLLECTIBLE BOMB',
+        });
+      }
+    }
+    for (const b of this.state.bodies) {
+      if (b.x === me.x && b.y === me.y && b.bombs.length > 0) {
+        sources.push({
+          kind: 'body',
+          id: b.id,
+          bombs: b.bombs.map(bb => ({ type: bb.type, count: bb.count })),
+          label: 'BODY LOOT',
+        });
+      }
+    }
+
+    if (sources.length === 0) {
+      this.lootPanelVisible = false;
+      this.lootPendingSwap = null;
+      return;
+    }
+    this.lootPanelVisible = true;
+
+    const { width } = this.scale;
+    const panelWidth = SLOT_COUNT * SLOT_SIZE + (SLOT_COUNT - 1) * SLOT_GAP + 20;
+    const panelX = (width - panelWidth) / 2;
+    const panelY = this.hudTrayY - 100;
+    this.lootPanelY = panelY;
+
+    // Background
+    const bg = this.hud(this.add.graphics().setDepth(1010));
+    bg.fillStyle(0x112211, 0.92);
+    bg.fillRoundedRect(panelX, panelY, panelWidth, 90, 6);
+    bg.lineStyle(2, 0x44ff88, 0.9);
+    bg.strokeRoundedRect(panelX, panelY, panelWidth, 90, 6);
+    this.lootPanelObjects.push(bg);
+
+    // Title
+    const title = this.hud(this.add.text(width / 2, panelY + 12, sources[0].label, {
+      fontSize: '11px', color: '#44ff88', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5, 0).setDepth(1011));
+    this.lootPanelObjects.push(title);
+
+    // Flatten all lootable bombs across sources into 4 visual slots
+    const lootSlots: Array<{ kind: 'collectible' | 'body'; sourceId: string; type: import('@shared/types/bombs.ts').BombType; count: number }> = [];
+    for (const src of sources) {
+      for (const bomb of src.bombs) {
+        lootSlots.push({ kind: src.kind, sourceId: src.id, type: bomb.type, count: bomb.count });
+        if (lootSlots.length >= 4) break;
+      }
+      if (lootSlots.length >= 4) break;
+    }
+
+    const slotStartX = panelX + 10;
+    const slotY = panelY + 30;
+    const lootSlotSize = SLOT_SIZE;
+
+    for (let i = 0; i < 4; i++) {
+      const sx = slotStartX + i * (lootSlotSize + SLOT_GAP);
+      const loot = lootSlots[i];
+
+      const rect = this.hud(this.add.rectangle(sx, slotY, lootSlotSize, 50, 0x1a2a1e, 1)
+        .setOrigin(0, 0)
+        .setStrokeStyle(2, loot ? 0x44ff88 : 0x333355)
+        .setDepth(1011));
+      this.lootPanelObjects.push(rect);
+
+      if (!loot) {
+        const dash = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + 25, '—', {
+          fontSize: '12px', color: '#444', fontFamily: 'monospace',
+        }).setOrigin(0.5).setDepth(1012));
+        this.lootPanelObjects.push(dash);
+        continue;
+      }
+
+      const isPending = this.lootPendingSwap?.sourceId === loot.sourceId && this.lootPendingSwap?.bombType === loot.type;
+      const name = BOMB_CATALOG[loot.type].name;
+      const nameText = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + 12, name, {
+        fontSize: '9px', color: isPending ? '#ffcc44' : '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
+      }).setOrigin(0.5, 0).setDepth(1012));
+      this.lootPanelObjects.push(nameText);
+
+      const countText = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + 38, `x${loot.count}`, {
+        fontSize: '12px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
+      }).setOrigin(0.5, 1).setDepth(1012));
+      this.lootPanelObjects.push(countText);
+
+      if (isPending) {
+        const hlGfx = this.hud(this.add.graphics().setDepth(1013));
+        hlGfx.lineStyle(3, 0xffcc44, 1);
+        hlGfx.strokeRoundedRect(sx, slotY, lootSlotSize, 50, 4);
+        this.lootPanelObjects.push(hlGfx);
+      }
+    }
+  }
+
+  private hideLootPanel(): void {
+    for (const obj of this.lootPanelObjects) obj.destroy();
+    this.lootPanelObjects = [];
+    this.lootPanelVisible = false;
+  }
+
+  /** Hit-test the loot panel. Returns the loot slot index [0..3] or -1. */
+  private hitTestLootPanel(screenX: number, screenY: number): number {
+    if (!this.lootPanelVisible) return -1;
+    const { width } = this.scale;
+    const panelWidth = SLOT_COUNT * SLOT_SIZE + (SLOT_COUNT - 1) * SLOT_GAP + 20;
+    const panelX = (width - panelWidth) / 2;
+    const slotStartX = panelX + 10;
+    const slotY = this.lootPanelY + 30;
+
+    if (screenY < slotY || screenY > slotY + 50) return -1;
+    const rel = screenX - slotStartX;
+    if (rel < 0) return -1;
+    const stride = SLOT_SIZE + SLOT_GAP;
+    const idx = Math.floor(rel / stride);
+    if (idx < 0 || idx >= 4) return -1;
+    if (rel - idx * stride > SLOT_SIZE) return -1;
+    return idx;
+  }
+
+  private onLootSlotClicked(lootIndex: number): void {
+    if (!this.state) return;
+    const me = this.myBomberman();
+    if (!me) return;
+
+    // Gather all available loot on this tile (same logic as renderLootPanel)
+    const lootSlots: Array<{ kind: 'collectible' | 'body'; sourceId: string; type: import('@shared/types/bombs.ts').BombType; count: number }> = [];
+    for (const p of this.state.collectibleBombs) {
+      if (p.x === me.x && p.y === me.y) {
+        lootSlots.push({ kind: 'collectible', sourceId: p.id, type: p.type, count: p.count });
+        if (lootSlots.length >= 4) break;
+      }
+    }
+    if (lootSlots.length < 4) {
+      for (const b of this.state.bodies) {
+        if (b.x === me.x && b.y === me.y) {
+          for (const bb of b.bombs) {
+            lootSlots.push({ kind: 'body', sourceId: b.id, type: bb.type, count: bb.count });
+            if (lootSlots.length >= 4) break;
+          }
+        }
+        if (lootSlots.length >= 4) break;
+      }
+    }
+
+    const loot = lootSlots[lootIndex];
+    if (!loot) return;
+
+    // Try to find a compatible slot: empty, or same type with room
+    const stackLimit = BALANCE.match.bombSlotStackLimit;
+    let targetSlot = -1;
+
+    // First: matching slot with room
+    for (let i = 0; i < 4; i++) {
+      const slot = me.inventory.slots[i];
+      if (slot && slot.type === loot.type && slot.count < stackLimit) {
+        targetSlot = i + 1; // network convention: 1..4
+        break;
+      }
+    }
+    // Second: empty slot
+    if (targetSlot === -1) {
+      for (let i = 0; i < 4; i++) {
+        if (!me.inventory.slots[i]) {
+          targetSlot = i + 1;
+          break;
+        }
+      }
+    }
+
+    if (targetSlot !== -1) {
+      // Direct pickup — compatible slot found
+      this.lootPendingSwap = null;
+      NetworkManager.getSocket().emit('loot_bomb', {
+        sourceKind: loot.kind,
+        sourceId: loot.sourceId,
+        bombType: loot.type,
+        targetSlotIndex: targetSlot,
+      });
+    } else {
+      // No compatible slot — highlight this loot bomb. Next click on an
+      // inventory slot (1..4) will swap.
+      this.lootPendingSwap = {
+        sourceKind: loot.kind,
+        sourceId: loot.sourceId,
+        bombType: loot.type,
+        count: loot.count,
+      };
+      this.renderHud();
+    }
+  }
+
+  private executeLootSwap(inventorySlotIndex: number): void {
+    if (!this.lootPendingSwap) return;
+    NetworkManager.getSocket().emit('loot_bomb', {
+      sourceKind: this.lootPendingSwap.sourceKind,
+      sourceId: this.lootPendingSwap.sourceId,
+      bombType: this.lootPendingSwap.bombType,
+      targetSlotIndex: inventorySlotIndex,
+    });
+    this.lootPendingSwap = null;
     this.renderHud();
   }
 }

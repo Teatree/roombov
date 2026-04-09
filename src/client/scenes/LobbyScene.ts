@@ -25,6 +25,7 @@ export class LobbyScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.events.once('shutdown', this.shutdown, this);
     this.joinedMatchId = null;
     this.listings = [];
     this.cardContainers = [];

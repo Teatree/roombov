@@ -34,6 +34,7 @@ export class BombermanShopScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.events.once('shutdown', this.shutdown, this);
     const { width, height } = this.scale;
 
     this.add.text(width / 2, 40, 'BOMBERMAN SHOP', {
