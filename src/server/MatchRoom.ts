@@ -90,6 +90,7 @@ export class MatchRoom {
         playerId: p.playerId,
         bombermanId: equipped?.id ?? 'none',
         colors: equipped?.colors ?? { shirt: 0x888888, pants: 0x444444, hair: 0x222222 },
+        tint: equipped?.tint ?? 0xffffff,
         x: spawn.x,
         y: spawn.y,
         hp: BALANCE.match.bombermanMaxHp,
@@ -171,6 +172,7 @@ export class MatchRoom {
       bombs: [],
       fireTiles: [],
       lightTiles: [],
+      flares: [],
       bloodTiles: [],
       escapeTiles: this.map.escapeTiles.map(t => ({ x: t.x, y: t.y })),
     };

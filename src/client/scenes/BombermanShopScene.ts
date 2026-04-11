@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 import { NetworkManager } from '../NetworkManager.ts';
 import { BombermanShopStore, ProfileStore } from '../ClientState.ts';
-import { drawBomberman } from '../systems/BombermanRenderer.ts';
 import { ActivityIndicator } from '../systems/ActivityIndicator.ts';
+import { ensureBombermanAnims, createShopBombermanSprite, preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
 import type { BombermanTemplate } from '@shared/types/bomberman.ts';
 import { BOMB_CATALOG } from '@shared/config/bombs.ts';
 
@@ -33,8 +33,13 @@ export class BombermanShopScene extends Phaser.Scene {
     super({ key: 'BombermanShopScene' });
   }
 
+  preload(): void {
+    preloadBombermanSpritesheets(this);
+  }
+
   create(): void {
     this.events.once('shutdown', this.shutdown, this);
+    ensureBombermanAnims(this);
     const { width, height } = this.scale;
 
     this.add.text(width / 2, 40, 'BOMBERMAN SHOP', {
@@ -186,9 +191,9 @@ export class BombermanShopScene extends Phaser.Scene {
       bg.strokeRoundedRect(-OWNED_CARD_WIDTH / 2, -OWNED_CARD_HEIGHT / 2, OWNED_CARD_WIDTH, OWNED_CARD_HEIGHT, 8);
       container.add(bg);
 
-      const charG = this.add.graphics();
-      drawBomberman(charG, owned.colors, 0, -15, 60);
-      container.add(charG);
+      // Smaller walking sprite for the roster thumbnail. Fits 120x140 card.
+      const charSprite = createShopBombermanSprite(this, 0, -15, owned.tint, 0.7);
+      container.add(charSprite);
 
       if (isEquipped) {
         container.add(this.add.text(0, OWNED_CARD_HEIGHT / 2 - 18, 'EQUIPPED', {
@@ -236,10 +241,10 @@ export class BombermanShopScene extends Phaser.Scene {
       fontSize: '12px', color: '#bbbbbb', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5));
 
-    // Character
-    const charG = this.add.graphics();
-    drawBomberman(charG, template.colors, 0, -40, 90);
-    container.add(charG);
+    // Character — animated sprite playing walk-down cycle, tinted with the
+    // template's vivid tint. Scale tuned to fit the 180x320 card.
+    const charSprite = createShopBombermanSprite(this, 0, -40, template.tint, 1.1);
+    container.add(charSprite);
 
     // Bomb loadout summary
     const slotLines: string[] = [];

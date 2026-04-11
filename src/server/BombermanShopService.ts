@@ -81,12 +81,20 @@ export class BombermanShopService {
   private rollBomberman(tier: BombermanTier, rng: () => number, idPrefix: string): BombermanTemplate {
     const cfg = TIER_CONFIG[tier];
 
-    // Colors: random hues projected to 24-bit RGB
+    // Colors: random hues projected to 24-bit RGB (used by shop cards)
     const colors: CosmeticColors = {
       shirt: hslToRgb(rng() * 360, 0.65, 0.55),
       pants: hslToRgb(rng() * 360, 0.55, 0.35),
       hair: hslToRgb(rng() * 360, 0.55, 0.45),
     };
+
+    // Tint: lighter-leaning palette so the sprites pop against the dark
+    // dungeon floor. High saturation (0.55–0.85) + high lightness (0.62–0.8)
+    // produces vivid pastels — no grays, no muddy darks.
+    const tintHue = rng() * 360;
+    const tintSat = 0.55 + rng() * 0.3;
+    const tintLight = 0.62 + rng() * 0.18;
+    const tint = hslToRgb(tintHue, tintSat, tintLight);
 
     // Price: in range, rounded to nearest 5
     let price = 0;
@@ -123,6 +131,7 @@ export class BombermanShopService {
       tier,
       price,
       colors,
+      tint,
       inventory,
     };
   }
@@ -157,6 +166,7 @@ export class BombermanShopService {
       id: `owned_${profile.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       tier: template.tier,
       colors: { ...template.colors },
+      tint: template.tint,
       inventory: cloneInventory(template.inventory),
       purchasedAt: Date.now(),
       sourceTemplateId: templateId,

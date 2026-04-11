@@ -123,12 +123,35 @@ function isValidId(id: string): boolean {
  */
 function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
   const now = Date.now();
+  const owned = (raw.ownedBombermen ?? []).map((b) => {
+    // Backfill: old profiles saved before the `tint` field existed. Pick a
+    // deterministic-ish vivid tint based on the owned id hash so refreshes
+    // don't change the color randomly. Sprite tint must be non-gray.
+    if (typeof b.tint === 'number') return b;
+    const hash = (b.id ?? '').split('').reduce((acc, ch) => ((acc * 31 + ch.charCodeAt(0)) >>> 0), 0);
+    const hue = hash % 360;
+    const sat = 0.7;
+    const light = 0.52;
+    const c = (1 - Math.abs(2 * light - 1)) * sat;
+    const hp = hue / 60;
+    const x = c * (1 - Math.abs((hp % 2) - 1));
+    let r = 0, g = 0, bl = 0;
+    if (hp < 1) { r = c; g = x; }
+    else if (hp < 2) { r = x; g = c; }
+    else if (hp < 3) { g = c; bl = x; }
+    else if (hp < 4) { g = x; bl = c; }
+    else if (hp < 5) { r = x; bl = c; }
+    else { r = c; bl = x; }
+    const m = light - c / 2;
+    const tint = (Math.round((r + m) * 255) << 16) | (Math.round((g + m) * 255) << 8) | Math.round((bl + m) * 255);
+    return { ...b, tint };
+  });
   return {
     id: raw.id ?? generatePlayerId(),
     createdAt: raw.createdAt ?? now,
     updatedAt: raw.updatedAt ?? now,
     coins: raw.coins ?? 500,
-    ownedBombermen: raw.ownedBombermen ?? [],
+    ownedBombermen: owned,
     equippedBombermanId: raw.equippedBombermanId ?? null,
     bombStockpile: raw.bombStockpile ?? {},
   };

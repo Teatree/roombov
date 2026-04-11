@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import type { BombInstance, BombType, FireTile, LightTile } from '@shared/types/bombs.ts';
+import type { BombInstance, BombType, FireTile } from '@shared/types/bombs.ts';
+import type { ActiveFlare } from '@shared/types/match.ts';
 import type { Tile } from '@shared/systems/BombResolver.ts';
 
 /**
@@ -16,15 +17,44 @@ import type { Tile } from '@shared/systems/BombResolver.ts';
  */
 export class BombRenderer {
   private scene: Phaser.Scene;
+  /**
+   * Layer for persistent/throw visuals that SHOULD be obscured by fog:
+   * placed bombs, fuse numbers, throw arcs, fire tiles, flare flames.
+   * Sits below the fog layer in the depth stack.
+   */
   private layer: Phaser.GameObjects.Container;
+  /**
+   * Layer for transient burst animations that are always visible, even
+   * through fog: all explosion shockwaves. Sits above the fog layer.
+   */
+  private explosionLayer: Phaser.GameObjects.Container;
+  /**
+   * Layer for persistent scorch marks left by explosions. Sits above fog
+   * (visible to all players even through fog of war) but below entities
+   * (Bombermen stand on top of decals).
+   */
+  private decalLayer: Phaser.GameObjects.Container;
   private tileSize: number;
   private bombVisuals = new Map<string, BombVisual>();
   private fireVisuals = new Map<string, FireVisual>();
-  private lightVisuals = new Map<string, LightVisual>();
+  private flareVisuals = new Map<string, FlareVisual>();
+  /**
+   * One decal per tile max — "they don't stack on top of each other".
+   * First explosion on a tile wins; subsequent explosions skip it.
+   */
+  private decals = new Map<string, Phaser.GameObjects.Graphics>();
 
-  constructor(scene: Phaser.Scene, layer: Phaser.GameObjects.Container, tileSize: number) {
+  constructor(
+    scene: Phaser.Scene,
+    layer: Phaser.GameObjects.Container,
+    explosionLayer: Phaser.GameObjects.Container,
+    decalLayer: Phaser.GameObjects.Container,
+    tileSize: number,
+  ) {
     this.scene = scene;
     this.layer = layer;
+    this.explosionLayer = explosionLayer;
+    this.decalLayer = decalLayer;
     this.tileSize = tileSize;
   }
 
@@ -34,6 +64,9 @@ export class BombRenderer {
       seen.add(b.id);
       if (!this.bombVisuals.has(b.id)) {
         this.bombVisuals.set(b.id, this.createBomb(b));
+      } else {
+        // Update the fuse countdown on existing visuals
+        this.bombVisuals.get(b.id)!.updateFuse?.(b.fuseRemaining);
       }
     }
     for (const [id, vis] of this.bombVisuals) {
@@ -61,19 +94,24 @@ export class BombRenderer {
     }
   }
 
-  syncLight(tiles: LightTile[]): void {
+  /**
+   * Sync flare visuals. Each flare shows a single flame on its landing tile
+   * that decays over 3 turns (bright → medium → dim). Visible from anywhere.
+   */
+  syncFlares(flares: ActiveFlare[]): void {
     const seen = new Set<string>();
-    for (const l of tiles) {
-      const key = `${l.x},${l.y}`;
-      seen.add(key);
-      if (!this.lightVisuals.has(key)) {
-        this.lightVisuals.set(key, this.createLight(l.x, l.y));
+    for (const f of flares) {
+      seen.add(f.id);
+      if (!this.flareVisuals.has(f.id)) {
+        this.flareVisuals.set(f.id, this.createFlareFlame(f.x, f.y, f.turnsRemaining));
+      } else {
+        this.flareVisuals.get(f.id)!.updateTurns?.(f.turnsRemaining);
       }
     }
-    for (const [key, vis] of this.lightVisuals) {
-      if (!seen.has(key)) {
+    for (const [id, vis] of this.flareVisuals) {
+      if (!seen.has(id)) {
         vis.destroy();
-        this.lightVisuals.delete(key);
+        this.flareVisuals.delete(id);
       }
     }
   }
@@ -172,26 +210,166 @@ export class BombRenderer {
    * tile-centered, like the Banana splat). `tiles` is the set the resolver
    * marked as affected.
    */
-  spawnExplosion(type: BombType, centerX: number, centerY: number, tiles: Tile[]): void {
-    // Banana's "explosion" is just a splat at its own tile — the four
-    // scattered contact bombs spawn their own explosions when they trigger.
-    if (type === 'banana') {
-      this.bananaSplat(centerX, centerY);
-      return;
+  /**
+   * Spawn the explosion visual for a triggered bomb.
+   *
+   * @param startDelayMs - wall-clock ms to wait before starting the animation.
+   *   MatchScene computes this so explosions kick off at the halfway point
+   *   of the transition phase (or when a thrown bomb lands, whichever is later).
+   * @param durationMs - total visual duration. Animations are stretched to fill
+   *   exactly this window so they run right up to the end of the transition.
+   *   Decals stamp at `startDelayMs + durationMs` — i.e. after the burst is done.
+   */
+  spawnExplosion(
+    type: BombType,
+    centerX: number,
+    centerY: number,
+    tiles: Tile[],
+    startDelayMs: number,
+    durationMs: number,
+  ): void {
+    const dur = Math.max(100, durationMs);
+    const startAnim = (): void => {
+      // Banana's "explosion" is just a splat at its own tile — the four
+      // scattered contact bombs spawn their own explosions when they trigger.
+      if (type === 'banana') {
+        this.bananaSplat(centerX, centerY, dur);
+        return;
+      }
+
+      for (const tile of tiles) {
+        switch (type) {
+          case 'rock': this.rockDust(tile, dur); break;
+          case 'delay': this.fireBoom(tile, { core: 0xffffaa, mid: 0xffaa33, outer: 0xff5511, maxRadius: 0.55, duration: dur, emberCount: 5 }); break;
+          case 'delay_big': this.fireBoom(tile, { core: 0xffffaa, mid: 0xff8822, outer: 0xcc2200, maxRadius: 0.7, duration: dur, emberCount: 7 }); break;
+          case 'contact': this.fireBoom(tile, { core: 0xffeeaa, mid: 0xff6633, outer: 0xaa0000, maxRadius: 0.5, duration: dur, emberCount: 4 }); break;
+          case 'banana_child': this.fireBoom(tile, { core: 0xffee44, mid: 0xffcc22, outer: 0xaa8811, maxRadius: 0.5, duration: dur, emberCount: 4 }); break;
+          case 'delay_tricky': this.plasmaBurst(tile, dur); break;
+          case 'flare': this.flareFlash(tile, dur); break;
+          case 'molotov': this.fireSplash(tile, dur); break;
+        }
+      }
+    };
+
+    const stampAllDecals = (): void => {
+      // Flare doesn't leave a decal — it's light, not an explosion.
+      if (type === 'flare') return;
+      if (type === 'banana') return; // banana itself doesn't scorch; its children do
+      for (const tile of tiles) this.stampDecal(type, tile);
+    };
+
+    if (startDelayMs > 0) {
+      this.scene.time.delayedCall(startDelayMs, startAnim);
+    } else {
+      startAnim();
+    }
+    this.scene.time.delayedCall(Math.max(0, startDelayMs) + dur, stampAllDecals);
+  }
+
+  /**
+   * Stamp a persistent scorch mark on a tile. First explosion wins — if a
+   * decal already exists on this tile, skip. The decal lives in decalLayer
+   * (above fog, below entities) so everyone sees it regardless of LOS.
+   */
+  private stampDecal(type: BombType, tile: Tile): void {
+    const key = `${tile.x},${tile.y}`;
+    if (this.decals.has(key)) return;
+
+    const ts = this.tileSize;
+    const cx = tile.x * ts + ts / 2;
+    const cy = tile.y * ts + ts / 2;
+    const g = this.scene.add.graphics();
+    this.decalLayer.add(g);
+
+    switch (type) {
+      case 'rock':
+        this.drawDustDecal(g, cx, cy, ts);
+        break;
+      case 'delay':
+      case 'delay_big':
+      case 'contact':
+      case 'banana_child':
+        this.drawScorchDecal(g, cx, cy, ts);
+        break;
+      case 'delay_tricky':
+        this.drawPlasmaDecal(g, cx, cy, ts);
+        break;
+      case 'molotov':
+        this.drawBurnedDecal(g, cx, cy, ts);
+        break;
+      default:
+        this.drawScorchDecal(g, cx, cy, ts);
+        break;
     }
 
-    for (const tile of tiles) {
-      switch (type) {
-        case 'rock': this.rockDust(tile); break;
-        case 'delay': this.fireBoom(tile, { core: 0xffffaa, mid: 0xffaa33, outer: 0xff5511, maxRadius: 0.55, duration: 500, emberCount: 5 }); break;
-        case 'delay_big': this.fireBoom(tile, { core: 0xffffaa, mid: 0xff8822, outer: 0xcc2200, maxRadius: 0.7, duration: 600, emberCount: 7 }); break;
-        case 'contact': this.fireBoom(tile, { core: 0xffeeaa, mid: 0xff6633, outer: 0xaa0000, maxRadius: 0.5, duration: 400, emberCount: 4 }); break;
-        case 'banana_child': this.fireBoom(tile, { core: 0xffee44, mid: 0xffcc22, outer: 0xaa8811, maxRadius: 0.5, duration: 450, emberCount: 4 }); break;
-        case 'delay_tricky': this.plasmaBurst(tile); break;
-        case 'flare': this.flareFlash(tile); break;
-        case 'molotov': this.fireSplash(tile); break;
-      }
+    this.decals.set(key, g);
+  }
+
+  /** Small gray dust smudge — Rock impact */
+  private drawDustDecal(g: Phaser.GameObjects.Graphics, cx: number, cy: number, ts: number): void {
+    g.fillStyle(0x665544, 0.45);
+    g.fillCircle(cx, cy, ts * 0.22);
+    g.fillStyle(0x887766, 0.3);
+    g.fillCircle(cx + ts * 0.08, cy - ts * 0.05, ts * 0.12);
+    g.fillCircle(cx - ts * 0.1, cy + ts * 0.06, ts * 0.09);
+  }
+
+  /** Dark scorch mark with slightly orange center — standard fire bombs */
+  private drawScorchDecal(g: Phaser.GameObjects.Graphics, cx: number, cy: number, ts: number): void {
+    // Outer dark soot
+    g.fillStyle(0x1a0a05, 0.7);
+    g.fillCircle(cx, cy, ts * 0.38);
+    // Inner burn
+    g.fillStyle(0x331a0a, 0.8);
+    g.fillCircle(cx, cy, ts * 0.28);
+    // Warm center hint
+    g.fillStyle(0x552211, 0.6);
+    g.fillCircle(cx, cy, ts * 0.15);
+    // A few irregular specks
+    g.fillStyle(0x000000, 0.5);
+    g.fillCircle(cx + ts * 0.2, cy - ts * 0.15, ts * 0.06);
+    g.fillCircle(cx - ts * 0.22, cy + ts * 0.18, ts * 0.07);
+    g.fillCircle(cx - ts * 0.05, cy + ts * 0.25, ts * 0.05);
+  }
+
+  /** Purple/magenta plasma burn — Delay Tricky */
+  private drawPlasmaDecal(g: Phaser.GameObjects.Graphics, cx: number, cy: number, ts: number): void {
+    // Dark purple outer
+    g.fillStyle(0x220022, 0.7);
+    g.fillCircle(cx, cy, ts * 0.36);
+    // Magenta inner ring
+    g.fillStyle(0x441144, 0.75);
+    g.fillCircle(cx, cy, ts * 0.24);
+    // Bright magenta center dot
+    g.fillStyle(0x883388, 0.6);
+    g.fillCircle(cx, cy, ts * 0.1);
+    // Radial streaks (star-like)
+    g.lineStyle(2, 0x331133, 0.6);
+    for (let i = 0; i < 4; i++) {
+      const ang = (Math.PI / 2) * i + Math.PI / 4;
+      g.beginPath();
+      g.moveTo(cx, cy);
+      g.lineTo(cx + Math.cos(ang) * ts * 0.35, cy + Math.sin(ang) * ts * 0.35);
+      g.strokePath();
     }
+  }
+
+  /** Scorched earth with dark burned spots — Molotov */
+  private drawBurnedDecal(g: Phaser.GameObjects.Graphics, cx: number, cy: number, ts: number): void {
+    // Full-tile dark wash
+    g.fillStyle(0x0a0505, 0.55);
+    g.fillRect(cx - ts * 0.48, cy - ts * 0.48, ts * 0.96, ts * 0.96);
+    // Scorch blotches
+    g.fillStyle(0x1a0a05, 0.85);
+    g.fillCircle(cx, cy, ts * 0.35);
+    g.fillStyle(0x2a1505, 0.8);
+    g.fillCircle(cx - ts * 0.1, cy + ts * 0.12, ts * 0.18);
+    g.fillCircle(cx + ts * 0.15, cy - ts * 0.1, ts * 0.15);
+    // Darkest scar spots
+    g.fillStyle(0x000000, 0.7);
+    g.fillCircle(cx, cy, ts * 0.08);
+    g.fillCircle(cx + ts * 0.22, cy + ts * 0.18, ts * 0.05);
+    g.fillCircle(cx - ts * 0.25, cy - ts * 0.2, ts * 0.06);
   }
 
   /**
@@ -200,50 +378,16 @@ export class BombRenderer {
    * We don't need the full Bomberman colors — the fade is fast and the
    * red tint overrides the clothing colors anyway.
    */
-  spawnDeathAnimation(tileX: number, tileY: number): void {
+  /**
+   * Blood splash particles flavored on death. The toppling silhouette and
+   * red flash were retired when BombermanSpriteSystem took over death
+   * visuals — only the splash particles remain as flavor.
+   */
+  emitBloodSplash(tileX: number, tileY: number): void {
     const ts = this.tileSize;
     const cx = tileX * ts + ts / 2;
     const cy = tileY * ts + ts / 2;
 
-    // Red flash rectangle covering the tile
-    const flash = this.scene.add.graphics();
-    this.layer.add(flash);
-    flash.fillStyle(0xff0000, 0.55);
-    flash.fillRect(tileX * ts, tileY * ts, ts, ts);
-    this.scene.tweens.add({
-      targets: flash,
-      alpha: 0,
-      duration: 700,
-      ease: 'Cubic.easeOut',
-      onComplete: () => flash.destroy(),
-    });
-
-    // Toppling silhouette — simple red body/head shape that rotates 90° and fades
-    const body = this.scene.add.graphics();
-    body.setPosition(cx, cy + ts * 0.1);
-    this.layer.add(body);
-    const bodyW = ts * 0.5;
-    const bodyH = ts * 0.55;
-    body.fillStyle(0xcc1111, 1);
-    body.fillRect(-bodyW / 2, -bodyH / 2, bodyW, bodyH);
-    body.lineStyle(2, 0x660000, 1);
-    body.strokeRect(-bodyW / 2, -bodyH / 2, bodyW, bodyH);
-    body.fillStyle(0xff4444, 1);
-    body.fillCircle(0, -bodyH / 2 - ts * 0.15, ts * 0.17);
-    body.lineStyle(2, 0x660000, 1);
-    body.strokeCircle(0, -bodyH / 2 - ts * 0.15, ts * 0.17);
-
-    this.scene.tweens.add({
-      targets: body,
-      angle: 90,
-      y: cy + ts * 0.3,
-      alpha: 0.1,
-      duration: 800,
-      ease: 'Cubic.easeIn',
-      onComplete: () => body.destroy(),
-    });
-
-    // Blood splash particles
     for (let i = 0; i < 8; i++) {
       const angle = Math.random() * Math.PI * 2;
       const dist = ts * (0.3 + Math.random() * 0.5);
@@ -266,16 +410,16 @@ export class BombRenderer {
 
   // ---- per-bomb explosion styles ----
 
-  private rockDust(tile: Tile): void {
+  private rockDust(tile: Tile, durationMs: number): void {
     const ts = this.tileSize;
     const cx = tile.x * ts + ts / 2;
     const cy = tile.y * ts + ts / 2;
 
     const g = this.scene.add.graphics();
-    this.layer.add(g);
+    this.explosionLayer.add(g);
     this.scene.tweens.add({
       targets: g,
-      duration: 300,
+      duration: durationMs,
       ease: 'Cubic.easeOut',
       onUpdate: (tw) => {
         const t = tw.progress;
@@ -292,7 +436,7 @@ export class BombRenderer {
     for (let i = 0; i < 4; i++) {
       const angle = Math.random() * Math.PI * 2;
       const dot = this.scene.add.graphics();
-      this.layer.add(dot);
+      this.explosionLayer.add(dot);
       dot.fillStyle(0x998877, 0.8);
       dot.fillCircle(0, 0, 1.5);
       dot.setPosition(cx, cy);
@@ -301,7 +445,7 @@ export class BombRenderer {
         x: cx + Math.cos(angle) * ts * 0.4,
         y: cy + Math.sin(angle) * ts * 0.4,
         alpha: 0,
-        duration: 300,
+        duration: durationMs,
         onComplete: () => dot.destroy(),
       });
     }
@@ -316,7 +460,7 @@ export class BombRenderer {
     const cy = tile.y * ts + ts / 2;
 
     const g = this.scene.add.graphics();
-    this.layer.add(g);
+    this.explosionLayer.add(g);
     this.scene.tweens.add({
       targets: g,
       duration: opts.duration,
@@ -342,7 +486,7 @@ export class BombRenderer {
       const angle = (Math.PI * 2 * i) / opts.emberCount + Math.random() * 0.6;
       const dist = ts * opts.maxRadius * (0.8 + Math.random() * 0.5);
       const ember = this.scene.add.graphics();
-      this.layer.add(ember);
+      this.explosionLayer.add(ember);
       ember.fillStyle(opts.core, 1);
       ember.fillCircle(0, 0, 1.5 + Math.random() * 1.5);
       ember.setPosition(cx, cy);
@@ -351,36 +495,38 @@ export class BombRenderer {
         x: cx + Math.cos(angle) * dist,
         y: cy + Math.sin(angle) * dist,
         alpha: 0,
-        duration: opts.duration * 1.3,
+        duration: opts.duration,
         ease: 'Cubic.easeOut',
         onComplete: () => ember.destroy(),
       });
     }
   }
 
-  private plasmaBurst(tile: Tile): void {
+  private plasmaBurst(tile: Tile, durationMs: number): void {
     const ts = this.tileSize;
+    // Use a minimum visual unit so burst stays visible on 16px tiles.
+    const u = Math.max(ts, 24);
     const cx = tile.x * ts + ts / 2;
     const cy = tile.y * ts + ts / 2;
 
     const g = this.scene.add.graphics();
-    this.layer.add(g);
+    this.explosionLayer.add(g);
     this.scene.tweens.add({
       targets: g,
-      duration: 480,
+      duration: durationMs,
       ease: 'Cubic.easeOut',
       onUpdate: (tw) => {
         const t = tw.progress;
         g.clear();
         // Core purple orb
         g.fillStyle(0xff66ff, (1 - t) * 0.9);
-        g.fillCircle(cx, cy, ts * (0.18 + 0.18 * t));
+        g.fillCircle(cx, cy, u * (0.35 + 0.25 * t));
         // Magenta halo
         g.lineStyle(3, 0xcc33cc, (1 - t) * 0.85);
-        g.strokeCircle(cx, cy, ts * (0.25 + 0.4 * t));
-        // Radial lightning spikes (4 diagonals)
+        g.strokeCircle(cx, cy, u * (0.5 + 0.5 * t));
+        // Radial lightning spikes
         g.lineStyle(2, 0xffccff, (1 - t) * 0.9);
-        const reach = ts * (0.3 + 0.35 * t);
+        const reach = u * (0.55 + 0.5 * t);
         for (let i = 0; i < 8; i++) {
           const ang = (Math.PI * 2 * i) / 8;
           g.beginPath();
@@ -393,16 +539,16 @@ export class BombRenderer {
     });
   }
 
-  private bananaSplat(centerX: number, centerY: number): void {
+  private bananaSplat(centerX: number, centerY: number, durationMs: number): void {
     const ts = this.tileSize;
     const cx = centerX * ts + ts / 2;
     const cy = centerY * ts + ts / 2;
 
     const g = this.scene.add.graphics();
-    this.layer.add(g);
+    this.explosionLayer.add(g);
     this.scene.tweens.add({
       targets: g,
-      duration: 350,
+      duration: durationMs,
       ease: 'Cubic.easeOut',
       onUpdate: (tw) => {
         const t = tw.progress;
@@ -424,39 +570,60 @@ export class BombRenderer {
     });
   }
 
-  private flareFlash(tile: Tile): void {
+  private flareFlash(tile: Tile, durationMs: number): void {
     const ts = this.tileSize;
     const cx = tile.x * ts + ts / 2;
     const cy = tile.y * ts + ts / 2;
 
+    // Bright flash burst — fast white expansion then fade
     const g = this.scene.add.graphics();
-    this.layer.add(g);
+    this.explosionLayer.add(g);
     this.scene.tweens.add({
       targets: g,
-      duration: 450,
+      duration: durationMs,
       ease: 'Cubic.easeOut',
       onUpdate: (tw) => {
         const t = tw.progress;
         g.clear();
-        g.fillStyle(0xffffff, (1 - t) * 0.85);
-        g.fillCircle(cx, cy, ts * (0.25 + 0.35 * t));
-        g.fillStyle(0xffffcc, (1 - t) * 0.6);
-        g.fillCircle(cx, cy, ts * (0.4 + 0.3 * t));
+        // Outer glow
+        g.fillStyle(0xffffff, (1 - t) * 0.6);
+        g.fillCircle(cx, cy, ts * (0.5 + 1.5 * t));
+        // Inner core
+        g.fillStyle(0xffffee, (1 - t) * 0.9);
+        g.fillCircle(cx, cy, ts * (0.3 + 0.5 * t));
       },
       onComplete: () => g.destroy(),
     });
+
+    // Radial light rays
+    for (let i = 0; i < 8; i++) {
+      const angle = (Math.PI * 2 * i) / 8;
+      const ray = this.scene.add.graphics();
+      this.explosionLayer.add(ray);
+      ray.lineStyle(2, 0xffffcc, 0.9);
+      ray.beginPath();
+      ray.moveTo(cx, cy);
+      ray.lineTo(cx + Math.cos(angle) * ts * 0.5, cy + Math.sin(angle) * ts * 0.5);
+      ray.strokePath();
+      this.scene.tweens.add({
+        targets: ray,
+        alpha: 0,
+        duration: durationMs,
+        onComplete: () => ray.destroy(),
+      });
+    }
   }
 
-  private fireSplash(tile: Tile): void {
+  private fireSplash(tile: Tile, durationMs: number): void {
     const ts = this.tileSize;
     const cx = tile.x * ts + ts / 2;
     const cy = tile.y * ts + ts / 2;
 
     const g = this.scene.add.graphics();
-    this.layer.add(g);
+    this.explosionLayer.add(g);
     this.scene.tweens.add({
       targets: g,
-      duration: 500,
+      duration: durationMs,
       ease: 'Cubic.easeOut',
       onUpdate: (tw) => {
         const t = tw.progress;
@@ -476,7 +643,7 @@ export class BombRenderer {
     for (let i = 0; i < 8; i++) {
       const angle = Math.random() * Math.PI * 2;
       const ember = this.scene.add.graphics();
-      this.layer.add(ember);
+      this.explosionLayer.add(ember);
       ember.fillStyle(0xff9944, 1);
       ember.fillCircle(0, 0, 2);
       ember.setPosition(cx, cy);
@@ -485,7 +652,7 @@ export class BombRenderer {
         x: cx + Math.cos(angle) * ts * 0.5,
         y: cy + Math.sin(angle) * ts * 0.5,
         alpha: 0,
-        duration: 600,
+        duration: durationMs,
         ease: 'Cubic.easeOut',
         onComplete: () => ember.destroy(),
       });
@@ -495,10 +662,12 @@ export class BombRenderer {
   destroy(): void {
     for (const v of this.bombVisuals.values()) v.destroy();
     for (const v of this.fireVisuals.values()) v.destroy();
-    for (const v of this.lightVisuals.values()) v.destroy();
+    for (const v of this.flareVisuals.values()) v.destroy();
+    for (const d of this.decals.values()) d.destroy();
     this.bombVisuals.clear();
     this.fireVisuals.clear();
-    this.lightVisuals.clear();
+    this.flareVisuals.clear();
+    this.decals.clear();
   }
 
   // ---- visual builders ----
@@ -510,22 +679,33 @@ export class BombRenderer {
 
     const g = this.scene.add.graphics();
     g.setPosition(cx, cy);
-    g.setAlpha(0); // fade in after the arc lands
+    g.setAlpha(0);
     this.layer.add(g);
 
     const cfg = bombLook(bomb.type);
     drawBombBody(g, cfg, ts);
 
-    // Fade in (delayed so throw arc can finish before the persistent
-    // visual appears at the target tile)
+    // Fuse countdown — big bold number overlaid on the bomb
+    let fuseLabel: Phaser.GameObjects.Text | null = null;
+    if (bomb.fuseRemaining > 0) {
+      fuseLabel = this.scene.add.text(cx, cy, `${bomb.fuseRemaining}`, {
+        fontSize: `${Math.round(ts * 0.7)}px`,
+        color: '#ffffff',
+        fontFamily: 'monospace',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 3,
+      }).setOrigin(0.5).setAlpha(0).setDepth(g.depth + 1);
+      this.layer.add(fuseLabel);
+    }
+
     const fadeIn = this.scene.tweens.add({
-      targets: g,
+      targets: [g, fuseLabel].filter(Boolean),
       alpha: 1,
       duration: 200,
       delay: 550,
     });
 
-    // Pulse tween on scale so any bomb shape breathes while ticking down
     const tween = this.scene.tweens.add({
       targets: g,
       scale: { from: 0.85, to: 1.05 },
@@ -540,6 +720,10 @@ export class BombRenderer {
         fadeIn.stop();
         tween.stop();
         g.destroy();
+        fuseLabel?.destroy();
+      },
+      updateFuse: (remaining: number) => {
+        if (fuseLabel) fuseLabel.setText(`${remaining}`);
       },
     };
   }
@@ -575,28 +759,62 @@ export class BombRenderer {
     };
   }
 
-  private createLight(x: number, y: number): LightVisual {
+  /**
+   * A small harmless-looking flame on the tile where the flare landed.
+   * Starts bright, gets dimmer each turn. Visible from anywhere on the map
+   * (even through fog).
+   */
+  private createFlareFlame(x: number, y: number, turnsRemaining: number): FlareVisual {
     const ts = this.tileSize;
+    const cx = x * ts + ts / 2;
+    const cy = y * ts + ts / 2;
+
     const g = this.scene.add.graphics();
-    g.setPosition(x * ts + ts / 2, y * ts + ts / 2);
     this.layer.add(g);
+    let currentTurns = turnsRemaining;
 
-    g.fillStyle(0xfff5aa, 0.18);
-    g.fillRect(-ts / 2, -ts / 2, ts, ts);
-    g.fillStyle(0xffffee, 0.28);
-    g.fillCircle(0, 0, ts * 0.35);
+    const drawFlame = (phase: number): void => {
+      g.clear();
+      // Intensity scales with turns remaining: 3=bright, 2=medium, 1=dim
+      const intensity = currentTurns / 3;
+      const flameH = ts * (0.3 + 0.15 * intensity);
+      const flameW = ts * (0.15 + 0.1 * intensity);
+      const wobble = Math.sin(phase) * ts * 0.03;
 
-    const tween = this.scene.tweens.add({
-      targets: g,
-      alpha: { from: 0.75, to: 1 },
+      // Outer glow
+      g.fillStyle(0xffcc44, 0.15 * intensity);
+      g.fillCircle(cx + wobble, cy - flameH * 0.3, ts * (0.3 + 0.1 * intensity));
+
+      // Flame body (yellow → orange → red from bottom to top)
+      g.fillStyle(0xff6622, 0.7 * intensity);
+      g.fillEllipse(cx + wobble, cy, flameW, flameH);
+      g.fillStyle(0xffaa33, 0.85 * intensity);
+      g.fillEllipse(cx + wobble, cy - flameH * 0.1, flameW * 0.7, flameH * 0.7);
+      g.fillStyle(0xffee66, 0.9 * intensity);
+      g.fillEllipse(cx + wobble, cy - flameH * 0.15, flameW * 0.4, flameH * 0.4);
+    };
+
+    let phase = 0;
+    drawFlame(0);
+    const tween = this.scene.tweens.addCounter({
+      from: 0, to: Math.PI * 2,
       duration: 600,
-      yoyo: true,
       repeat: -1,
-      ease: 'Sine.easeInOut',
+      onUpdate: (tw) => { phase = tw.getValue() ?? 0; drawFlame(phase); },
     });
 
+    // Turn indicator dots below the flame
+    const dots = this.scene.add.text(cx, cy + ts * 0.35, '\u25CF'.repeat(turnsRemaining), {
+      fontSize: '5px', color: '#ffcc44', fontFamily: 'monospace',
+    }).setOrigin(0.5, 0).setAlpha(0.6);
+    this.layer.add(dots);
+
     return {
-      destroy: () => { tween.stop(); g.destroy(); },
+      destroy: () => { tween.stop(); g.destroy(); dots.destroy(); },
+      updateTurns: (remaining: number) => {
+        currentTurns = remaining;
+        dots.setText('\u25CF'.repeat(remaining));
+      },
     };
   }
 }
@@ -713,6 +931,6 @@ function drawBombBody(g: Phaser.GameObjects.Graphics, look: BombLook, ts: number
   // (text requires a scene to create; skipped here — the shape/color is enough)
 }
 
-interface BombVisual { destroy: () => void }
+interface BombVisual { destroy: () => void; updateFuse?: (remaining: number) => void }
 interface FireVisual { destroy: () => void }
-interface LightVisual { destroy: () => void }
+interface FlareVisual { destroy: () => void; updateTurns?: (remaining: number) => void }

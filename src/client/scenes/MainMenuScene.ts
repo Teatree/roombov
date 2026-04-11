@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 import { NetworkManager } from '../NetworkManager.ts';
 import { ProfileStore } from '../ClientState.ts';
-import { drawBomberman } from '../systems/BombermanRenderer.ts';
 import { ActivityIndicator } from '../systems/ActivityIndicator.ts';
+import { ensureBombermanAnims, createShopBombermanSprite, preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
 
 /**
  * Entry point after Boot. Connects to the server, authenticates, and offers
@@ -20,8 +20,13 @@ export class MainMenuScene extends Phaser.Scene {
     super({ key: 'MainMenuScene' });
   }
 
+  preload(): void {
+    preloadBombermanSpritesheets(this);
+  }
+
   create(): void {
     this.events.once('shutdown', this.shutdown, this);
+    ensureBombermanAnims(this);
     const { width, height } = this.scale;
 
     this.add.text(width / 2, 60, 'BOMBERMAN', {
@@ -134,9 +139,9 @@ export class MainMenuScene extends Phaser.Scene {
       return;
     }
 
-    const g = this.add.graphics();
-    drawBomberman(g, equipped.colors, 0, 0, 80);
-    this.equippedContainer.add(g);
+    // Walking-down animation tinted with the equipped Bomberman's color
+    const preview = createShopBombermanSprite(this, 0, 0, equipped.tint, 1);
+    this.equippedContainer.add(preview);
 
     const label = this.add.text(0, 70, `Equipped: ${equipped.tier.replace('_', ' ')}`, {
       fontSize: '12px', color: '#aaaaaa', fontFamily: 'monospace',

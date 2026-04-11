@@ -1,8 +1,16 @@
 import Phaser from 'phaser';
+import { preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
 
 export class BootScene extends Phaser.Scene {
   constructor() {
     super({ key: 'BootScene' });
+  }
+
+  preload(): void {
+    // Load Bomberman sprite sheets here so every downstream scene can use
+    // them (shop cards, main menu preview, match). Phaser's texture cache
+    // is game-global so the load only happens once.
+    preloadBombermanSpritesheets(this);
   }
 
   create(): void {

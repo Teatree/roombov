@@ -5,16 +5,12 @@ import { hasLineOfSight } from '@shared/systems/LineOfSight.ts';
 /**
  * Three-stage per-player line-of-sight fog of war.
  *
- *  - unseen    : never been in LOS, fully dark
- *  - seen-dim  : previously visible, now not — map structure shown dimmed
- *  - visible   : currently in LOS from the player's Bomberman — fully lit
+ *  - unseen    : never been in LOS — fully opaque black, hides map layout
+ *  - seen-dim  : previously visible — map structure dimmed, enemies hidden
+ *  - visible   : currently in LOS — everything fully lit
  *
- * Call `update(tx, ty)` with the Bomberman's current tile before rendering
- * entities. `isVisible(x, y)` returns true when a tile is currently lit —
- * use it to hide enemies (not the map) in seen-dim regions.
- *
- * Client-side only for now. When we ship multiplayer with anti-wallhack,
- * the server will pre-filter match_state per player before sending.
+ * External sources can force tiles visible via `addRevealedTiles(tiles)` —
+ * used by Flare bombs, which reveal an area for ALL players.
  */
 
 type Stage = 'unseen' | 'seen' | 'visible';
@@ -25,12 +21,25 @@ export class FogRenderer {
   private radius: number;
   private graphics: Phaser.GameObjects.Graphics;
   private state: Map<string, Stage> = new Map();
+  /** Extra tiles force-revealed this turn (e.g. by Flare). Cleared each update. */
+  private externalReveals = new Set<string>();
 
   constructor(scene: Phaser.Scene, mapData: MapData, radius: number, depth: number) {
     this.scene = scene;
     this.mapData = mapData;
     this.radius = radius;
     this.graphics = scene.add.graphics().setDepth(depth);
+  }
+
+  /**
+   * Add tiles that are visible regardless of LOS this turn (from Flare light
+   * tiles in the match state). Call before `update()`.
+   */
+  setExternalReveals(tiles: Array<{ x: number; y: number }>): void {
+    this.externalReveals.clear();
+    for (const t of tiles) {
+      this.externalReveals.add(`${t.x},${t.y}`);
+    }
   }
 
   update(centerX: number, centerY: number): void {
@@ -43,6 +52,7 @@ export class FogRenderer {
     const fromPx = centerX * ts + ts / 2;
     const fromPy = centerY * ts + ts / 2;
 
+    // LOS from the player's Bomberman
     for (let dy = -this.radius; dy <= this.radius; dy++) {
       for (let dx = -this.radius; dx <= this.radius; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) > this.radius) continue;
@@ -58,6 +68,11 @@ export class FogRenderer {
       }
     }
 
+    // External reveals (Flare) — force-visible regardless of LOS
+    for (const key of this.externalReveals) {
+      this.state.set(key, 'visible');
+    }
+
     this.render();
   }
 
@@ -70,6 +85,11 @@ export class FogRenderer {
     return s === 'visible' || s === 'seen';
   }
 
+  /** True if the tile has never been seen at all. */
+  isUnseen(x: number, y: number): boolean {
+    return (this.state.get(`${x},${y}`) ?? 'unseen') === 'unseen';
+  }
+
   private render(): void {
     const ts = this.mapData.tileSize;
     this.graphics.clear();
@@ -79,9 +99,13 @@ export class FogRenderer {
         const stage = this.state.get(`${x},${y}`) ?? 'unseen';
         if (stage === 'visible') continue;
 
-        // Unseen: near-opaque black. Seen-dim: partial overlay.
-        const alpha = stage === 'unseen' ? 0.92 : 0.55;
-        this.graphics.fillStyle(0x000008, alpha);
+        if (stage === 'unseen') {
+          // Fully opaque black — hides the map layout entirely
+          this.graphics.fillStyle(0x000000, 1);
+        } else {
+          // Seen-dim — semi-transparent so map structure is visible
+          this.graphics.fillStyle(0x000011, 0.55);
+        }
         this.graphics.fillRect(x * ts, y * ts, ts, ts);
       }
     }

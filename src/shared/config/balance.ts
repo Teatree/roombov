@@ -12,8 +12,9 @@ export const BALANCE = {
   },
   lobby: {
     visibleMatches: 3,
-    matchIntervalSeconds: 5,
-    countdownDuration: 30,
+    matchIntervalSeconds: 3,
+    // Dev: short countdown for fast iteration. Bump back up before shipping.
+    countdownDuration: 8,
     maxPlayersPerMatch: 4,
     // Dev: allow solo matches so you can test controls without a second tab.
     // Raise back to 2 before shipping.
@@ -22,7 +23,7 @@ export const BALANCE = {
   match: {
     turnLimit: 50,
     turnsLeftWarning: 10,
-    inputPhaseSeconds: 2,
+    inputPhaseSeconds: 1,
     transitionPhaseSeconds: 1,
     /** Minimum tile distance between spawning Bombermen (falls back if impossible). */
     minSpawnDistance: 5,

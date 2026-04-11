@@ -54,6 +54,18 @@ export interface DroppedBody {
   bombs: { type: BombType; count: number }[];
 }
 
+/** Active flare on the map. Drives the lightTiles computation each turn. */
+export interface ActiveFlare {
+  id: string;
+  /** Center tile where the flare landed. */
+  x: number;
+  y: number;
+  /** Original Chebyshev radius (typically 4). */
+  initialRadius: number;
+  /** Full turns remaining (3→2→1→gone). After turn 2, radius shrinks by 1. */
+  turnsRemaining: number;
+}
+
 export type TurnPhase = 'input' | 'transition' | 'ended';
 
 /** Action a player chose this turn. */
@@ -81,6 +93,8 @@ export interface MatchState {
   bombs: BombInstance[];
   fireTiles: FireTile[];
   lightTiles: LightTile[];
+  /** Active flares. Client uses these to render the flame + derive fog reveals. */
+  flares: ActiveFlare[];
   /**
    * Tiles with blood splatter left by bleeding Bombermen. Purely cosmetic.
    */

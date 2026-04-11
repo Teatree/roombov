@@ -52,6 +52,12 @@ export interface BombermanTemplate {
   tier: BombermanTier;
   price: number;
   colors: CosmeticColors;
+  /**
+   * Single 24-bit RGB used by the in-match animated sprite via Sprite.setTint.
+   * Generated as a vivid non-gray color so the character stands out on the
+   * gray dungeon map. Shop cards still use `colors` for procedural drawing.
+   */
+  tint: number;
   /** Starting bomb inventory generated at cycle time from tier weights. */
   inventory: BombInventory;
 }
@@ -61,6 +67,7 @@ export interface OwnedBomberman {
   id: string;
   tier: BombermanTier;
   colors: CosmeticColors;
+  tint: number;
   /** Live inventory — mutated by the Bombs Shop equip flow. */
   inventory: BombInventory;
   /** Unix ms when the player bought this Bomberman. */
@@ -79,6 +86,7 @@ export interface BombermanState {
   /** The OwnedBomberman id at the time of match start. */
   bombermanId: string;
   colors: CosmeticColors;
+  tint: number;
   /** Tile coordinates. */
   x: number;
   y: number;

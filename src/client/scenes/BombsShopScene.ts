@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 import { NetworkManager } from '../NetworkManager.ts';
 import { ProfileStore } from '../ClientState.ts';
-import { drawBomberman } from '../systems/BombermanRenderer.ts';
 import { ActivityIndicator } from '../systems/ActivityIndicator.ts';
+import { ensureBombermanAnims, createShopBombermanSprite, preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
 import type { BombType } from '@shared/types/bombs.ts';
 import type { BombsCatalogEntry } from '@shared/types/messages.ts';
 import { BALANCE } from '@shared/config/balance.ts';
@@ -32,8 +32,13 @@ export class BombsShopScene extends Phaser.Scene {
     super({ key: 'BombsShopScene' });
   }
 
+  preload(): void {
+    preloadBombermanSpritesheets(this);
+  }
+
   create(): void {
     this.events.once('shutdown', this.shutdown, this);
+    ensureBombermanAnims(this);
     const { width, height } = this.scale;
 
     this.add.text(width / 2, 40, 'BOMBS SHOP', {
@@ -219,9 +224,9 @@ export class BombsShopScene extends Phaser.Scene {
         fontSize: '12px', color: '#666', fontFamily: 'monospace', align: 'center',
       }).setOrigin(0.5));
     } else {
-      const g = this.add.graphics();
-      drawBomberman(g, equipped.colors, col3X + colWidth / 2, topY + 80, 70);
-      eqCol.add(g);
+      // Walking-down preview for the equipped Bomberman in the bombs shop
+      const preview = createShopBombermanSprite(this, col3X + colWidth / 2, topY + 80, equipped.tint, 1);
+      eqCol.add(preview);
 
       // Slot rows: 4 custom slots + 1 fixed Rock slot
       const slotsStartY = topY + 150;

@@ -50,6 +50,7 @@ function cloneState(s: MatchState): MatchState {
     bombs: s.bombs.map(b => ({ ...b })),
     fireTiles: s.fireTiles.map(f => ({ ...f })),
     lightTiles: s.lightTiles.map(l => ({ ...l })),
+    flares: s.flares.map(f => ({ ...f })),
     bloodTiles: s.bloodTiles.map(t => ({ ...t })),
     escapeTiles: s.escapeTiles.map(t => ({ ...t })),
     escapedPlayerIds: s.escapedPlayerIds ? [...s.escapedPlayerIds] : undefined,
@@ -186,8 +187,10 @@ export function resolveTurn(
     }
 
     if (bombType == null) continue;
-    // Must target a walkable tile
-    if (!isWalkable(map, action.x, action.y)) continue;
+    // Bombs can be thrown at any tile (even walls, when throwing blind into
+    // unseen fog). Non-flare bombs on walls will fizzle at trigger time.
+    // Only reject clearly out-of-bounds targets.
+    if (action.x < 0 || action.y < 0 || action.x >= map.width || action.y >= map.height) continue;
 
     const def = BOMB_CATALOG[bombType];
     const bomb: BombInstance = {
@@ -232,7 +235,17 @@ export function resolveTurn(
     if (triggeredBombIds.has(bomb.id)) continue;
     triggeredBombIds.add(bomb.id);
 
-    const trigger = resolveBombTrigger(bomb.type, bomb.x, bomb.y);
+    // Bombs on wall tiles fizzle — except Flare which still lights the area.
+    // This allows players to throw blind into fog and have it fail silently.
+    const onWall = !isWalkable(map, bomb.x, bomb.y);
+    const isFlareType = bomb.type === 'flare';
+    if (onWall && !isFlareType) {
+      // Fizzle — no effect, just remove
+      events.push({ kind: 'bomb_triggered', bombId: bomb.id, type: bomb.type, x: bomb.x, y: bomb.y, tiles: [] });
+      continue;
+    }
+
+    const trigger = resolveBombTrigger(bomb.type, bomb.x, bomb.y, map);
 
     events.push({
       kind: 'bomb_triggered',
@@ -261,9 +274,15 @@ export function resolveTurn(
       state.fireTiles.push({ x: tile.x, y: tile.y, turnsRemaining: trigger.fireDuration, ownerId: bomb.ownerId });
     }
 
-    // Spawn light tiles
-    for (const tile of trigger.lightTiles) {
-      state.lightTiles.push({ x: tile.x, y: tile.y, turnsRemaining: trigger.lightDuration });
+    // Flare: create an ActiveFlare record (lightTiles are derived from flares each turn)
+    if (trigger.lightTiles.length > 0 && trigger.lightDuration > 0) {
+      state.flares.push({
+        id: bomb.id,
+        x: bomb.x,
+        y: bomb.y,
+        initialRadius: 4, // flare's circle radius from bomb config
+        turnsRemaining: trigger.lightDuration,
+      });
     }
 
     // Scatter → spawn child bombs immediately; fuseTurns decides if they resolve now or next turn
@@ -303,9 +322,26 @@ export function resolveTurn(
   state.fireTiles = state.fireTiles
     .map(f => ({ ...f, turnsRemaining: f.turnsRemaining - 1 }))
     .filter(f => f.turnsRemaining > 0);
-  state.lightTiles = state.lightTiles
-    .map(l => ({ ...l, turnsRemaining: l.turnsRemaining - 1 }))
-    .filter(l => l.turnsRemaining > 0);
+  // Age flares and recompute lightTiles from active flares.
+  // After the 2nd turn (turnsRemaining drops to 1), radius shrinks by 1.
+  state.flares = state.flares
+    .map(f => ({ ...f, turnsRemaining: f.turnsRemaining - 1 }))
+    .filter(f => f.turnsRemaining > 0);
+  state.lightTiles = [];
+  for (const flare of state.flares) {
+    const radius = flare.turnsRemaining <= 1
+      ? Math.max(1, flare.initialRadius - 1)
+      : flare.initialRadius;
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        const tx = flare.x + dx;
+        const ty = flare.y + dy;
+        if (tx >= 0 && ty >= 0 && tx < map.width && ty < map.height) {
+          state.lightTiles.push({ x: tx, y: ty, turnsRemaining: flare.turnsRemaining });
+        }
+      }
+    }
+  }
 
   // --- 8. Age bleeding ---
   for (const b of state.bombermen) {

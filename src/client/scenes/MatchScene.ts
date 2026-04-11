@@ -3,9 +3,10 @@ import { NetworkManager } from '../NetworkManager.ts';
 import { ProfileStore } from '../ClientState.ts';
 import { MapRenderer, preloadTiledMap } from '../systems/MapRenderer.ts';
 import { CameraController } from '../systems/CameraController.ts';
-import { drawBomberman } from '../systems/BombermanRenderer.ts';
 import { FogRenderer } from '../systems/FogRenderer.ts';
 import { BombRenderer } from '../systems/BombRenderer.ts';
+import { BombermanSpriteSystem, deathAnimationDurationMs } from '../systems/BombermanSpriteSystem.ts';
+import { ensureBombermanAnims, preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
 import { loadMapById } from '@shared/maps/map-loader.ts';
 import { findPath, type PathTile } from '@shared/systems/Pathfinding.ts';
 import type { MapData } from '@shared/types/map.ts';
@@ -45,6 +46,7 @@ export class MatchScene extends Phaser.Scene {
   private mapRenderer: MapRenderer | null = null;
   private fogRenderer: FogRenderer | null = null;
   private bombRenderer: BombRenderer | null = null;
+  private cameraController: CameraController | null = null;
   private state: MatchState | null = null;
   private myPlayerId: string | null = null;
   private inputMode: InputMode = { kind: 'idle' };
@@ -54,13 +56,28 @@ export class MatchScene extends Phaser.Scene {
   /** Dedicated HUD camera that ignores world zoom/pan. */
   private hudCamera: Phaser.Cameras.Scene2D.Camera | null = null;
 
-  // World-space display layers (draw order enforced by setDepth)
-  // Depths: map=0, fog=50, path=60, bombs=80, entities=100, highlights=150, HUD=1000
+  // World-space display layers (draw order enforced by setDepth).
+  // Depths:
+  //   0   map (tilemap layers and tileset graphics)
+  //   15  escape hatch sprites
+  //   40  bombLayer (persistent bombs, throw arcs, fire, flare flames, fuse nums)
+  //   50  fog of war overlay
+  //   55  decalLayer (persistent scorch marks — visible above fog, under entities)
+  //   60  path line
+  //   100 entitiesLayer (coin bags, pickups, bodies — pure rebuild-each-tick)
+  //   105 bombermanLayer (persistent animated Bomberman sprites + their overlays)
+  //   120 explosionLayer (shockwaves that must render through fog)
+  //   150 highlights (aim/move targets)
+  //   1000+ HUD
   private entitiesLayer!: Phaser.GameObjects.Container;
+  private bombermanLayer!: Phaser.GameObjects.Container;
   private bombLayer!: Phaser.GameObjects.Container;
+  private explosionLayer!: Phaser.GameObjects.Container;
+  private decalLayer!: Phaser.GameObjects.Container;
   private effectsLayer!: Phaser.GameObjects.Container;
   private highlightGraphics!: Phaser.GameObjects.Graphics;
   private pathGraphics!: Phaser.GameObjects.Graphics;
+  private bombermanSpriteSystem: BombermanSpriteSystem | null = null;
 
   // HUD — each element is created as a scene root object with
   // setScrollFactor(0) so Phaser's native input system handles hit-testing.
@@ -84,15 +101,27 @@ export class MatchScene extends Phaser.Scene {
    * and the next inventory-slot click will swap. */
   private lootPendingSwap: { sourceKind: 'collectible' | 'body'; sourceId: string; bombType: import('@shared/types/bombs.ts').BombType; count: number } | null = null;
 
+  // Escape hatch animated sprites
+  private escapeSprites: Array<{
+    x: number; y: number;
+    sprite: Phaser.GameObjects.Sprite;
+    state: 'closed' | 'opening' | 'open' | 'closing';
+  }> = [];
+
   constructor() {
     super({ key: 'MatchScene' });
   }
 
   preload(): void {
-    // Pre-queue Tiled assets so they're ready by create(). If main_map
-    // doesn't have a .tmj in public/maps/ this returns null and we fall
-    // back to procedural rendering.
     this.tiledInfo = preloadTiledMap(this, 'main_map');
+    // Escape hatch: 288x32 sheet, 6 frames of 48x32
+    this.load.spritesheet('escape_hatch', 'sprites/escape_hatch.png', {
+      frameWidth: 48,
+      frameHeight: 32,
+    });
+    // Bomberman sheets are normally loaded by BootScene, but this is a
+    // safety fallback in case MatchScene is reached without Boot running.
+    preloadBombermanSpritesheets(this);
   }
 
   create(): void {
@@ -104,10 +133,48 @@ export class MatchScene extends Phaser.Scene {
     this.inputMode = { kind: 'idle' };
     this.lastPhase = null;
     this.myDeathAt = null;
+    this.escapeSprites = [];
+    if (!this.anims.exists('hatch_closed')) {
+      this.anims.create({
+        key: 'hatch_closed',
+        frames: this.anims.generateFrameNumbers('escape_hatch', { start: 0, end: 0 }),
+        repeat: -1,
+      });
+      this.anims.create({
+        key: 'hatch_opening',
+        frames: this.anims.generateFrameNumbers('escape_hatch', { start: 0, end: 5 }),
+        frameRate: 10,
+        repeat: 0,
+      });
+      this.anims.create({
+        key: 'hatch_open',
+        frames: this.anims.generateFrameNumbers('escape_hatch', { start: 5, end: 5 }),
+        repeat: -1,
+      });
+      this.anims.create({
+        key: 'hatch_closing',
+        frames: this.anims.generateFrameNumbers('escape_hatch', { start: 5, end: 0 }),
+        frameRate: 10,
+        repeat: 0,
+      });
+    }
+
+    // Bomberman animations (idempotent — first scene to call this wins).
+    ensureBombermanAnims(this);
 
     // Explicit depth stack
-    this.bombLayer = this.add.container(0, 0).setDepth(80);
+    // Bomb layer is BELOW fog (depth 50) — placed bombs, throw arcs, fire
+    // tiles, flare flames and fuse numbers all hide in fog of war.
+    this.bombLayer = this.add.container(0, 0).setDepth(40);
+    // Decals sit ABOVE fog so all players see scorch marks left by any
+    // explosion (including through fog), but BELOW entities so Bombermen
+    // stand on top of them.
+    this.decalLayer = this.add.container(0, 0).setDepth(55);
     this.entitiesLayer = this.add.container(0, 0).setDepth(100);
+    // Persistent Bomberman sprites + their overlays (HP pips, ring, aim shadow)
+    this.bombermanLayer = this.add.container(0, 0).setDepth(105);
+    // Explosion layer is ABOVE fog — shockwaves always visible.
+    this.explosionLayer = this.add.container(0, 0).setDepth(120);
     this.effectsLayer = this.add.container(0, 0).setDepth(150);
     this.highlightGraphics = this.add.graphics().setDepth(150);
     this.effectsLayer.add(this.highlightGraphics);
@@ -119,7 +186,7 @@ export class MatchScene extends Phaser.Scene {
     this.hudCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height, false, 'hud');
     this.hudCamera.setScroll(0, 0);
     // Tell the HUD camera to ignore all world-space containers
-    this.hudCamera.ignore([this.bombLayer, this.entitiesLayer, this.effectsLayer, this.highlightGraphics, this.pathGraphics]);
+    this.hudCamera.ignore([this.bombLayer, this.decalLayer, this.explosionLayer, this.entitiesLayer, this.bombermanLayer, this.effectsLayer, this.highlightGraphics, this.pathGraphics]);
 
     this.buildHud();
 
@@ -174,11 +241,15 @@ export class MatchScene extends Phaser.Scene {
     this.fogRenderer = null;
     this.bombRenderer?.destroy();
     this.bombRenderer = null;
+    this.bombermanSpriteSystem?.destroy();
+    this.bombermanSpriteSystem = null;
     this.state = null;
     this.slotRects = [];
     this.slotLabelTexts = [];
     this.slotCountTexts = [];
     this.slotHighlights = [];
+    for (const esc of this.escapeSprites) esc.sprite.destroy();
+    this.escapeSprites = [];
     this.hudObjects = [];
     if (this.hudCamera) {
       this.cameras.remove(this.hudCamera);
@@ -187,7 +258,12 @@ export class MatchScene extends Phaser.Scene {
     this.input.keyboard?.removeAllListeners();
   }
 
-  update(): void {
+  update(time: number, delta: number): void {
+    // Drive Tiled animated tile clock
+    this.mapRenderer?.tick(delta);
+    // Drive Bomberman walk lerps + overlay positions
+    this.bombermanSpriteSystem?.tick(time);
+
     if (!this.state) return;
     const ms = Math.max(0, this.state.phaseEndsAt - Date.now());
     this.timerText.setText(`${(ms / 1000).toFixed(1)}s`);
@@ -205,7 +281,29 @@ export class MatchScene extends Phaser.Scene {
         console.log(`[MatchScene] map loaded: ${this.mapData.width}x${this.mapData.height}`);
         this.mapRenderer?.destroy();
         this.mapRenderer = new MapRenderer(this, this.mapData, 0, this.tiledInfo);
-        this.mapRenderer.renderEscapeTiles(this, this.mapData.escapeTiles);
+        // Create one animated hatch sprite per escape tile. The sprite is
+        // rendered at native 48x32 pixel size and centered on the escape
+        // tile's world position. No setDisplaySize() — let the art render
+        // at its native resolution so pixels stay crisp.
+        for (const spr of this.escapeSprites) spr.sprite.destroy();
+        this.escapeSprites = [];
+        const mapTs = this.mapData.tileSize;
+        for (const esc of this.mapData.escapeTiles) {
+          // Anchor: horizontally centered, bottom of sprite aligned to bottom
+          // of the escape tile. The 48x32 sprite splits into a 3x2 grid of
+          // 16x16 cells, and the middle-bottom cell is the one that should
+          // sit ON the escape tile.
+          const sprite = this.add.sprite(
+            esc.x * mapTs + mapTs / 2,
+            esc.y * mapTs + mapTs,
+            'escape_hatch',
+          );
+          sprite.setDepth(15);
+          sprite.setOrigin(0.5, 1);
+          sprite.play('hatch_closed');
+          if (this.hudCamera) this.hudCamera.ignore(sprite);
+          this.escapeSprites.push({ x: esc.x, y: esc.y, sprite, state: 'closed' });
+        }
         // Tell the HUD camera to ignore everything the map renderer created
         if (this.hudCamera) {
           this.mapRenderer.ignoreFromCamera(this.hudCamera);
@@ -214,9 +312,16 @@ export class MatchScene extends Phaser.Scene {
         this.fogRenderer = new FogRenderer(this, this.mapData, BALANCE.match.losRadius, 50);
         if (this.hudCamera) this.fogRenderer.ignoreFromCamera(this.hudCamera);
         this.bombRenderer?.destroy();
-        this.bombRenderer = new BombRenderer(this, this.bombLayer, this.mapData.tileSize);
+        this.bombRenderer = new BombRenderer(this, this.bombLayer, this.explosionLayer, this.decalLayer, this.mapData.tileSize);
+        this.bombermanSpriteSystem?.destroy();
+        this.bombermanSpriteSystem = new BombermanSpriteSystem(this, this.bombermanLayer, this.mapData.tileSize);
+        if (this.hudCamera) this.bombermanSpriteSystem.ignoreFromCamera(this.hudCamera);
         const bounds = this.mapRenderer.getWorldBounds();
-        new CameraController(this, bounds.width, bounds.height);
+        const ts = this.mapData.tileSize;
+        const spawnMe = this.myBomberman();
+        const startX = spawnMe ? spawnMe.x * ts + ts / 2 : bounds.width / 2;
+        const startY = spawnMe ? spawnMe.y * ts + ts / 2 : bounds.height / 2;
+        this.cameraController = new CameraController(this, bounds.width, bounds.height, startX, startY);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -228,16 +333,32 @@ export class MatchScene extends Phaser.Scene {
 
     this.errorText.setVisible(false);
 
-    // Update fog from my bomberman's current position
     const me = this.myBomberman();
-    if (me && this.fogRenderer) {
-      this.fogRenderer.update(me.x, me.y);
+
+    // Smooth camera follow — update target to player's current tile center
+    if (me && me.alive && this.cameraController && this.mapData) {
+      const ts = this.mapData.tileSize;
+      this.cameraController.setTarget(me.x * ts + ts / 2, me.y * ts + ts / 2);
+    }
+
+    // Feed flare light tiles into fog as external reveals (visible for everyone)
+    if (this.fogRenderer) {
+      this.fogRenderer.setExternalReveals(state.lightTiles);
+      if (me) this.fogRenderer.update(me.x, me.y);
     }
 
     // Keep bomb/fire/light visuals in sync with the state
     this.bombRenderer?.syncBombs(state.bombs);
     this.bombRenderer?.syncFire(state.fireTiles);
-    this.bombRenderer?.syncLight(state.lightTiles);
+    this.bombRenderer?.syncFlares(state.flares);
+
+    // Sync persistent Bomberman sprites (creates/destroys + updates HP/aim)
+    this.bombermanSpriteSystem?.syncFromState(
+      state,
+      this.myPlayerId,
+      this.inputMode.kind === 'aim',
+      (x, y) => this.fogRenderer?.isVisible(x, y) ?? true,
+    );
 
     // Flush any staged action at the start of every new input phase.
     // This is how the "queue during transition" flexibility works: click
@@ -316,11 +437,33 @@ export class MatchScene extends Phaser.Scene {
   private onTurnResult(events: Array<{ kind: string; [k: string]: unknown }>): void {
     if (!this.bombRenderer) return;
 
+    // Drive Bomberman walk lerps + facing changes from `moved` events.
+    // Each lerp lasts the full transition phase so the sprite physically
+    // walks from old tile to new tile in sync with the resolution timer.
+    const moveDurationMs = BALANCE.match.transitionPhaseSeconds * 1000;
+    for (const ev of events) {
+      if (ev.kind !== 'moved') continue;
+      const playerId = ev.playerId as string;
+      const fromX = ev.fromX as number;
+      const fromY = ev.fromY as number;
+      const toX = ev.toX as number;
+      const toY = ev.toY as number;
+      this.bombermanSpriteSystem?.applyMoveEvent(playerId, fromX, fromY, toX, toY, moveDurationMs);
+    }
+
+    // Hurt animations on damage events
+    for (const ev of events) {
+      if (ev.kind !== 'damaged') continue;
+      const playerId = ev.playerId as string;
+      this.bombermanSpriteSystem?.applyHurtEvent(playerId);
+    }
+
     // First pass: spawn arcs for every throw this turn and record the bomb
     // ids so we can time-shift their matching explosions.
     const arcDurationByBombId = new Map<string, number>();
     for (const ev of events) {
       if (ev.kind !== 'throw') continue;
+      const playerId = ev.playerId as string;
       const type = ev.type as BombType;
       const bombId = ev.bombId as string;
       const fromX = ev.fromX as number;
@@ -329,11 +472,18 @@ export class MatchScene extends Phaser.Scene {
       const toY = ev.y as number;
       const { duration } = this.bombRenderer.spawnThrowArc(type, fromX, fromY, toX, toY);
       arcDurationByBombId.set(bombId, duration);
+      this.bombermanSpriteSystem?.applyThrowEvent(playerId, fromX, fromY, toX, toY, duration);
     }
 
-    // Second pass: explosions. For fuse-0 bombs thrown AND triggered this
-    // turn, delay the shockwave by the arc duration so it lands correctly.
-    // For fuse-1+ bombs triggered this turn (thrown last turn), no delay.
+    // Second pass: explosions. The visual burst starts at the halfway point
+    // of the transition phase and runs until the end — animations are
+    // stretched to fill the remaining window so the boom "fills in" the tail
+    // of the turn. Decals only stamp after the burst finishes (end of turn).
+    // For thrown bombs whose arc flight exceeds the halfway mark, the
+    // explosion starts when the bomb lands instead, which may compress the
+    // burst window.
+    const transitionMs = BALANCE.match.transitionPhaseSeconds * 1000;
+    const halfTransitionMs = transitionMs / 2;
     for (const ev of events) {
       if (ev.kind !== 'bomb_triggered') continue;
       const type = ev.type as BombType;
@@ -341,12 +491,10 @@ export class MatchScene extends Phaser.Scene {
       const centerX = ev.x as number;
       const centerY = ev.y as number;
       const bombId = ev.bombId as string;
-      const delay = arcDurationByBombId.get(bombId) ?? 0;
-      if (delay > 0) {
-        this.time.delayedCall(delay, () => this.bombRenderer?.spawnExplosion(type, centerX, centerY, tiles));
-      } else {
-        this.bombRenderer.spawnExplosion(type, centerX, centerY, tiles);
-      }
+      const arcDelay = arcDurationByBombId.get(bombId) ?? 0;
+      const startDelay = Math.max(arcDelay, halfTransitionMs);
+      const animDuration = Math.max(100, transitionMs - startDelay);
+      this.bombRenderer.spawnExplosion(type, centerX, centerY, tiles, startDelay, animDuration);
     }
 
     // Third pass: deaths.
@@ -355,14 +503,18 @@ export class MatchScene extends Phaser.Scene {
       const playerId = ev.playerId as string;
       const x = ev.x as number;
       const y = ev.y as number;
-      this.bombRenderer.spawnDeathAnimation(x, y);
+      // Drive the Bomberman sprite into its death animation. Returns ms.
+      const deathMs = this.bombermanSpriteSystem?.applyDeathEvent(playerId, x, y) ?? deathAnimationDurationMs();
+      // Blood splash particles for flavor (the sprite has its own toppling
+      // animation, so we no longer draw the procedural silhouette here).
+      this.bombRenderer.emitBloodSplash(x, y);
       if (playerId === this.myPlayerId) {
         this.myDeathAt = Date.now();
         // Clear all input — dead players can't act
         this.inputMode = { kind: 'idle' };
         this.lootPendingSwap = null;
-        // 2 seconds after death animation finishes → Results screen
-        this.time.delayedCall(2000, () => {
+        // Hold for the death animation duration + 2 seconds, then results.
+        this.time.delayedCall(deathMs + 2000, () => {
           this.transitionToResults();
         });
       }
@@ -415,10 +567,9 @@ export class MatchScene extends Phaser.Scene {
     if (!this.state || !this.mapData) return;
     const ts = this.mapData.tileSize;
 
-    // Fog filters: enemies/pickups hidden outside LOS. `seeTile` is loose
-    // (true for discovered tiles) for coin/bomb pickups so the map feels
-    // fair. Only Bombermen strictly require `isVisible`.
-    const seeNow = (x: number, y: number): boolean => this.fogRenderer?.isVisible(x, y) ?? true;
+    // Fog filter: pickups become visible once their tile is discovered
+    // (loose check). Bombermen have their own visibility handling inside
+    // BombermanSpriteSystem so we don't filter them here.
     const seeEver = (x: number, y: number): boolean => this.fogRenderer?.isDiscovered(x, y) ?? true;
 
     // Coin bags (visible if the tile has ever been seen)
@@ -456,42 +607,72 @@ export class MatchScene extends Phaser.Scene {
       this.entitiesLayer.add(g);
     }
 
-    // Bombermen — enemies require strict visibility, self is always shown
-    for (const b of this.state.bombermen) {
-      if (!b.alive) continue;
-      const isMe = b.playerId === this.myPlayerId;
-      if (!isMe && !seeNow(b.x, b.y)) continue;
+    // Bombermen are no longer drawn here — BombermanSpriteSystem owns the
+    // persistent animated sprites, HP pips, self-ring and aim shadow. They
+    // live in bombermanLayer and are positioned by the per-frame `tick` based
+    // on lerp state from the most recent `moved` event.
 
-      if (isMe) {
-        const ring = this.add.graphics();
-        ring.lineStyle(2, 0xffcc44, 0.9);
-        ring.strokeCircle(b.x * ts + ts / 2, b.y * ts + ts / 2, ts * 0.55);
-        this.entitiesLayer.add(ring);
-      }
-
-      const g = this.add.graphics();
-      drawBomberman(g, b.colors, b.x * ts + ts / 2, b.y * ts + ts / 2 + 4, ts * 0.9);
-      this.entitiesLayer.add(g);
-
-      const pipY = b.y * ts - 2;
-      for (let i = 0; i < BALANCE.match.bombermanMaxHp; i++) {
-        const p = this.add.graphics();
-        p.fillStyle(i < b.hp ? 0xff4444 : 0x333333, 1);
-        p.fillRect(b.x * ts + 4 + i * 8, pipY, 6, 4);
-        this.entitiesLayer.add(p);
-      }
-
-      if (b.escaped) {
-        const t = this.add.text(b.x * ts + ts / 2, b.y * ts - 8, 'ESCAPED', {
-          fontSize: '10px', color: '#44ff88', fontFamily: 'monospace',
-        }).setOrigin(0.5);
-        this.entitiesLayer.add(t);
-      }
+    // Sync the local player's aim shadow visibility to the sprite system —
+    // covers click-driven aim toggles since rebuildEntities runs after every
+    // input action.
+    if (this.myPlayerId) {
+      this.bombermanSpriteSystem?.setAimActive(this.myPlayerId, this.inputMode.kind === 'aim');
     }
+
+    // Escape hatch state machine — runs only if you've wired up sprites
+    if (this.escapeSprites.length > 0) this.updateEscapeHatches();
 
     // Path line + staged-action highlight
     this.drawPath();
     this.drawHighlights();
+  }
+
+  /**
+   * Escape hatch state machine.
+   * - closed (default): frame 0, idle
+   * - Any alive Bomberman within 1 tile → play opening → stay open
+   * - Bomberman escapes on that tile → play closing → back to closed
+   * - Bomberman walks away without escaping → play closing
+   */
+  private updateEscapeHatches(): void {
+    if (!this.state) return;
+    for (const esc of this.escapeSprites) {
+      // Check if any alive non-escaped Bomberman is within Chebyshev distance 1
+      const nearby = this.state.bombermen.some(b =>
+        b.alive && !b.escaped &&
+        Math.max(Math.abs(b.x - esc.x), Math.abs(b.y - esc.y)) <= 1,
+      );
+      // Check if someone just escaped ON this tile
+      const justEscaped = this.state.bombermen.some(b =>
+        b.escaped && b.x === esc.x && b.y === esc.y,
+      );
+
+      if (justEscaped && esc.state === 'open') {
+        // Bomberman entered — close the hatch
+        esc.state = 'closing';
+        esc.sprite.play('hatch_closing');
+        esc.sprite.once('animationcomplete', () => {
+          esc.state = 'closed';
+          esc.sprite.play('hatch_closed');
+        });
+      } else if (nearby && esc.state === 'closed') {
+        // Someone is approaching — open the hatch
+        esc.state = 'opening';
+        esc.sprite.play('hatch_opening');
+        esc.sprite.once('animationcomplete', () => {
+          esc.state = 'open';
+          esc.sprite.play('hatch_open');
+        });
+      } else if (!nearby && !justEscaped && esc.state === 'open') {
+        // Everyone walked away — close it
+        esc.state = 'closing';
+        esc.sprite.play('hatch_closing');
+        esc.sprite.once('animationcomplete', () => {
+          esc.state = 'closed';
+          esc.sprite.play('hatch_closed');
+        });
+      }
+    }
   }
 
   private drawPath(): void {
@@ -581,6 +762,22 @@ export class MatchScene extends Phaser.Scene {
 
     // Aim mode: click = set throw target
     if (this.inputMode.kind === 'aim') {
+      // Figure out what bomb type is selected
+      const slotIdx = this.inputMode.slotIndex;
+      const selectedType: BombType = slotIdx === 0 ? 'rock'
+        : (me.inventory.slots[slotIdx - 1]?.type ?? 'rock');
+      const isFlare = selectedType === 'flare';
+      const tileIsWall = this.mapData.grid[ty]?.[tx] !== 0;
+      const tileUnseen = this.fogRenderer?.isUnseen(tx, ty) ?? false;
+
+      // If the target is a known wall (discovered + blocked), only flares
+      // can be thrown there. Unseen tiles always allow throws (player can't
+      // see whether it's a wall — the bomb just fizzles server-side).
+      if (tileIsWall && !tileUnseen && !isFlare) {
+        console.log(`[click] can't throw ${selectedType} at revealed wall (${tx},${ty})`);
+        return;
+      }
+
       this.inputMode = {
         kind: 'aim',
         slotIndex: this.inputMode.slotIndex,
@@ -768,6 +965,13 @@ export class MatchScene extends Phaser.Scene {
     const me = this.myBomberman();
     if (!me || !me.alive || me.escaped) return;
 
+    // Loot swap shortcut: clicking an inventory slot while a loot swap is
+    // pending triggers the swap instead of entering aim mode.
+    if (this.lootPendingSwap && slotIndex >= 1 && slotIndex <= 4) {
+      this.executeLootSwap(slotIndex);
+      return;
+    }
+
     // Slot 0 is Rock (always available), slots 1..4 map to inventory.slots[0..3]
     let hasBomb = false;
     if (slotIndex === 0) {
@@ -777,21 +981,21 @@ export class MatchScene extends Phaser.Scene {
     }
     if (!hasBomb) return;
 
-    // Clicking same slot again cancels the aim
+    // Clicking the same slot again cancels the aim
     if (this.inputMode.kind === 'aim' && this.inputMode.slotIndex === slotIndex) {
       this.inputMode = { kind: 'idle' };
+      // Clear any previously-queued action on the server
+      this.sendAction({ kind: 'idle' });
     } else {
       const prevTarget = this.inputMode.kind === 'aim'
         ? { x: this.inputMode.targetX, y: this.inputMode.targetY }
         : { x: null, y: null };
       this.inputMode = { kind: 'aim', slotIndex, targetX: prevTarget.x, targetY: prevTarget.y };
-    }
-
-    // If a pending loot swap is active, clicking an inventory slot (1..4)
-    // triggers the swap instead of entering aim mode.
-    if (this.lootPendingSwap && slotIndex >= 1 && slotIndex <= 4) {
-      this.executeLootSwap(slotIndex);
-      return;
+      // If there's no target yet, proactively cancel any previously-queued
+      // move action so the server doesn't execute a stale path step this turn.
+      if (prevTarget.x === null || prevTarget.y === null) {
+        this.sendAction({ kind: 'idle' });
+      }
     }
 
     this.lootPendingSwap = null;

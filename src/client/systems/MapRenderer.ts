@@ -67,15 +67,30 @@ export function preloadTiledMap(
   return { tilemapKey, tilesets: knownTilesets };
 }
 
+/** One animated tile instance — keeps its own clock and frame pointer. */
+interface AnimatedTileInstance {
+  layer: Phaser.Tilemaps.TilemapLayer;
+  tileX: number;
+  tileY: number;
+  firstgid: number;
+  /** Animation frames from the Tiled tileset: [{ tileid, duration }] */
+  frames: Array<{ tileid: number; duration: number }>;
+  currentFrameIdx: number;
+  elapsedMs: number;
+}
+
 export class MapRenderer {
+  private scene: Phaser.Scene | null = null;
   private mapData: MapData;
   private baseDepth: number;
   private proceduralGraphics: Phaser.GameObjects.Graphics | null = null;
   private tilemapObj: Phaser.Tilemaps.Tilemap | null = null;
   private tilemapLayers: Phaser.Tilemaps.TilemapLayer[] = [];
   private extraGraphics: Phaser.GameObjects.GameObject[] = [];
+  private animatedTiles: AnimatedTileInstance[] = [];
 
   constructor(scene: Phaser.Scene, mapData: MapData, baseDepth = 0, tiledInfo?: { tilemapKey: string; tilesets: TilesetInfo[] } | null) {
+    this.scene = scene;
     this.mapData = mapData;
     this.baseDepth = baseDepth;
 
@@ -83,6 +98,25 @@ export class MapRenderer {
       this.renderTiled(scene, tiledInfo);
     } else {
       this.renderProcedural(scene);
+    }
+  }
+
+  /**
+   * Drives the animated tile clock. Call from the scene's update() loop with
+   * the frame delta. Advances each animated tile's phase and replaces the
+   * tile index when a frame boundary is crossed.
+   */
+  tick(deltaMs: number): void {
+    if (this.animatedTiles.length === 0) return;
+    for (const at of this.animatedTiles) {
+      at.elapsedMs += deltaMs;
+      const currentFrame = at.frames[at.currentFrameIdx];
+      if (at.elapsedMs < currentFrame.duration) continue;
+      at.elapsedMs -= currentFrame.duration;
+      at.currentFrameIdx = (at.currentFrameIdx + 1) % at.frames.length;
+      const nextFrame = at.frames[at.currentFrameIdx];
+      const newGid = at.firstgid + nextFrame.tileid;
+      at.layer.putTileAt(newGid, at.tileX, at.tileY);
     }
   }
 
@@ -115,7 +149,51 @@ export class MapRenderer {
       }
     }
 
-    console.log(`[MapRenderer] Tiled map rendered: ${this.tilemapLayers.length} visual layers`);
+    // Scan each rendered layer for animated tiles and register them.
+    // Tiled stores animation data on the tileset; Phaser doesn't tick these
+    // automatically, so we drive them from the scene update loop via tick().
+    this.collectAnimatedTiles(tilemap);
+
+    console.log(`[MapRenderer] Tiled map rendered: ${this.tilemapLayers.length} visual layers, ${this.animatedTiles.length} animated tiles`);
+  }
+
+  /**
+   * Walk every visible tile on every layer. If its tileset has animation
+   * data for the tile's local id, register an AnimatedTileInstance so tick()
+   * can drive the frame updates.
+   */
+  private collectAnimatedTiles(tilemap: Phaser.Tilemaps.Tilemap): void {
+    for (const layer of this.tilemapLayers) {
+      layer.forEachTile((tile) => {
+        if (tile.index <= 0) return;
+        const tileset = this.findTilesetForGid(tilemap, tile.index);
+        if (!tileset) return;
+        // Phaser stores per-tile animation data on tileset.tileData
+        const localId = tile.index - tileset.firstgid;
+        const tileData = (tileset.tileData as Record<number, { animation?: Array<{ tileid: number; duration: number }> }>)[localId];
+        if (!tileData?.animation || tileData.animation.length === 0) return;
+
+        this.animatedTiles.push({
+          layer,
+          tileX: tile.x,
+          tileY: tile.y,
+          firstgid: tileset.firstgid,
+          frames: tileData.animation.map(f => ({ tileid: f.tileid, duration: f.duration })),
+          currentFrameIdx: 0,
+          elapsedMs: 0,
+        });
+      });
+    }
+  }
+
+  private findTilesetForGid(tilemap: Phaser.Tilemaps.Tilemap, gid: number): Phaser.Tilemaps.Tileset | null {
+    let match: Phaser.Tilemaps.Tileset | null = null;
+    for (const ts of tilemap.tilesets) {
+      if (gid >= ts.firstgid && (!match || ts.firstgid > match.firstgid)) {
+        match = ts;
+      }
+    }
+    return match;
   }
 
   private renderProcedural(scene: Phaser.Scene): void {
@@ -194,5 +272,7 @@ export class MapRenderer {
     if (this.tilemapObj) { this.tilemapObj.destroy(); this.tilemapObj = null; }
     for (const g of this.extraGraphics) g.destroy();
     this.extraGraphics = [];
+    this.animatedTiles = [];
+    this.scene = null;
   }
 }

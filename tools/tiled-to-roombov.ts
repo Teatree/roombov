@@ -26,7 +26,7 @@
  *  - CoinZones     → Zone[] (rectangle objects)
  */
 
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
 
 // ------- Tiled types (subset) -------
@@ -368,3 +368,38 @@ const output: BombermanMap = {
 const outPath = join(dirname(inputPath), `${mapId}.json`);
 writeFileSync(outPath, JSON.stringify(output, null, 2));
 console.log(`\n✓ Written: ${outPath}`);
+
+// Also sync the .tmj to public/maps/ so Phaser's tilemap loader picks up
+// the latest visual edits at runtime. We patch tileset image paths to be
+// relative filenames (matching the PNGs already in public/maps/).
+const publicMapsDir = join(dirname(inputPath), '../../../public/maps');
+if (existsSync(join(publicMapsDir, '..'))) {
+  if (!existsSync(publicMapsDir)) mkdirSync(publicMapsDir, { recursive: true });
+
+  // Patch tileset image paths in the tmj and write to public/maps/
+  const patched = JSON.parse(raw) as TiledMap & { tilesets: Array<{ image?: string; [k: string]: unknown }> };
+  const copiedPngs = new Set<string>();
+  for (const tsEntry of patched.tilesets) {
+    if (tsEntry.image) {
+      const imgName = String(tsEntry.image).split(/[\\/]/).pop() ?? '';
+      // Copy the referenced PNG from its source location to public/maps/
+      const srcImg = join(dirname(inputPath), String(tsEntry.image));
+      const dstImg = join(publicMapsDir, imgName);
+      if (existsSync(srcImg) && !copiedPngs.has(imgName)) {
+        try {
+          copyFileSync(srcImg, dstImg);
+          copiedPngs.add(imgName);
+          console.log(`  synced tileset image: ${imgName}`);
+        } catch (err) {
+          console.warn(`  ⚠ failed to copy ${srcImg} → ${dstImg}:`, err);
+        }
+      }
+      tsEntry.image = imgName;
+    }
+  }
+  const publicTmjPath = join(publicMapsDir, `${mapId}.tmj`);
+  writeFileSync(publicTmjPath, JSON.stringify(patched));
+  console.log(`✓ Synced tmj to: ${publicTmjPath}`);
+} else {
+  console.warn(`⚠ public/ not found — not syncing tmj for runtime`);
+}

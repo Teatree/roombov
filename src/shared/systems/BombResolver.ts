@@ -11,17 +11,32 @@
 
 import type { BombDef, BombShape, BombType } from '../types/bombs.ts';
 import { BOMB_CATALOG } from '../config/bombs.ts';
+import { TileType, type MapData } from '../types/map.ts';
 
 export interface Tile {
   x: number;
   y: number;
 }
 
+function isFloor(map: MapData, x: number, y: number): boolean {
+  if (x < 0 || y < 0 || x >= map.width || y >= map.height) return false;
+  const row = map.grid[y];
+  if (!row) return false;
+  return row[x] === TileType.FLOOR;
+}
+
 /**
  * Compute every tile that a shape centered at (cx, cy) covers.
  * Result is deterministic and de-duplicated.
+ *
+ * Explosions cannot pass through collision tiles (walls/furniture). For ray
+ * shapes ('plus', 'diag') each cardinal/diagonal ray halts as soon as it hits
+ * a non-floor tile; for 'circle' we BFS-flood outward with 8-neighbor moves up
+ * to the Chebyshev radius, which naturally contains the blast behind walls.
+ * The center tile is always included (a bomb detonates where it sits even if
+ * by some edge case it's not a floor).
  */
-export function shapeTiles(shape: BombShape, cx: number, cy: number): Tile[] {
+export function shapeTiles(shape: BombShape, cx: number, cy: number, map: MapData): Tile[] {
   const seen = new Set<string>();
   const out: Tile[] = [];
   const push = (x: number, y: number): void => {
@@ -31,6 +46,16 @@ export function shapeTiles(shape: BombShape, cx: number, cy: number): Tile[] {
     out.push({ x, y });
   };
 
+  // Walk a ray one step at a time, stopping at the first non-floor tile.
+  const castRay = (dx: number, dy: number, radius: number): void => {
+    for (let r = 1; r <= radius; r++) {
+      const nx = cx + dx * r;
+      const ny = cy + dy * r;
+      if (!isFloor(map, nx, ny)) return;
+      push(nx, ny);
+    }
+  };
+
   switch (shape.kind) {
     case 'single':
       push(cx, cy);
@@ -38,29 +63,41 @@ export function shapeTiles(shape: BombShape, cx: number, cy: number): Tile[] {
 
     case 'plus':
       push(cx, cy);
-      for (let r = 1; r <= shape.radius; r++) {
-        push(cx + r, cy);
-        push(cx - r, cy);
-        push(cx, cy + r);
-        push(cx, cy - r);
-      }
+      castRay( 1,  0, shape.radius);
+      castRay(-1,  0, shape.radius);
+      castRay( 0,  1, shape.radius);
+      castRay( 0, -1, shape.radius);
       break;
 
     case 'diag':
       push(cx, cy);
-      for (let r = 1; r <= shape.radius; r++) {
-        push(cx + r, cy + r);
-        push(cx - r, cy + r);
-        push(cx + r, cy - r);
-        push(cx - r, cy - r);
-      }
+      castRay( 1,  1, shape.radius);
+      castRay(-1,  1, shape.radius);
+      castRay( 1, -1, shape.radius);
+      castRay(-1, -1, shape.radius);
       break;
 
     case 'circle': {
-      // Chebyshev disc (square)
-      for (let dy = -shape.radius; dy <= shape.radius; dy++) {
-        for (let dx = -shape.radius; dx <= shape.radius; dx++) {
-          push(cx + dx, cy + dy);
+      // BFS flood with 8-neighbor expansion up to the Chebyshev radius.
+      // Walls block propagation, so tiles "behind" walls are excluded even
+      // though they'd be inside the raw geometric disc.
+      push(cx, cy);
+      type QEntry = { x: number; y: number; d: number };
+      const queue: QEntry[] = [{ x: cx, y: cy, d: 0 }];
+      while (queue.length > 0) {
+        const cur = queue.shift()!;
+        if (cur.d >= shape.radius) continue;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = cur.x + dx;
+            const ny = cur.y + dy;
+            const key = `${nx},${ny}`;
+            if (seen.has(key)) continue;
+            if (!isFloor(map, nx, ny)) continue;
+            push(nx, ny);
+            queue.push({ x: nx, y: ny, d: cur.d + 1 });
+          }
         }
       }
       break;
@@ -92,7 +129,7 @@ export interface BombTriggerResult {
   scatterSpawns: Array<{ type: BombType; x: number; y: number }>;
 }
 
-export function resolveBombTrigger(type: BombType, cx: number, cy: number): BombTriggerResult {
+export function resolveBombTrigger(type: BombType, cx: number, cy: number, map: MapData): BombTriggerResult {
   const def: BombDef = BOMB_CATALOG[type];
   const result: BombTriggerResult = {
     damageTiles: [],
@@ -105,11 +142,11 @@ export function resolveBombTrigger(type: BombType, cx: number, cy: number): Bomb
 
   switch (def.behavior.kind) {
     case 'explode':
-      result.damageTiles = shapeTiles(def.behavior.shape, cx, cy);
+      result.damageTiles = shapeTiles(def.behavior.shape, cx, cy, map);
       break;
 
     case 'fire': {
-      const tiles = shapeTiles(def.behavior.shape, cx, cy);
+      const tiles = shapeTiles(def.behavior.shape, cx, cy, map);
       result.fireTiles = tiles;
       result.fireDuration = def.behavior.durationTurns;
       // Molotov also deals immediate damage to Bombermen on the landing tiles
@@ -119,7 +156,7 @@ export function resolveBombTrigger(type: BombType, cx: number, cy: number): Bomb
     }
 
     case 'light':
-      result.lightTiles = shapeTiles(def.behavior.shape, cx, cy);
+      result.lightTiles = shapeTiles(def.behavior.shape, cx, cy, map);
       result.lightDuration = def.behavior.durationTurns;
       break;
 

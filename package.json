@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "start": "node --import tsx src/server/index.ts",
+    "dev:server": "tsx watch src/server/index.ts",
     "preview": "vite preview",
     "convert-map": "tsx tools/tiled-to-roombov.ts",
     "test": "vitest run",
