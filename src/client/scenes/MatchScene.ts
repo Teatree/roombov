@@ -56,6 +56,8 @@ export class MatchScene extends Phaser.Scene {
   private selectedSlot: number | null = null;
   private lastPhase: string | null = null;
   private myDeathAt: number | null = null;
+  private myKills = 0;
+  private myKillerName: string | null = null;
   private tiledInfo: ReturnType<typeof preloadTiledMap> = null;
   /** Dedicated HUD camera that ignores world zoom/pan. */
   private hudCamera: Phaser.Cameras.Scene2D.Camera | null = null;
@@ -174,6 +176,8 @@ export class MatchScene extends Phaser.Scene {
     this.inputMode = { kind: 'idle' };
     this.lastPhase = null;
     this.myDeathAt = null;
+    this.myKills = 0;
+    this.myKillerName = null;
     this.escapeSprites = [];
     this.bloodDecals = new Set();
     this.knownEntities = new Set();
@@ -278,7 +282,11 @@ export class MatchScene extends Phaser.Scene {
     socket.on('match_end', (msg) => {
       // If we already transitioned (e.g. client-side death→results), ignore.
       if (this.myDeathAt !== null) return;
-      this.transitionToResults(msg);
+      // Delay so the player can see the Bomberman reaching the escape hatch
+      // before the results screen appears. The walk animation takes 70% of
+      // the transition phase; wait for the full transition to complete.
+      const delay = BALANCE.match.transitionPhaseSeconds * 1000 + 500;
+      this.time.delayedCall(delay, () => this.transitionToResults(msg));
     });
 
     // Only left-click triggers game actions. Middle/right are reserved for camera pan.
@@ -488,6 +496,15 @@ export class MatchScene extends Phaser.Scene {
       this.myPlayerId,
       this.selectedSlot !== null || this.inputMode.kind === 'aim',
       (x, y) => this.fogRenderer?.isVisible(x, y) ?? true,
+      // RTS fog for corpses: discover on LOS, persist in seen-dim
+      (playerId, x, y) => {
+        const key = `corpse_${playerId}`;
+        if (this.fogRenderer?.isVisible(x, y)) {
+          this.knownEntities.add(key);
+          return true;
+        }
+        return this.knownEntities.has(key) && (this.fogRenderer?.isDiscovered(x, y) ?? false);
+      },
     );
 
     // Flush any staged action at the start of every new input phase.
@@ -535,16 +552,16 @@ export class MatchScene extends Phaser.Scene {
           this.sendAction({ kind: 'idle' });
           return;
         }
-        // Rush: skip 2 tiles ahead if active and path is long enough.
-        // Pop the intermediate waypoint immediately so the path doesn't stall.
+        // Rush: send both the first and second waypoints so the server
+        // processes two sequential 1-tile moves in a single turn.
         const rushActive = me.rushActive ?? false;
+        const first = this.inputMode.path[0];
         if (rushActive && this.inputMode.path.length >= 2) {
-          const target = this.inputMode.path[1];
-          this.inputMode.path.shift(); // remove the skipped intermediate tile
-          this.sendAction({ kind: 'move', x: target.x, y: target.y });
+          const second = this.inputMode.path[1];
+          this.inputMode.path.shift(); // pop the first waypoint (will be consumed this turn)
+          this.sendAction({ kind: 'move', x: first.x, y: first.y, rushX: second.x, rushY: second.y });
         } else {
-          const target = this.inputMode.path[0];
-          this.sendAction({ kind: 'move', x: target.x, y: target.y });
+          this.sendAction({ kind: 'move', x: first.x, y: first.y });
         }
         return;
       }
@@ -564,12 +581,37 @@ export class MatchScene extends Phaser.Scene {
 
   private transitionToResults(msg?: { endReason: string; escapedPlayerIds: string[]; coinsEarned: Record<string, number> }): void {
     const me = this.state?.bombermen.find(b => b.playerId === this.myPlayerId);
+    const escaped = msg?.escapedPlayerIds?.includes(this.myPlayerId ?? '') ?? false;
+    const alive = me?.alive ?? false;
+    const endReason = msg?.endReason ?? (alive ? 'all_escaped' : 'all_dead');
+
+    // Determine outcome
+    let outcome: 'escaped' | 'died' | 'lost' = 'died';
+    if (escaped) {
+      outcome = 'escaped';
+    } else if (endReason === 'turn_limit' && alive) {
+      outcome = 'lost';
+    }
+
+    // Collect inventory summary for escaped players
+    const inventory: Array<{ name: string; count: number }> = [];
+    if (me && escaped) {
+      for (const slot of me.inventory.slots) {
+        if (slot) {
+          const def = BOMB_CATALOG[slot.type];
+          inventory.push({ name: def.name, count: slot.count });
+        }
+      }
+    }
+
     this.scene.start('ResultsScene', {
-      winnerId: null,
+      outcome,
       coinsEarned: msg?.coinsEarned?.[this.myPlayerId ?? ''] ?? 0,
-      escaped: msg?.escapedPlayerIds?.includes(this.myPlayerId ?? '') ?? false,
-      survived: me?.alive ?? false,
       turnsPlayed: this.state?.turnNumber ?? 0,
+      inventory,
+      kills: this.myKills,
+      killerName: this.myKillerName,
+      myBombermanName: me ? (this.state?.bombermen.find(b => b.playerId === this.myPlayerId) as any)?.name ?? null : null,
     });
   }
 
@@ -580,15 +622,33 @@ export class MatchScene extends Phaser.Scene {
     // Drive Bomberman walk lerps + facing changes from `moved` events.
     // Each lerp lasts the full transition phase so the sprite physically
     // walks from old tile to new tile in sync with the resolution timer.
-    const moveDurationMs = BALANCE.match.transitionPhaseSeconds * 1000;
+    // Group moved events by player — rush moves produce 2 events for one player.
+    // Chain them over the first 70% of the transition so the walk completes
+    // before the turn ends, making it clear whether a Bomberman escaped a blast.
+    const moveDurationMs = BALANCE.match.transitionPhaseSeconds * 1000 * 0.7;
+    const movesByPlayer = new Map<string, Array<{ fromX: number; fromY: number; toX: number; toY: number }>>();
     for (const ev of events) {
       if (ev.kind !== 'moved') continue;
-      const playerId = ev.playerId as string;
-      const fromX = ev.fromX as number;
-      const fromY = ev.fromY as number;
-      const toX = ev.toX as number;
-      const toY = ev.toY as number;
-      this.bombermanSpriteSystem?.applyMoveEvent(playerId, fromX, fromY, toX, toY, moveDurationMs);
+      const pid = ev.playerId as string;
+      if (!movesByPlayer.has(pid)) movesByPlayer.set(pid, []);
+      movesByPlayer.get(pid)!.push({
+        fromX: ev.fromX as number, fromY: ev.fromY as number,
+        toX: ev.toX as number, toY: ev.toY as number,
+      });
+    }
+    for (const [playerId, moves] of movesByPlayer) {
+      const perMoveDuration = moveDurationMs / moves.length;
+      for (let i = 0; i < moves.length; i++) {
+        const m = moves[i];
+        const delay = i * perMoveDuration;
+        if (delay > 0) {
+          this.time.delayedCall(delay, () => {
+            this.bombermanSpriteSystem?.applyMoveEvent(playerId, m.fromX, m.fromY, m.toX, m.toY, perMoveDuration);
+          });
+        } else {
+          this.bombermanSpriteSystem?.applyMoveEvent(playerId, m.fromX, m.fromY, m.toX, m.toY, perMoveDuration);
+        }
+      }
     }
 
     // Hurt animations on damage events
@@ -610,9 +670,19 @@ export class MatchScene extends Phaser.Scene {
       const fromY = ev.fromY as number;
       const toX = ev.x as number;
       const toY = ev.y as number;
-      const { duration } = this.bombRenderer.spawnThrowArc(type, fromX, fromY, toX, toY);
-      arcDurationByBombId.set(bombId, duration);
-      this.bombermanSpriteSystem?.applyThrowEvent(playerId, fromX, fromY, toX, toY, duration);
+      // Only show the throw arc + throw animation if the thrower is in LOS.
+      // The arc duration is always recorded for explosion timing regardless.
+      const throwerVisible = playerId === this.myPlayerId
+        || this.fogRenderer?.isVisible(fromX, fromY);
+      if (throwerVisible) {
+        const { duration } = this.bombRenderer.spawnThrowArc(type, fromX, fromY, toX, toY);
+        arcDurationByBombId.set(bombId, duration);
+        this.bombermanSpriteSystem?.applyThrowEvent(playerId, fromX, fromY, toX, toY, duration);
+      } else {
+        // Still need the arc duration for explosion scheduling
+        const duration = (BALANCE.match.transitionPhaseSeconds * 1000) / 2;
+        arcDurationByBombId.set(bombId, duration);
+      }
     }
 
     // Second pass: explosions. The visual burst starts at the halfway point
@@ -654,8 +724,8 @@ export class MatchScene extends Phaser.Scene {
         // Snap the Bomberman sprite to the destination tile
         this.bombermanSpriteSystem?.applyTeleportEvent(playerId, toX, toY);
         // Puff effects at origin and destination (on decalLayer = below fog)
-        this.bombRenderer?.spawnTeleportPuff(fromX, fromY, puffDuration);
-        this.bombRenderer?.spawnTeleportPuff(toX, toY, puffDuration);
+        this.bombRenderer?.spawnTeleportPuff(fromX, fromY, puffDuration, true);  // FROM: above fog (visible like explosions)
+        this.bombRenderer?.spawnTeleportPuff(toX, toY, puffDuration, false);  // TO: below fog (hidden)
       });
       // Stamp decals after the puff finishes (at the end of the transition)
       this.time.delayedCall(halfTransitionMs + puffDuration, () => {
@@ -692,6 +762,17 @@ export class MatchScene extends Phaser.Scene {
       const playerId = ev.playerId as string;
       const x = ev.x as number;
       const y = ev.y as number;
+      const killerId = (ev.killerId as string | null) ?? null;
+
+      // Track kills: if I killed someone
+      if (killerId === this.myPlayerId && playerId !== this.myPlayerId) {
+        this.myKills++;
+      }
+      // Track killer: if someone killed me
+      if (playerId === this.myPlayerId && killerId) {
+        const killerBm = this.state?.bombermen.find(b => b.playerId === killerId);
+        this.myKillerName = (killerBm as any)?.name ?? killerId;
+      }
 
       this.time.delayedCall(deathDelay, () => {
         const deathMs = this.bombermanSpriteSystem?.applyDeathEvent(playerId, x, y) ?? deathAnimationDurationMs();
@@ -1194,7 +1275,7 @@ export class MatchScene extends Phaser.Scene {
     this.rebuildEntities();
   }
 
-  private sendAction(action: { kind: 'idle' } | { kind: 'move'; x: number; y: number } | { kind: 'throw'; slotIndex: number; x: number; y: number }): void {
+  private sendAction(action: { kind: 'idle' } | { kind: 'move'; x: number; y: number; rushX?: number; rushY?: number } | { kind: 'throw'; slotIndex: number; x: number; y: number }): void {
     NetworkManager.getSocket().emit('player_action', { action });
   }
 

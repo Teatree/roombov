@@ -283,13 +283,13 @@ export class BotPlayer {
 
     if (this.exploreTarget) {
       const path = findPath(me.x, me.y, this.exploreTarget.x, this.exploreTarget.y, map);
-      if (path.length > 0) return this.pathStep(me, path);
+      if (path.length > 0) return this.pathStep(me, path, state);
       // Unreachable — pick a new target next turn
       this.exploreTarget = null;
     }
 
     // Nothing to explore — wander randomly
-    return this.randomMove(me, map);
+    return this.randomMove(me, state, map);
   }
 
   // ---- Helpers ----
@@ -323,11 +323,19 @@ export class BotPlayer {
     return -1;
   }
 
-  /** Pick the right step from a path: 2 tiles ahead if rush, 1 otherwise. */
-  private pathStep(me: BombermanState, path: Array<{ x: number; y: number }>): PlayerAction {
+  /** Pick move action from a path: two sequential 1-tile moves if rush, one otherwise. */
+  private pathStep(me: BombermanState, path: Array<{ x: number; y: number }>, state?: MatchState): PlayerAction {
     if (path.length === 0) return { kind: 'idle' };
+    // Avoid stepping onto escape tiles before 50% of match
+    if (state && this.shouldAvoidEscapes(state) && this.isEscapeTile(path[0].x, path[0].y, state)) {
+      return { kind: 'idle' };
+    }
     if (me.rushActive && path.length >= 2) {
-      return { kind: 'move', x: path[1].x, y: path[1].y };
+      // Don't rush onto an escape tile
+      if (state && this.shouldAvoidEscapes(state) && this.isEscapeTile(path[1].x, path[1].y, state)) {
+        return { kind: 'move', x: path[0].x, y: path[0].y };
+      }
+      return { kind: 'move', x: path[0].x, y: path[0].y, rushX: path[1].x, rushY: path[1].y };
     }
     return { kind: 'move', x: path[0].x, y: path[0].y };
   }
@@ -366,7 +374,7 @@ export class BotPlayer {
     }
     // Also check fire tiles
     if (state.fireTiles.some(f => f.x === me.x && f.y === me.y)) {
-      return this.randomMove(me, map);
+      return this.randomMove(me, state, map);
     }
     return null;
   }
@@ -435,7 +443,17 @@ export class BotPlayer {
     return bestTarget;
   }
 
-  private randomMove(me: BombermanState, map: MapData): PlayerAction {
+  /** True if the bot should avoid stepping on escape tiles (before 50% of match). */
+  private shouldAvoidEscapes(state: MatchState): boolean {
+    return state.turnNumber < BALANCE.match.turnLimit * 0.5;
+  }
+
+  private isEscapeTile(x: number, y: number, state: MatchState): boolean {
+    return state.escapeTiles.some(e => e.x === x && e.y === y);
+  }
+
+  private randomMove(me: BombermanState, state: MatchState, map: MapData): PlayerAction {
+    const avoidEscapes = this.shouldAvoidEscapes(state);
     const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]];
     const shuffled = dirs.sort(() => Math.random() - 0.5);
     for (const [dx, dy] of shuffled) {
@@ -443,6 +461,7 @@ export class BotPlayer {
       const ny = me.y + dy;
       if (nx < 0 || ny < 0 || nx >= map.width || ny >= map.height) continue;
       if (map.grid[ny]?.[nx] !== 0) continue;
+      if (avoidEscapes && this.isEscapeTile(nx, ny, state)) continue;
       return { kind: 'move', x: nx, y: ny };
     }
     return { kind: 'idle' };

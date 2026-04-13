@@ -94,35 +94,51 @@ export class BombermanSpriteSystem {
    *   out of LOS without destroying them (so a sprite re-entering LOS keeps
    *   its facing/animation state instead of resetting).
    */
+  /**
+   * @param isEnemyVisibleNow - true if a tile is in LOS (used for living enemies)
+   * @param isCorpseVisible - RTS fog check for dead sprites: visible if in LOS
+   *   (which discovers them) OR if previously discovered and tile is in seen-dim.
+   *   MatchScene provides this using its knownEntities set.
+   */
   syncFromState(
     state: MatchState,
     myPlayerId: string | null,
     aimActive: boolean,
     isEnemyVisibleNow: (x: number, y: number) => boolean,
+    isCorpseVisible: (playerId: string, x: number, y: number) => boolean,
   ): void {
     const seen = new Set<string>();
     for (const b of state.bombermen) {
-      if (b.escaped) continue; // escaped Bombermen are gone from the board
+      if (b.escaped) continue;
       seen.add(b.playerId);
       let entry = this.entries.get(b.playerId);
       if (!entry) {
         entry = this.createEntry(b, b.playerId === myPlayerId);
         this.entries.set(b.playerId, entry);
       }
-      // Update HP (redraws pips)
       entry.hp = b.hp;
       this.drawHpPips(entry);
-      // Sync aim shadow visibility for the local player
       if (b.playerId === myPlayerId && entry.aimShadow) {
         entry.aimShadow.setVisible(aimActive && b.alive);
       }
-      // Enemy fog: hide if their tile is outside LOS. Self always visible.
-      // Dead Bombermen (corpses) follow the same fog rules — only visible
-      // when in LOS (RTS-style: you must visit to see the body).
+      // Visibility: self always visible. Living enemies: LOS only.
+      // Dead corpses: RTS fog — visible once discovered, persists in seen-dim.
+      // In seen-dim: dimmed (alpha 0.45) so they look "behind the gray film".
       const isMe = b.playerId === myPlayerId;
-      const visible = isMe || isEnemyVisibleNow(b.x, b.y);
+      let visible: boolean;
+      let dimmed = false;
+      if (isMe) {
+        visible = true;
+      } else if (!b.alive || entry.animState === 'death') {
+        visible = isCorpseVisible(b.playerId, b.x, b.y);
+        // Dimmed if visible but NOT in direct LOS (i.e. in seen-dim)
+        if (visible && !isEnemyVisibleNow(b.x, b.y)) dimmed = true;
+      } else {
+        visible = isEnemyVisibleNow(b.x, b.y);
+      }
       entry.sprite.setVisible(visible);
-      entry.hpPips.setVisible(visible);
+      entry.sprite.setAlpha(dimmed ? 0.45 : 1);
+      entry.hpPips.setVisible(visible && !dimmed);
     }
     // Destroy entries for players no longer in state OR that escaped.
     // Keep dead Bombermen — their corpse persists.

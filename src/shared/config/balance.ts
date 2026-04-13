@@ -38,8 +38,10 @@ export const BALANCE = {
       enabled: true,
       /** Chebyshev distance to an enemy Bomberman that breaks rush. */
       proximityRadius: 6,
+      /** Chebyshev distance to a placed bomb that breaks rush. */
+      bombProximityRadius: 6,
       /** Consecutive peaceful turns needed to activate rush. */
-      cooldownTurns: 6,
+      cooldownTurns: 3,
     },
   },
   player: {

@@ -679,15 +679,17 @@ export class BombRenderer {
 
   /**
    * Ender Pearl teleport puff — greenish-blue expanding cloud at a tile.
-   * Rendered on decalLayer (below fog) so it's hidden behind the darkest fog.
+   * @param aboveFog — if true, renders on explosionLayer (visible through fog);
+   *   if false, renders on decalLayer (hidden by fog). FROM puff uses true,
+   *   TO puff uses false.
    */
-  spawnTeleportPuff(tileX: number, tileY: number, durationMs: number): void {
+  spawnTeleportPuff(tileX: number, tileY: number, durationMs: number, aboveFog = false): void {
     const ts = this.tileSize;
     const cx = tileX * ts + ts / 2;
     const cy = tileY * ts + ts / 2;
 
     const g = this.scene.add.graphics();
-    this.decalLayer.add(g);
+    (aboveFog ? this.explosionLayer : this.decalLayer).add(g);
     this.scene.tweens.add({
       targets: g,
       duration: durationMs,
@@ -705,11 +707,12 @@ export class BombRenderer {
       onComplete: () => g.destroy(),
     });
 
-    // A few sparkle particles
+    // A few sparkle particles on the same layer as the puff
+    const particleLayer = aboveFog ? this.explosionLayer : this.decalLayer;
     for (let i = 0; i < 6; i++) {
       const angle = Math.random() * Math.PI * 2;
       const dot = this.scene.add.graphics();
-      this.decalLayer.add(dot);
+      particleLayer.add(dot);
       dot.fillStyle(0x66ffdd, 0.9);
       dot.fillCircle(0, 0, 1.5 + Math.random());
       dot.setPosition(cx, cy);
@@ -743,6 +746,8 @@ export class BombRenderer {
     // Bright center dot
     g.fillStyle(0x33aa88, 0.5);
     g.fillCircle(cx, cy, ts * 0.08);
+    // Render on top of other decals within the container
+    g.setDepth(1);
     this.decals.set(key, g);
   }
 

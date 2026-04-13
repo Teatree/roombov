@@ -111,7 +111,7 @@ export type TurnEvent =
   | { kind: 'throw'; playerId: string; bombId: string; type: BombType; fromX: number; fromY: number; x: number; y: number }
   | { kind: 'bomb_triggered'; bombId: string; type: BombType; x: number; y: number; tiles: Tile[] }
   | { kind: 'damaged'; playerId: string; hpRemaining: number }
-  | { kind: 'died'; playerId: string; x: number; y: number }
+  | { kind: 'died'; playerId: string; x: number; y: number; killerId: string | null }
   | { kind: 'escaped'; playerId: string }
   | { kind: 'coin_collected'; playerId: string; amount: number }
   | { kind: 'body_looted'; playerId: string; bodyId: string; coins: number }
@@ -130,23 +130,14 @@ export function resolveTurn(
   // Only alive, non-escaped Bombermen can act
   const actors = state.bombermen.filter(b => b.alive && !b.escaped);
 
-  // --- 1. Movement (supports Out of Combat Rush: 2 tiles/turn when active) ---
+  // --- 1. Movement (supports Out of Combat Rush: two sequential 1-tile moves per turn) ---
   for (const bomberman of actors) {
     const action = actions.get(bomberman.playerId) ?? { kind: 'idle' };
     if (action.kind !== 'move') continue;
 
-    const dist = chebyshevDistance(bomberman.x, bomberman.y, action.x, action.y);
-    const maxDist = (BALANCE.match.rush.enabled && bomberman.rushActive) ? 2 : 1;
-    let validMove = dist >= 1 && dist <= maxDist && isWalkable(map, action.x, action.y);
-
-    // For 2-tile rush moves, validate the intermediate tile is walkable
-    if (validMove && dist === 2) {
-      const midX = Math.round((bomberman.x + action.x) / 2);
-      const midY = Math.round((bomberman.y + action.y) / 2);
-      if (!isWalkable(map, midX, midY)) validMove = false;
-    }
-
-    if (validMove) {
+    // First move: must be adjacent (Chebyshev 1)
+    const dist1 = chebyshevDistance(bomberman.x, bomberman.y, action.x, action.y);
+    if (dist1 === 1 && isWalkable(map, action.x, action.y)) {
       const fromX = bomberman.x;
       const fromY = bomberman.y;
       bomberman.x = action.x;
@@ -154,6 +145,22 @@ export function resolveTurn(
       events.push({ kind: 'moved', playerId: bomberman.playerId, fromX, fromY, toX: action.x, toY: action.y });
       if (bomberman.bleedingTurns > 0) {
         state.bloodTiles.push({ x: fromX, y: fromY });
+      }
+
+      // Rush second move: if active and a second target was provided
+      if (BALANCE.match.rush.enabled && bomberman.rushActive &&
+          action.rushX !== undefined && action.rushY !== undefined) {
+        const dist2 = chebyshevDistance(bomberman.x, bomberman.y, action.rushX, action.rushY);
+        if (dist2 === 1 && isWalkable(map, action.rushX, action.rushY)) {
+          const from2X = bomberman.x;
+          const from2Y = bomberman.y;
+          bomberman.x = action.rushX;
+          bomberman.y = action.rushY;
+          events.push({ kind: 'moved', playerId: bomberman.playerId, fromX: from2X, fromY: from2Y, toX: action.rushX, toY: action.rushY });
+          if (bomberman.bleedingTurns > 0) {
+            state.bloodTiles.push({ x: from2X, y: from2Y });
+          }
+        }
       }
     } else {
       events.push({ kind: 'idle', playerId: bomberman.playerId, x: bomberman.x, y: bomberman.y });
@@ -225,7 +232,12 @@ export function resolveTurn(
         other.playerId !== bomberman.playerId && other.alive && !other.escaped &&
         chebyshevDistance(bomberman.x, bomberman.y, other.x, other.y) <= rushCfg.proximityRadius,
       );
-      if (enemyNearby || threw) {
+      // Bomb landed nearby (any bomb not owned by this player)
+      const bombNearby = state.bombs.some(bomb =>
+        bomb.ownerId !== bomberman.playerId &&
+        chebyshevDistance(bomberman.x, bomberman.y, bomb.x, bomb.y) <= rushCfg.bombProximityRadius,
+      );
+      if (enemyNearby || threw || bombNearby) {
         // Combat contact — break rush
         if (bomberman.rushActive) {
           bomberman.rushActive = false;
@@ -309,6 +321,8 @@ export function resolveTurn(
   };
 
   const damagedThisTurn = new Set<string>();
+  /** Tracks who last damaged each player (for kill attribution). */
+  const lastDamagedBy = new Map<string, string>();
   const triggeredBombIds = new Set<string>();
 
   // A worklist so scatter spawns can trigger in the same tick (rare — banana
@@ -396,6 +410,7 @@ export function resolveTurn(
         damagedThisTurn.add(b.playerId);
         b.hp -= 1;
         b.bleedingTurns = BALANCE.match.bleedingDurationTurns;
+        lastDamagedBy.set(b.playerId, bomb.ownerId);
         events.push({ kind: 'damaged', playerId: b.playerId, hpRemaining: b.hp });
       }
     }
@@ -445,6 +460,7 @@ export function resolveTurn(
       damagedThisTurn.add(b.playerId);
       b.hp -= 1;
       b.bleedingTurns = BALANCE.match.bleedingDurationTurns;
+      lastDamagedBy.set(b.playerId, fire.ownerId);
       events.push({ kind: 'damaged', playerId: b.playerId, hpRemaining: b.hp });
     }
   }
@@ -483,7 +499,7 @@ export function resolveTurn(
   for (const b of state.bombermen) {
     if (b.alive && b.hp <= 0) {
       b.alive = false;
-      events.push({ kind: 'died', playerId: b.playerId, x: b.x, y: b.y });
+      events.push({ kind: 'died', playerId: b.playerId, x: b.x, y: b.y, killerId: lastDamagedBy.get(b.playerId) ?? null });
       // Drop a body with current coins + inventory
       const bombs: { type: BombType; count: number }[] = [];
       for (const slot of b.inventory.slots) {
@@ -524,7 +540,7 @@ export function resolveTurn(
     // Everyone still alive dies at the turn limit per the brief
     for (const b of aliveAndActive) {
       b.alive = false;
-      events.push({ kind: 'died', playerId: b.playerId, x: b.x, y: b.y });
+      events.push({ kind: 'died', playerId: b.playerId, x: b.x, y: b.y, killerId: null });
     }
     state.phase = 'ended';
     state.endReason = 'turn_limit';

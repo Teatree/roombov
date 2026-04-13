@@ -77,7 +77,7 @@ export type TurnPhase = 'input' | 'transition' | 'ended';
 /** Action a player chose this turn. */
 export type PlayerAction =
   | { kind: 'idle' }
-  | { kind: 'move'; x: number; y: number }
+  | { kind: 'move'; x: number; y: number; rushX?: number; rushY?: number }
   | { kind: 'throw'; slotIndex: number; x: number; y: number };
 
 /**
