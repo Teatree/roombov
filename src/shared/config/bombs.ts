@@ -97,9 +97,25 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     price: 40,
     description: 'Sets a + pattern (radius 1) on fire for 2 turns. Deals damage on landing and each turn.',
   },
+  delay_wide: {
+    type: 'delay_wide',
+    name: 'Wide Delay Bomb',
+    fuseTurns: 1,
+    behavior: { kind: 'explode', shape: { kind: 'circle', radius: 1 } },
+    price: 30,
+    description: 'Hits every tile around the landing tile (3x3). Explodes next turn.',
+  },
+  ender_pearl: {
+    type: 'ender_pearl',
+    name: 'Ender Pearl',
+    fuseTurns: 0,
+    behavior: { kind: 'teleport' },
+    price: 50,
+    description: 'Teleports you to the landing tile on contact. Shifts to nearest floor if blocked.',
+  },
 };
 
 /** Bomb types players can buy/equip (excludes rock which is infinite/fixed). */
 export const PURCHASABLE_BOMBS: BombType[] = [
-  'delay', 'delay_big', 'delay_tricky', 'contact', 'banana', 'flare', 'molotov',
+  'delay', 'delay_big', 'delay_wide', 'delay_tricky', 'contact', 'banana', 'flare', 'molotov', 'ender_pearl',
 ];

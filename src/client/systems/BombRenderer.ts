@@ -2,6 +2,8 @@ import Phaser from 'phaser';
 import type { BombInstance, BombType, FireTile } from '@shared/types/bombs.ts';
 import type { ActiveFlare } from '@shared/types/match.ts';
 import type { Tile } from '@shared/systems/BombResolver.ts';
+import { BALANCE } from '@shared/config/balance.ts';
+import { bombIconFrame } from './BombIcons.ts';
 
 /**
  * Persistent bomb / effect renderer.
@@ -123,6 +125,11 @@ export class BombRenderer {
    * BombInstance visual (from syncBombs) fades in at the target *after*
    * the arc lands, so the two don't visually overlap.
    */
+  /**
+   * Spawn a simple rotating bomb sprite that flies in a straight line from
+   * the thrower's tile to the target tile. Flight time is always half the
+   * transition phase so all throws feel consistent regardless of distance.
+   */
   spawnThrowArc(type: BombType, fromX: number, fromY: number, toX: number, toY: number): { duration: number } {
     const ts = this.tileSize;
     const sx = fromX * ts + ts / 2;
@@ -130,72 +137,22 @@ export class BombRenderer {
     const ex = toX * ts + ts / 2;
     const ey = toY * ts + ts / 2;
 
-    const g = this.scene.add.graphics();
-    drawBombBody(g, bombLook(type), ts);
-    g.setPosition(sx, sy);
-    g.setScale(0.7);
-    this.layer.add(g);
+    const img = this.scene.add.image(sx, sy, 'bomb_icons', bombIconFrame(type));
+    img.setDisplaySize(ts * 0.9, ts * 0.9);
+    this.layer.add(img);
 
-    // Trailing streak
-    const streak = this.scene.add.graphics();
-    streak.setDepth(g.depth);
-    this.layer.add(streak);
-
-    const dist = Math.hypot(ex - sx, ey - sy);
-    const duration = Math.min(650, 250 + dist * 0.8);
-    const peakHeight = Math.min(90, Math.max(30, dist * 0.55));
-
-    const counter = { t: 0 };
-    const prev = { x: sx, y: sy };
-    const trail: Array<{ x: number; y: number; life: number }> = [];
+    const duration = (BALANCE.match.transitionPhaseSeconds * 1000) / 2;
 
     this.scene.tweens.add({
-      targets: counter,
-      t: 1,
+      targets: img,
+      x: ex,
+      y: ey,
       duration,
-      ease: 'Sine.easeOut',
+      ease: 'Linear',
       onUpdate: () => {
-        const t = counter.t;
-        const x = sx + (ex - sx) * t;
-        const baseY = sy + (ey - sy) * t;
-        const arc = -Math.sin(t * Math.PI) * peakHeight;
-        const py = baseY + arc;
-        g.setPosition(x, py);
-        g.setRotation(t * Math.PI * 4);
-        g.setScale(0.7 + Math.sin(t * Math.PI) * 0.3);
-
-        // Record trail points
-        trail.push({ x, y: py, life: 1 });
-        if (trail.length > 8) trail.shift();
-        // Decay
-        streak.clear();
-        for (let i = 0; i < trail.length; i++) {
-          const p = trail[i];
-          const alpha = (i / trail.length) * 0.6;
-          streak.fillStyle(0xffcc44, alpha);
-          streak.fillCircle(p.x, p.y, 3 + (i / trail.length) * 2);
-        }
-
-        prev.x = x; prev.y = py;
+        img.setRotation(img.rotation + 0.15);
       },
-      onComplete: () => {
-        // Landing poof
-        const poof = this.scene.add.graphics();
-        this.layer.add(poof);
-        this.scene.tweens.add({
-          targets: poof,
-          duration: 200,
-          onUpdate: (tw) => {
-            poof.clear();
-            const t = tw.progress;
-            poof.fillStyle(0xffeeaa, (1 - t) * 0.7);
-            poof.fillCircle(ex, ey, ts * (0.1 + 0.25 * t));
-          },
-          onComplete: () => poof.destroy(),
-        });
-        g.destroy();
-        streak.destroy();
-      },
+      onComplete: () => img.destroy(),
     });
 
     return { duration };
@@ -242,6 +199,7 @@ export class BombRenderer {
           case 'rock': this.rockDust(tile, dur); break;
           case 'delay': this.fireBoom(tile, { core: 0xffffaa, mid: 0xffaa33, outer: 0xff5511, maxRadius: 0.55, duration: dur, emberCount: 5 }); break;
           case 'delay_big': this.fireBoom(tile, { core: 0xffffaa, mid: 0xff8822, outer: 0xcc2200, maxRadius: 0.7, duration: dur, emberCount: 7 }); break;
+          case 'delay_wide': this.fireBoom(tile, { core: 0xffffcc, mid: 0xffbb44, outer: 0xee6622, maxRadius: 0.6, duration: dur, emberCount: 5 }); break;
           case 'contact': this.fireBoom(tile, { core: 0xffeeaa, mid: 0xff6633, outer: 0xaa0000, maxRadius: 0.5, duration: dur, emberCount: 4 }); break;
           case 'banana_child': this.fireBoom(tile, { core: 0xffee44, mid: 0xffcc22, outer: 0xaa8811, maxRadius: 0.5, duration: dur, emberCount: 4 }); break;
           case 'delay_tricky': this.plasmaBurst(tile, dur); break;
@@ -255,6 +213,7 @@ export class BombRenderer {
       // Flare doesn't leave a decal — it's light, not an explosion.
       if (type === 'flare') return;
       if (type === 'banana') return; // banana itself doesn't scorch; its children do
+      if (type === 'ender_pearl') return; // teleport decal handled separately
       for (const tile of tiles) this.stampDecal(type, tile);
     };
 
@@ -264,6 +223,38 @@ export class BombRenderer {
       startAnim();
     }
     this.scene.time.delayedCall(Math.max(0, startDelayMs) + dur, stampAllDecals);
+
+    // Lingering smoke particles after the main burst — visible even after
+    // the transition ends, giving the explosion a longer perceived duration.
+    if (type !== 'flare' && type !== 'banana' && type !== 'ender_pearl') {
+      this.scene.time.delayedCall(Math.max(0, startDelayMs) + dur * 0.7, () => {
+        for (const tile of tiles) {
+          this.spawnSmoke(tile.x, tile.y);
+        }
+      });
+    }
+  }
+
+  /** Lingering smoke puff — fades slowly after the main explosion burst. */
+  private spawnSmoke(tileX: number, tileY: number): void {
+    const ts = this.tileSize;
+    const cx = tileX * ts + ts / 2 + (Math.random() - 0.5) * ts * 0.3;
+    const cy = tileY * ts + ts / 2 + (Math.random() - 0.5) * ts * 0.3;
+    const g = this.scene.add.graphics();
+    this.explosionLayer.add(g);
+    const smokeR = ts * (0.2 + Math.random() * 0.15);
+    this.scene.tweens.add({
+      targets: g,
+      duration: 1200 + Math.random() * 600,
+      ease: 'Cubic.easeOut',
+      onUpdate: (tw) => {
+        const t = tw.progress;
+        g.clear();
+        g.fillStyle(0x555555, (1 - t) * 0.35);
+        g.fillCircle(cx, cy - t * ts * 0.3, smokeR * (1 + t * 0.5));
+      },
+      onComplete: () => g.destroy(),
+    });
   }
 
   /**
@@ -287,6 +278,7 @@ export class BombRenderer {
         break;
       case 'delay':
       case 'delay_big':
+      case 'delay_wide':
       case 'contact':
       case 'banana_child':
         this.drawScorchDecal(g, cx, cy, ts);
@@ -301,6 +293,10 @@ export class BombRenderer {
         this.drawScorchDecal(g, cx, cy, ts);
         break;
     }
+
+    // Fade in gradually, 20% transparent at rest
+    g.setAlpha(0);
+    this.scene.tweens.add({ targets: g, alpha: 0.8, duration: 800, ease: 'Sine.easeIn' });
 
     this.decals.set(key, g);
   }
@@ -504,7 +500,6 @@ export class BombRenderer {
 
   private plasmaBurst(tile: Tile, durationMs: number): void {
     const ts = this.tileSize;
-    // Use a minimum visual unit so burst stays visible on 16px tiles.
     const u = Math.max(ts, 24);
     const cx = tile.x * ts + ts / 2;
     const cy = tile.y * ts + ts / 2;
@@ -514,19 +509,22 @@ export class BombRenderer {
     this.scene.tweens.add({
       targets: g,
       duration: durationMs,
-      ease: 'Cubic.easeOut',
+      ease: 'Sine.easeOut',
       onUpdate: (tw) => {
         const t = tw.progress;
         g.clear();
-        // Core purple orb
-        g.fillStyle(0xff66ff, (1 - t) * 0.9);
-        g.fillCircle(cx, cy, u * (0.35 + 0.25 * t));
-        // Magenta halo
-        g.lineStyle(3, 0xcc33cc, (1 - t) * 0.85);
-        g.strokeCircle(cx, cy, u * (0.5 + 0.5 * t));
+        // Bright outer shockwave ring
+        g.lineStyle(4, 0xcc33cc, Math.max(0, 1 - t * 1.2));
+        g.strokeCircle(cx, cy, u * (0.4 + 0.8 * t));
+        // Core purple orb — stays bright longer
+        g.fillStyle(0xff66ff, Math.max(0, 1 - t * 0.9));
+        g.fillCircle(cx, cy, u * (0.3 + 0.35 * t));
+        // Hot white center flash
+        g.fillStyle(0xffccff, Math.max(0, 1 - t * 1.5));
+        g.fillCircle(cx, cy, u * (0.15 + 0.15 * t));
         // Radial lightning spikes
-        g.lineStyle(2, 0xffccff, (1 - t) * 0.9);
-        const reach = u * (0.55 + 0.5 * t);
+        g.lineStyle(2, 0xffccff, Math.max(0, 1 - t * 1.1));
+        const reach = u * (0.5 + 0.7 * t);
         for (let i = 0; i < 8; i++) {
           const ang = (Math.PI * 2 * i) / 8;
           g.beginPath();
@@ -537,6 +535,26 @@ export class BombRenderer {
       },
       onComplete: () => g.destroy(),
     });
+
+    // Magenta spark particles
+    for (let i = 0; i < 6; i++) {
+      const angle = (Math.PI * 2 * i) / 6 + Math.random() * 0.5;
+      const dist = u * (0.6 + Math.random() * 0.4);
+      const spark = this.scene.add.graphics();
+      this.explosionLayer.add(spark);
+      spark.fillStyle(0xff88ff, 1);
+      spark.fillCircle(0, 0, 2);
+      spark.setPosition(cx, cy);
+      this.scene.tweens.add({
+        targets: spark,
+        x: cx + Math.cos(angle) * dist,
+        y: cy + Math.sin(angle) * dist,
+        alpha: 0,
+        duration: durationMs,
+        ease: 'Cubic.easeOut',
+        onComplete: () => spark.destroy(),
+      });
+    }
   }
 
   private bananaSplat(centerX: number, centerY: number, durationMs: number): void {
@@ -659,6 +677,87 @@ export class BombRenderer {
     }
   }
 
+  /**
+   * Ender Pearl teleport puff — greenish-blue expanding cloud at a tile.
+   * Rendered on decalLayer (below fog) so it's hidden behind the darkest fog.
+   */
+  spawnTeleportPuff(tileX: number, tileY: number, durationMs: number): void {
+    const ts = this.tileSize;
+    const cx = tileX * ts + ts / 2;
+    const cy = tileY * ts + ts / 2;
+
+    const g = this.scene.add.graphics();
+    this.decalLayer.add(g);
+    this.scene.tweens.add({
+      targets: g,
+      duration: durationMs,
+      ease: 'Cubic.easeOut',
+      onUpdate: (tw) => {
+        const t = tw.progress;
+        g.clear();
+        // Outer teal glow
+        g.fillStyle(0x22ccaa, (1 - t) * 0.6);
+        g.fillCircle(cx, cy, ts * (0.3 + 0.5 * t));
+        // Inner bright core
+        g.fillStyle(0x44ffcc, (1 - t) * 0.85);
+        g.fillCircle(cx, cy, ts * (0.15 + 0.25 * t));
+      },
+      onComplete: () => g.destroy(),
+    });
+
+    // A few sparkle particles
+    for (let i = 0; i < 6; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dot = this.scene.add.graphics();
+      this.decalLayer.add(dot);
+      dot.fillStyle(0x66ffdd, 0.9);
+      dot.fillCircle(0, 0, 1.5 + Math.random());
+      dot.setPosition(cx, cy);
+      this.scene.tweens.add({
+        targets: dot,
+        x: cx + Math.cos(angle) * ts * 0.5,
+        y: cy + Math.sin(angle) * ts * 0.5,
+        alpha: 0,
+        duration: durationMs * 0.8,
+        ease: 'Cubic.easeOut',
+        onComplete: () => dot.destroy(),
+      });
+    }
+  }
+
+  /** Stamp a greenish-blue Ender Pearl decal on a tile. */
+  stampTeleportDecal(tileX: number, tileY: number): void {
+    const key = `${tileX},${tileY}`;
+    if (this.decals.has(key)) return;
+    const ts = this.tileSize;
+    const cx = tileX * ts + ts / 2;
+    const cy = tileY * ts + ts / 2;
+    const g = this.scene.add.graphics();
+    this.decalLayer.add(g);
+    // Teal outer ring
+    g.fillStyle(0x115544, 0.6);
+    g.fillCircle(cx, cy, ts * 0.35);
+    // Brighter inner spot
+    g.fillStyle(0x227766, 0.7);
+    g.fillCircle(cx, cy, ts * 0.2);
+    // Bright center dot
+    g.fillStyle(0x33aa88, 0.5);
+    g.fillCircle(cx, cy, ts * 0.08);
+    this.decals.set(key, g);
+  }
+
+  /**
+   * Update decal visibility based on fog. Call each frame from rebuildEntities.
+   * Decals are only shown if their tile is currently in LOS. In seen-dim areas,
+   * decals stay hidden until the player revisits (RTS fog).
+   */
+  updateDecalVisibility(isVisible: (x: number, y: number) => boolean): void {
+    for (const [key, g] of this.decals) {
+      const [sx, sy] = key.split(',').map(Number);
+      g.setVisible(isVisible(sx, sy));
+    }
+  }
+
   destroy(): void {
     for (const v of this.bombVisuals.values()) v.destroy();
     for (const v of this.fireVisuals.values()) v.destroy();
@@ -685,22 +784,49 @@ export class BombRenderer {
     const cfg = bombLook(bomb.type);
     drawBombBody(g, cfg, ts);
 
-    // Fuse countdown — big bold number overlaid on the bomb
-    let fuseLabel: Phaser.GameObjects.Text | null = null;
+    // Clock circle indicator — sweeps like an hourglass over the transition phase.
+    // For multi-turn fuses, an outer ring shows total turns remaining.
+    let clockGraphics: Phaser.GameObjects.Graphics | null = null;
+    let clockTween: Phaser.Tweens.Tween | null = null;
+    const clockRadius = ts * 0.45;
     if (bomb.fuseRemaining > 0) {
-      fuseLabel = this.scene.add.text(cx, cy, `${bomb.fuseRemaining}`, {
-        fontSize: `${Math.round(ts * 0.7)}px`,
-        color: '#ffffff',
-        fontFamily: 'monospace',
-        fontStyle: 'bold',
-        stroke: '#000000',
-        strokeThickness: 3,
-      }).setOrigin(0.5).setAlpha(0).setDepth(g.depth + 1);
-      this.layer.add(fuseLabel);
+      clockGraphics = this.scene.add.graphics();
+      clockGraphics.setPosition(cx, cy);
+      clockGraphics.setAlpha(0);
+      this.layer.add(clockGraphics);
+
+      // Outer ring for multi-turn indicator
+      if (bomb.fuseRemaining > 1) {
+        clockGraphics.lineStyle(2, 0xffffff, 0.3);
+        clockGraphics.strokeCircle(0, 0, clockRadius + 3);
+      }
+
+      // Animated sweep: full circle → empty over the transition phase
+      const counter = { t: 0 };
+      clockTween = this.scene.tweens.add({
+        targets: counter,
+        t: 1,
+        duration: BALANCE.match.transitionPhaseSeconds * 1000,
+        repeat: bomb.fuseRemaining - 1,
+        onUpdate: () => {
+          clockGraphics!.clear();
+          // Outer ring redraw for multi-turn
+          if (bomb.fuseRemaining > 1) {
+            clockGraphics!.lineStyle(2, 0xffffff, 0.3);
+            clockGraphics!.strokeCircle(0, 0, clockRadius + 3);
+          }
+          // Sweeping arc: starts full, empties clockwise
+          const endAngle = -Math.PI / 2 + (1 - counter.t) * Math.PI * 2;
+          clockGraphics!.lineStyle(2, 0xffffff, 0.7);
+          clockGraphics!.beginPath();
+          clockGraphics!.arc(0, 0, clockRadius, -Math.PI / 2, endAngle, true);
+          clockGraphics!.strokePath();
+        },
+      });
     }
 
     const fadeIn = this.scene.tweens.add({
-      targets: [g, fuseLabel].filter(Boolean),
+      targets: [g, clockGraphics].filter(Boolean),
       alpha: 1,
       duration: 200,
       delay: 550,
@@ -719,11 +845,12 @@ export class BombRenderer {
       destroy: () => {
         fadeIn.stop();
         tween.stop();
+        clockTween?.stop();
         g.destroy();
-        fuseLabel?.destroy();
+        clockGraphics?.destroy();
       },
-      updateFuse: (remaining: number) => {
-        if (fuseLabel) fuseLabel.setText(`${remaining}`);
+      updateFuse: () => {
+        // Clock handles the visual countdown automatically via the tween
       },
     };
   }
@@ -845,6 +972,8 @@ function bombLook(type: BombType): BombLook {
     case 'banana_child':  return { body: 0xffee55, stroke: 0xaa8822, accent: 0xffcc33, glyph: 'n', shape: 'circle' };
     case 'flare':         return { body: 0xffffcc, stroke: 0xffaa33, accent: 0xffffff, glyph: 'F', shape: 'star' };
     case 'molotov':       return { body: 0x225522, stroke: 0x88cc44, accent: 0xff6633, glyph: 'M', shape: 'bottle' };
+    case 'delay_wide':    return { body: 0x222244, stroke: 0xddaa44, accent: 0xffbb44, glyph: 'W', shape: 'circle' };
+    case 'ender_pearl':   return { body: 0x114433, stroke: 0x44ddaa, accent: 0x66ffcc, glyph: 'E', shape: 'circle' };
   }
 }
 

@@ -43,6 +43,7 @@ export function deathAnimationDurationMs(): number {
 
 interface BombermanSpriteEntry {
   playerId: string;
+  isMe: boolean;
   sprite: Phaser.GameObjects.Sprite;
   hpPips: Phaser.GameObjects.Graphics;
   aimShadow: Phaser.GameObjects.Graphics | null;
@@ -115,10 +116,11 @@ export class BombermanSpriteSystem {
       if (b.playerId === myPlayerId && entry.aimShadow) {
         entry.aimShadow.setVisible(aimActive && b.alive);
       }
-      // Enemy fog: hide if their server-authoritative tile is outside LOS.
-      // Self always visible. Dead Bombermen always visible (their corpse).
+      // Enemy fog: hide if their tile is outside LOS. Self always visible.
+      // Dead Bombermen (corpses) follow the same fog rules — only visible
+      // when in LOS (RTS-style: you must visit to see the body).
       const isMe = b.playerId === myPlayerId;
-      const visible = isMe || entry.animState === 'death' || isEnemyVisibleNow(b.x, b.y);
+      const visible = isMe || isEnemyVisibleNow(b.x, b.y);
       entry.sprite.setVisible(visible);
       entry.hpPips.setVisible(visible);
     }
@@ -208,6 +210,21 @@ export class BombermanSpriteSystem {
   }
 
   /**
+   * Instantly snap a Bomberman sprite to a new tile (Ender Pearl teleport).
+   * Cancels any active lerp and plays idle at the destination.
+   */
+  applyTeleportEvent(playerId: string, tileX: number, tileY: number): void {
+    const entry = this.entries.get(playerId);
+    if (!entry || entry.animState === 'death') return;
+    const ts = this.tileSize;
+    entry.visualX = tileX * ts + ts / 2;
+    entry.visualY = tileY * ts + ts / 2;
+    entry.lerpEndMs = 0;
+    this.applyVisualPosition(entry);
+    this.setAnim(entry, 'idle');
+  }
+
+  /**
    * Play death animation. Sprite stops lerping and the final frame persists
    * as a corpse for the rest of the match. Returns animation duration (ms)
    * so MatchScene can schedule the results screen transition.
@@ -225,6 +242,9 @@ export class BombermanSpriteSystem {
 
     this.setAnim(entry, 'death');
     if (entry.aimShadow) entry.aimShadow.setVisible(false);
+    // Dead sprites render below living ones within the same container
+    entry.sprite.setDepth(0);
+    entry.hpPips.setDepth(0);
     return deathAnimationDurationMs();
   }
 
@@ -245,6 +265,8 @@ export class BombermanSpriteSystem {
       }
       this.applyVisualPosition(entry);
     }
+    // Sort container children so alive sprites (depth 1) render above dead corpses (depth 0)
+    this.layer.sort('depth');
   }
 
   /** Make the HUD camera ignore every object in this system's layer. */
@@ -270,6 +292,7 @@ export class BombermanSpriteSystem {
     // Native scale per plan — the sprite visually overflows the tile on purpose
     sprite.setScale(1);
     sprite.setTint(b.tint);
+    sprite.setDepth(1); // alive sprites render above dead corpses (depth 0)
     sprite.play('bomber_idle_down');
     this.layer.add(sprite);
 
@@ -288,6 +311,7 @@ export class BombermanSpriteSystem {
 
     const entry: BombermanSpriteEntry = {
       playerId: b.playerId,
+      isMe,
       sprite,
       hpPips,
       aimShadow,
@@ -335,9 +359,15 @@ export class BombermanSpriteSystem {
     const { visualX, visualY } = entry;
     entry.sprite.setPosition(visualX, visualY);
 
-    // HP pips float above the character's head
+    // HP bar — only visible for the local player.
     const ts = this.tileSize;
-    this.drawHpPipsAt(entry, visualX - ts * 0.4, visualY - ts * 2.2);
+    if (entry.isMe) {
+      this.drawHpPipsAt(entry, visualX, visualY - ts * 1.45);
+      entry.hpPips.setAlpha(0.55);
+      entry.hpPips.setVisible(true);
+    } else {
+      entry.hpPips.setVisible(false);
+    }
 
     if (entry.aimShadow) {
       entry.aimShadow.clear();
@@ -349,22 +379,40 @@ export class BombermanSpriteSystem {
   }
 
   private drawHpPips(entry: BombermanSpriteEntry): void {
-    // Reposition happens in applyVisualPosition — this just draws the pips at
-    // whatever position the graphics object currently holds. For simplicity
-    // we clear and redraw in drawHpPipsAt which is called every tick anyway.
+    if (!entry.isMe) return;
     const ts = this.tileSize;
-    this.drawHpPipsAt(entry, entry.visualX - ts * 0.4, entry.visualY - ts * 2.2);
+    this.drawHpPipsAt(entry, entry.visualX, entry.visualY - ts * 1.45);
   }
 
+  /**
+   * HP bar: dark background with red segments. Centered at (x, y).
+   * Wider and more bar-like than the old tiny pips.
+   *
+   * To tweak: change `barW` for width, `barH` for height, `padding` for
+   * inner spacing, colors for fill/empty/bg. Position offset is in
+   * `applyVisualPosition` above (`visualY - ts * 1.0`).
+   */
   private drawHpPipsAt(entry: BombermanSpriteEntry, x: number, y: number): void {
     const g = entry.hpPips;
     g.clear();
-    const pipW = 6;
-    const pipH = 4;
-    const gap = 2;
-    for (let i = 0; i < entry.maxHp; i++) {
-      g.fillStyle(i < entry.hp ? 0xff4444 : 0x333333, 1);
-      g.fillRect(x + i * (pipW + gap), y, pipW, pipH);
+    const barW = 13;    // total bar width (65% of original 20)
+    const barH = 3;     // bar height (65% of original 4, rounded)
+    const padding = 1;  // inner padding
+    const segGap = 1;   // gap between HP segments
+    const startX = x - barW / 2;
+
+    // Dark background
+    g.fillStyle(0x111111, 0.85);
+    g.fillRoundedRect(startX - padding, y - padding, barW + padding * 2, barH + padding * 2, 2);
+
+    // HP segments
+    const segCount = entry.maxHp;
+    const totalGaps = (segCount - 1) * segGap;
+    const segW = (barW - totalGaps) / segCount;
+    for (let i = 0; i < segCount; i++) {
+      const sx = startX + i * (segW + segGap);
+      g.fillStyle(i < entry.hp ? 0xdd3333 : 0x333333, 1);
+      g.fillRect(sx, y, segW, barH);
     }
   }
 }

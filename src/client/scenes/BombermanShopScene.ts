@@ -5,13 +5,12 @@ import { ActivityIndicator } from '../systems/ActivityIndicator.ts';
 import { ensureBombermanAnims, createShopBombermanSprite, preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
 import type { BombermanTemplate } from '@shared/types/bomberman.ts';
 import { BOMB_CATALOG } from '@shared/config/bombs.ts';
+import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
+import { BombermanSelector } from '../systems/BombermanSelector.ts';
 
 const CARD_WIDTH = 180;
-const CARD_HEIGHT = 320;
+const CARD_HEIGHT = 400;
 const CARD_GAP = 20;
-const OWNED_CARD_WIDTH = 120;
-const OWNED_CARD_HEIGHT = 140;
-const OWNED_CARD_GAP = 14;
 
 /**
  * Bomberman Shop carousel — shows the current 10-minute cycle of 5
@@ -20,7 +19,6 @@ const OWNED_CARD_GAP = 14;
  */
 export class BombermanShopScene extends Phaser.Scene {
   private cardContainers: Phaser.GameObjects.Container[] = [];
-  private ownedContainers: Phaser.GameObjects.Container[] = [];
   private coinsText!: Phaser.GameObjects.Text;
   private toastText!: Phaser.GameObjects.Text;
   private rosterText!: Phaser.GameObjects.Text;
@@ -28,6 +26,7 @@ export class BombermanShopScene extends Phaser.Scene {
   private unsubProfile: (() => void) | null = null;
   private unsubShop: (() => void) | null = null;
   private activity: ActivityIndicator | null = null;
+  private selector: BombermanSelector | null = null;
 
   constructor() {
     super({ key: 'BombermanShopScene' });
@@ -35,6 +34,7 @@ export class BombermanShopScene extends Phaser.Scene {
 
   preload(): void {
     preloadBombermanSpritesheets(this);
+    preloadBombIcons(this);
   }
 
   create(): void {
@@ -70,6 +70,8 @@ export class BombermanShopScene extends Phaser.Scene {
     backBtn.on('pointerout', () => backBtn.setColor('#888888'));
     backBtn.on('pointerdown', () => this.scene.start('MainMenuScene'));
 
+    this.input.keyboard?.on('keydown-ESC', () => this.scene.start('MainMenuScene'));
+
     this.activity = new ActivityIndicator(this);
 
     const socket = NetworkManager.connect();
@@ -84,13 +86,15 @@ export class BombermanShopScene extends Phaser.Scene {
     this.unsubProfile = ProfileStore.subscribe(() => {
       this.renderHeader();
       this.rebuildCards();
-      this.rebuildOwned();
     });
     this.unsubShop = BombermanShopStore.subscribe(() => this.rebuildCards());
 
+    // Consistent Bomberman selector at the bottom (same component as Bombs Shop / Lobby)
+    this.selector = new BombermanSelector(this, height - 130);
+    this.selector.create();
+
     this.renderHeader();
     this.rebuildCards();
-    this.rebuildOwned();
   }
 
   update(): void {
@@ -115,9 +119,9 @@ export class BombermanShopScene extends Phaser.Scene {
     this.activity?.destroy();
     this.activity = null;
     for (const c of this.cardContainers) c.destroy();
-    for (const c of this.ownedContainers) c.destroy();
     this.cardContainers = [];
-    this.ownedContainers = [];
+    this.selector?.destroy();
+    this.selector = null;
     const socket = NetworkManager.getSocket();
     socket.off('shop_result');
   }
@@ -140,80 +144,11 @@ export class BombermanShopScene extends Phaser.Scene {
     const count = cycle.bombermen.length;
     const totalW = count * CARD_WIDTH + (count - 1) * CARD_GAP;
     const startX = (width - totalW) / 2 + CARD_WIDTH / 2;
-    const cardY = 280;
+    const cardY = 310;
 
     for (let i = 0; i < count; i++) {
       const container = this.createCard(startX + i * (CARD_WIDTH + CARD_GAP), cardY, cycle.bombermen[i]);
       this.cardContainers.push(container);
-    }
-  }
-
-  private rebuildOwned(): void {
-    for (const c of this.ownedContainers) c.destroy();
-    this.ownedContainers = [];
-
-    const profile = ProfileStore.get();
-    if (!profile) return;
-
-    const { width, height } = this.scale;
-    const rosterY = height - 120;
-
-    // Section label
-    const label = this.add.container(0, 0);
-    label.add(this.add.text(width / 2, rosterY - OWNED_CARD_HEIGHT / 2 - 24, 'YOUR ROSTER', {
-      fontSize: '14px', color: '#aaaaaa', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setOrigin(0.5));
-    this.ownedContainers.push(label);
-
-    if (profile.ownedBombermen.length === 0) {
-      const empty = this.add.container(0, 0);
-      empty.add(this.add.text(width / 2, rosterY, '(no Bombermen owned yet)', {
-        fontSize: '12px', color: '#666', fontFamily: 'monospace',
-      }).setOrigin(0.5));
-      this.ownedContainers.push(empty);
-      return;
-    }
-
-    const count = profile.ownedBombermen.length;
-    const totalW = count * OWNED_CARD_WIDTH + (count - 1) * OWNED_CARD_GAP;
-    const startX = (width - totalW) / 2 + OWNED_CARD_WIDTH / 2;
-
-    for (let i = 0; i < count; i++) {
-      const owned = profile.ownedBombermen[i];
-      const isEquipped = owned.id === profile.equippedBombermanId;
-      const x = startX + i * (OWNED_CARD_WIDTH + OWNED_CARD_GAP);
-      const container = this.add.container(x, rosterY);
-
-      const bg = this.add.graphics();
-      bg.fillStyle(0x1a1a2e, 0.95);
-      bg.fillRoundedRect(-OWNED_CARD_WIDTH / 2, -OWNED_CARD_HEIGHT / 2, OWNED_CARD_WIDTH, OWNED_CARD_HEIGHT, 8);
-      bg.lineStyle(2, isEquipped ? 0x44ff88 : 0x333355, 1);
-      bg.strokeRoundedRect(-OWNED_CARD_WIDTH / 2, -OWNED_CARD_HEIGHT / 2, OWNED_CARD_WIDTH, OWNED_CARD_HEIGHT, 8);
-      container.add(bg);
-
-      // Smaller walking sprite for the roster thumbnail. Fits 120x140 card.
-      const charSprite = createShopBombermanSprite(this, 0, -15, owned.tint, 0.7);
-      container.add(charSprite);
-
-      if (isEquipped) {
-        container.add(this.add.text(0, OWNED_CARD_HEIGHT / 2 - 18, 'EQUIPPED', {
-          fontSize: '11px', color: '#44ff88', fontFamily: 'monospace', fontStyle: 'bold',
-        }).setOrigin(0.5));
-      } else {
-        const btn = this.add.text(0, OWNED_CARD_HEIGHT / 2 - 18, '[ EQUIP ]', {
-          fontSize: '11px', color: '#44aaff', fontFamily: 'monospace', fontStyle: 'bold',
-          backgroundColor: '#222244', padding: { x: 8, y: 4 },
-        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-        btn.on('pointerover', () => btn.setColor('#88ccff'));
-        btn.on('pointerout', () => btn.setColor('#44aaff'));
-        btn.on('pointerdown', () => {
-          NetworkManager.track('equip_bomberman', 'profile');
-          NetworkManager.getSocket().emit('equip_bomberman', { ownedId: owned.id });
-        });
-        container.add(btn);
-      }
-
-      this.ownedContainers.push(container);
     }
   }
 
@@ -241,25 +176,39 @@ export class BombermanShopScene extends Phaser.Scene {
       fontSize: '12px', color: '#bbbbbb', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5));
 
+    // Name
+    container.add(this.add.text(0, -CARD_HEIGHT / 2 + 30, template.name, {
+      fontSize: '14px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5));
+
     // Character — animated sprite playing walk-down cycle, tinted with the
     // template's vivid tint. Scale tuned to fit the 180x320 card.
-    const charSprite = createShopBombermanSprite(this, 0, -40, template.tint, 1.1);
+    const charSprite = createShopBombermanSprite(this, 0, -30, template.tint, 1.1);
     container.add(charSprite);
 
-    // Bomb loadout summary
-    const slotLines: string[] = [];
-    for (const slot of template.inventory.slots) {
-      if (!slot) { slotLines.push('- empty'); continue; }
-      const name = BOMB_CATALOG[slot.type].name;
-      slotLines.push(`- ${name} x${slot.count}`);
+    // Bomb loadout summary with icons
+    const loadoutStartY = 55;
+    for (let si = 0; si < template.inventory.slots.length; si++) {
+      const slot = template.inventory.slots[si];
+      const rowY = loadoutStartY + si * 18;
+      if (!slot) {
+        container.add(this.add.text(0, rowY, '- empty', {
+          fontSize: '10px', color: '#666', fontFamily: 'monospace',
+        }).setOrigin(0.5));
+      } else {
+        const name = BOMB_CATALOG[slot.type].name;
+        const slotIcon = this.add.image(-40, rowY, 'bomb_icons', bombIconFrame(slot.type))
+          .setDisplaySize(14, 14);
+        container.add(slotIcon);
+        container.add(this.add.text(-28, rowY, `${name} x${slot.count}`, {
+          fontSize: '10px', color: '#cccccc', fontFamily: 'monospace',
+        }).setOrigin(0, 0.5));
+      }
     }
-    container.add(this.add.text(0, 60, slotLines.join('\n'), {
-      fontSize: '10px', color: '#cccccc', fontFamily: 'monospace', align: 'center', lineSpacing: 2,
-    }).setOrigin(0.5));
 
     // Price
     const priceLabel = template.price === 0 ? 'FREE' : `${template.price} coins`;
-    container.add(this.add.text(0, CARD_HEIGHT / 2 - 62, priceLabel, {
+    container.add(this.add.text(0, CARD_HEIGHT / 2 - 42, priceLabel, {
       fontSize: '16px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5));
 
@@ -270,14 +219,14 @@ export class BombermanShopScene extends Phaser.Scene {
     const rosterFull = profile ? profile.ownedBombermen.length >= 5 : true;
 
     if (alreadyOwned) {
-      container.add(this.add.text(0, CARD_HEIGHT / 2 - 28, 'OWNED', {
+      container.add(this.add.text(0, CARD_HEIGHT / 2 - 18, 'OWNED', {
         fontSize: '14px', color: '#44ff88', fontFamily: 'monospace', fontStyle: 'bold',
         backgroundColor: '#113322', padding: { x: 12, y: 6 },
       }).setOrigin(0.5));
     } else {
       const enabled = canAfford && !rosterFull;
       const btnColor = enabled ? '#44aaff' : '#555566';
-      const btn = this.add.text(0, CARD_HEIGHT / 2 - 28, '[ BUY ]', {
+      const btn = this.add.text(0, CARD_HEIGHT / 2 - 18, '[ BUY ]', {
         fontSize: '14px', color: btnColor, fontFamily: 'monospace', fontStyle: 'bold',
         backgroundColor: '#111122', padding: { x: 12, y: 6 },
       }).setOrigin(0.5);

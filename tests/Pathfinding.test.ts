@@ -11,7 +11,7 @@ function map(rows: string[]): MapData {
     id: 'test', name: 'test',
     width: rows[0].length, height: rows.length, tileSize: 32,
     grid,
-    spawns: [], escapeTiles: [], coinZones: [], bombZones: [],
+    spawns: [], escapeTiles: [], chest1Zones: [], chest2Zones: [],
   };
 }
 

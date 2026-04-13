@@ -99,6 +99,7 @@ export class GameServer {
       this.matchRooms.delete(config.id);
       // Clear joinedMatchId for all participants so they can join a new match
       for (const p of participants) {
+        if (!p.socketId) continue; // skip bots
         const sess = this.sessions.get(p.socketId);
         if (sess) sess.joinedMatchId = null;
       }
@@ -107,6 +108,7 @@ export class GameServer {
 
     // Move everyone into the socket.io room and notify
     for (const p of participants) {
+      if (!p.socketId) continue; // skip bots
       const sock = this.io.sockets.sockets.get(p.socketId);
       if (sock) sock.join(config.id);
     }

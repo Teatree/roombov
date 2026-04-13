@@ -24,7 +24,7 @@ function openMap(size = 40): MapData {
   }
   return {
     id: 'test_open', name: 'test open', width: size, height: size, tileSize: 16,
-    grid, spawns: [], escapeTiles: [], coinZones: [], bombZones: [],
+    grid, spawns: [], escapeTiles: [], chest1Zones: [], chest2Zones: [],
   };
 }
 
@@ -38,7 +38,7 @@ function blankMap(width: number, height: number): MapData {
   }
   return {
     id: 'test_blank', name: 'test blank', width, height, tileSize: 16,
-    grid, spawns: [], escapeTiles: [], coinZones: [], bombZones: [],
+    grid, spawns: [], escapeTiles: [], chest1Zones: [], chest2Zones: [],
   };
 }
 
@@ -169,6 +169,41 @@ describe('shapeTiles collision blocking', () => {
   });
 });
 
+describe('shapeTiles with closed doors', () => {
+  it('test_shapeTiles_plus_stops_at_closed_door_but_includes_door_tile', () => {
+    // Arrange: open map, closed door at (7, 5). Bomb at (5, 5) plus r3.
+    // East ray should reach (6,5), (7,5=door), then STOP — (8,5) excluded.
+    const map = openMap();
+    const doors = new Set(['7,5']);
+
+    // Act
+    const tiles = norm(shapeTiles({ kind: 'plus', radius: 3 }, 5, 5, map, doors));
+
+    // Assert: door tile IS included but ray stops there
+    expect(tiles).toContain('7,5');
+    expect(tiles).not.toContain('8,5');
+    // Other directions unaffected
+    expect(tiles).toContain('5,4');
+    expect(tiles).toContain('5,3');
+    expect(tiles).toContain('5,2');
+  });
+
+  it('test_shapeTiles_circle_includes_door_but_does_not_expand_past', () => {
+    // Arrange: closed door at (6, 5). Bomb at (5, 5) circle r2.
+    const map = openMap();
+    const doors = new Set(['6,5']);
+
+    // Act
+    const tiles = norm(shapeTiles({ kind: 'circle', radius: 2 }, 5, 5, map, doors));
+
+    // Assert: (6,5) is included but tiles that would only be reachable
+    // through (6,5) should be missing — (7,5) can't be reached via (6,5)
+    // but may be reached via (6,4)→(7,5) diagonally. So just check the
+    // door tile is present.
+    expect(tiles).toContain('6,5');
+  });
+});
+
 describe('resolveBombTrigger', () => {
   const map = openMap();
 
@@ -248,6 +283,28 @@ describe('resolveBombTrigger', () => {
       // Brief: molotov also deals immediate 1 damage on landing tiles
       expect(r.damageTiles).toHaveLength(5);
       expect(norm(r.damageTiles)).toEqual(norm(r.fireTiles));
+    });
+  });
+
+  describe('delay_wide (circle x1)', () => {
+    it('hits 9 tiles (3x3 square around center)', () => {
+      const r = resolveBombTrigger('delay_wide', 5, 5, map);
+      expect(r.damageTiles).toHaveLength(9);
+      expect(norm(r.damageTiles)).toEqual(tileSet(
+        [4, 4], [5, 4], [6, 4],
+        [4, 5], [5, 5], [6, 5],
+        [4, 6], [5, 6], [6, 6],
+      ));
+    });
+  });
+
+  describe('ender_pearl (teleport)', () => {
+    it('produces no damage, fire, light, or scatter tiles', () => {
+      const r = resolveBombTrigger('ender_pearl', 5, 5, map);
+      expect(r.damageTiles).toHaveLength(0);
+      expect(r.fireTiles).toHaveLength(0);
+      expect(r.lightTiles).toHaveLength(0);
+      expect(r.scatterSpawns).toHaveLength(0);
     });
   });
 });

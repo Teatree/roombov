@@ -14,12 +14,17 @@
 
 import type { Server } from 'socket.io';
 import type { ClientToServerEvents, ServerToClientEvents } from '../shared/types/messages.ts';
-import type { MatchConfig, MatchState, PlayerAction, CoinBag, CollectibleBomb, DroppedBody } from '../shared/types/match.ts';
+import type { MatchConfig, MatchState, PlayerAction, Chest, DroppedBody } from '../shared/types/match.ts';
 import type { LootBombMsg } from '../shared/types/messages.ts';
 import type { BombermanState } from '../shared/types/bomberman.ts';
 import type { MapData } from '../shared/types/map.ts';
 import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import { BALANCE } from '../shared/config/balance.ts';
+import { CHEST_CONFIG } from '../shared/config/chests.ts';
+import type { BombType } from '../shared/types/bombs.ts';
+import { BotPlayer } from './BotPlayer.ts';
+import { rollBombermanName } from '../shared/config/bomberman-names.ts';
+import { TIER_CONFIG } from '../shared/config/bomberman-tiers.ts';
 import { resolveTurn } from '../shared/systems/TurnResolver.ts';
 import { createSeededRandom, seededRandInt, seededShuffle } from '../shared/utils/seeded-random.ts';
 import { loadMapById } from '../shared/maps/map-loader.ts';
@@ -29,7 +34,8 @@ type TypedServer = Server<ClientToServerEvents, ServerToClientEvents>;
 
 export interface MatchRoomParticipant {
   playerId: string;
-  socketId: string;
+  /** Null for bot players (no socket connection). */
+  socketId: string | null;
   profile: PlayerProfile;
 }
 
@@ -42,6 +48,7 @@ export class MatchRoom {
   private state: MatchState;
   private phaseTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingActions = new Map<string, PlayerAction>();
+  private bots: BotPlayer[] = [];
   private onEnd: () => void;
 
   constructor(
@@ -59,10 +66,105 @@ export class MatchRoom {
     this.playerStore = playerStore;
     this.onEnd = onEnd;
 
+    // Fill empty slots with bots
+    this.createBots();
+
     this.state = this.buildInitialState();
   }
 
   get id(): string { return this.config.id; }
+
+  private createBots(): void {
+    const cfg = BALANCE.bots;
+    const realCount = this.participants.length;
+    if (realCount < cfg.minPlayersForBots) return;
+    const slotsToFill = Math.min(cfg.maxPerMatch, cfg.fillToTotal - realCount);
+    if (slotsToFill <= 0) return;
+
+    const rng = () => Math.random();
+    const tierWeights = TIER_CONFIG.paid.weights;
+    const weightEntries = Object.entries(tierWeights).filter(([, w]) => (w ?? 0) > 0) as [BombType, number][];
+    const totalWeight = weightEntries.reduce((s, [, w]) => s + w, 0);
+
+    const rollBomb = (): BombType => {
+      let roll = rng() * totalWeight;
+      for (const [type, w] of weightEntries) {
+        roll -= w;
+        if (roll <= 0) return type;
+      }
+      return weightEntries[weightEntries.length - 1][0];
+    };
+
+    for (let i = 0; i < slotsToFill; i++) {
+      const botId = `bot_${i}`;
+      const bot = new BotPlayer(botId);
+      this.bots.push(bot);
+
+      // Generate a random tint (same vivid-pastel palette as shop)
+      const hue = rng() * 360;
+      const sat = 0.55 + rng() * 0.3;
+      const light = 0.62 + rng() * 0.18;
+      const c = (1 - Math.abs(2 * light - 1)) * sat;
+      const hp = hue / 60;
+      const x = c * (1 - Math.abs((hp % 2) - 1));
+      let r = 0, g = 0, bl = 0;
+      if (hp < 1) { r = c; g = x; }
+      else if (hp < 2) { r = x; g = c; }
+      else if (hp < 3) { g = c; bl = x; }
+      else if (hp < 4) { g = x; bl = c; }
+      else if (hp < 5) { r = x; bl = c; }
+      else { r = c; bl = x; }
+      const m = light - c / 2;
+      const tint = (Math.round((r + m) * 255) << 16) | (Math.round((g + m) * 255) << 8) | Math.round((bl + m) * 255);
+
+      // Generate random inventory (10 bombs from paid tier weights)
+      const counts: Partial<Record<BombType, number>> = {};
+      // Always include at least 2 flares
+      counts['flare'] = 2;
+      for (let b = 0; b < 8; b++) {
+        const type = rollBomb();
+        counts[type] = (counts[type] ?? 0) + 1;
+      }
+      // Pack into 4 slots
+      const sorted = Object.entries(counts)
+        .filter(([, c]) => (c ?? 0) > 0)
+        .sort(([, a], [, b]) => (b ?? 0) - (a ?? 0)) as [BombType, number][];
+      const slots: (null | { type: BombType; count: number })[] = [null, null, null, null];
+      for (let si = 0; si < Math.min(4, sorted.length); si++) {
+        slots[si] = { type: sorted[si][0], count: Math.min(sorted[si][1], BALANCE.match.bombSlotStackLimit) };
+      }
+
+      const tiers = ['free', 'paid', 'paid_expensive'] as const;
+      const tier = tiers[Math.floor(rng() * tiers.length)];
+      const name = rollBombermanName(tier, rng);
+
+      // Create a dummy profile and participant
+      this.participants.push({
+        playerId: botId,
+        socketId: null,
+        profile: {
+          id: botId,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          coins: 0,
+          ownedBombermen: [{
+            id: `bot_bm_${i}`,
+            name,
+            tier,
+            colors: { shirt: tint, pants: tint, hair: tint },
+            tint,
+            inventory: { slots },
+            purchasedAt: Date.now(),
+            sourceTemplateId: 'bot',
+          }],
+          equippedBombermanId: `bot_bm_${i}`,
+          bombStockpile: {},
+        },
+      });
+    }
+    console.log(`[MatchRoom] Created ${slotsToFill} bots for match ${this.config.id}`);
+  }
+
 
   private buildInitialState(): MatchState {
     const seed = hashString(this.config.id);
@@ -101,12 +203,14 @@ export class MatchRoom {
           : { slots: [null, null, null, null] },
         bleedingTurns: 0,
         escaped: false,
+        rushCooldown: 0,
+        rushActive: false,
       };
     });
 
-    // Seeded coin bags inside coinZones (1 per zone)
-    const coinBags: CoinBag[] = [];
-    for (const zone of this.map.coinZones) {
+    // Seeded chests: 1 per zone, tier matches the zone type
+    const chests: Chest[] = [];
+    const pickWalkable = (zone: { x: number; y: number; w: number; h: number }): { x: number; y: number } | null => {
       const candidates: { x: number; y: number }[] = [];
       for (let dy = 0; dy < zone.h; dy++) {
         for (let dx = 0; dx < zone.w; dx++) {
@@ -115,49 +219,35 @@ export class MatchRoom {
           if (this.map.grid[y]?.[x] === 0) candidates.push({ x, y });
         }
       }
-      if (candidates.length === 0) continue;
-      const pick = candidates[seededRandInt(rng, 0, candidates.length)];
-      coinBags.push({
-        id: `coin_${coinBags.length}`,
-        x: pick.x,
-        y: pick.y,
-        amount: seededRandInt(rng, 5, 26),
-      });
-    }
+      return candidates.length > 0 ? candidates[seededRandInt(rng, 0, candidates.length)] : null;
+    };
 
-    // Seeded collectible bombs inside bombZones (2 per zone)
-    const collectibleBombs: CollectibleBomb[] = [];
-    const bombPool: Array<{ type: CollectibleBomb['type']; count: number }> = [
-      { type: 'delay', count: 2 },
-      { type: 'contact', count: 2 },
-      { type: 'delay_big', count: 1 },
-      { type: 'molotov', count: 1 },
-      { type: 'banana', count: 1 },
-      { type: 'flare', count: 2 },
-      { type: 'delay_tricky', count: 2 },
-    ];
-    for (const zone of this.map.bombZones) {
-      for (let n = 0; n < 2; n++) {
-        const candidates: { x: number; y: number }[] = [];
-        for (let dy = 0; dy < zone.h; dy++) {
-          for (let dx = 0; dx < zone.w; dx++) {
-            const x = zone.x + dx;
-            const y = zone.y + dy;
-            if (this.map.grid[y]?.[x] === 0) candidates.push({ x, y });
-          }
-        }
-        if (candidates.length === 0) continue;
-        const pick = candidates[seededRandInt(rng, 0, candidates.length)];
-        const pool = bombPool[seededRandInt(rng, 0, bombPool.length)];
-        collectibleBombs.push({
-          id: `pickup_${collectibleBombs.length}`,
-          x: pick.x,
-          y: pick.y,
-          type: pool.type,
-          count: pool.count,
-        });
+    const rollBomb = (tier: 1 | 2): BombType => {
+      const cfg = CHEST_CONFIG[tier];
+      const entries = Object.entries(cfg.weights).filter(([, w]) => (w ?? 0) > 0) as [BombType, number][];
+      const total = entries.reduce((s, [, w]) => s + w, 0);
+      let roll = rng() * total;
+      for (const [type, w] of entries) {
+        roll -= w;
+        if (roll <= 0) return type;
       }
-    }
+      return entries[entries.length - 1][0];
+    };
+
+    const spawnChest = (zone: { x: number; y: number; w: number; h: number }, tier: 1 | 2): void => {
+      const pick = pickWalkable(zone);
+      if (!pick) return;
+      const cfg = CHEST_CONFIG[tier];
+      const coins = seededRandInt(rng, cfg.coinRange[0], cfg.coinRange[1] + 1);
+      const bombs: Array<{ type: BombType; count: number }> = [];
+      for (let i = 0; i < cfg.bombCount; i++) {
+        bombs.push({ type: rollBomb(tier), count: cfg.bombStackSize });
+      }
+      chests.push({ id: `chest_${chests.length}`, tier, x: pick.x, y: pick.y, coins, bombs, opened: false });
+    };
+
+    for (const zone of this.map.chest1Zones) spawnChest(zone, 1);
+    for (const zone of this.map.chest2Zones) spawnChest(zone, 2);
 
     return {
       matchId: this.config.id,
@@ -166,8 +256,13 @@ export class MatchRoom {
       turnNumber: 1,
       phaseEndsAt: Date.now() + BALANCE.match.inputPhaseSeconds * 1000,
       bombermen,
-      coinBags,
-      collectibleBombs,
+      chests,
+      doors: (this.map.doors ?? []).map(d => ({
+        id: d.id,
+        tiles: d.tiles.map(t => ({ ...t })),
+        orientation: d.orientation,
+        opened: false,
+      })),
       bodies: [],
       bombs: [],
       fireTiles: [],
@@ -181,6 +276,7 @@ export class MatchRoom {
   start(): void {
     // Broadcast initial state
     this.broadcastState();
+    this.tickBots();
     this.scheduleInputPhaseEnd();
   }
 
@@ -212,46 +308,40 @@ export class MatchRoom {
 
     const stackLimit = BALANCE.match.bombSlotStackLimit;
 
-    if (msg.sourceKind === 'collectible') {
-      const pickup = this.state.collectibleBombs.find(
-        p => p.id === msg.sourceId && p.x === me.x && p.y === me.y,
+    if (msg.sourceKind === 'chest') {
+      const chest = this.state.chests.find(
+        c => c.id === msg.sourceId && c.x === me.x && c.y === me.y,
       );
-      if (!pickup) return;
-      if (pickup.type !== msg.bombType) return;
+      if (!chest) return;
+      const bombEntry = chest.bombs.find(b => b.type === msg.bombType);
+      if (!bombEntry || bombEntry.count <= 0) return;
 
       const slot = me.inventory.slots[invIdx];
       if (!slot) {
-        // Empty slot — fill it
-        const take = Math.min(pickup.count, stackLimit);
-        me.inventory.slots[invIdx] = { type: pickup.type, count: take };
-        pickup.count -= take;
-      } else if (slot.type === pickup.type) {
-        // Same type — top up
+        const take = Math.min(bombEntry.count, stackLimit);
+        me.inventory.slots[invIdx] = { type: bombEntry.type, count: take };
+        bombEntry.count -= take;
+      } else if (slot.type === bombEntry.type) {
         const room = stackLimit - slot.count;
-        const take = Math.min(pickup.count, room);
+        const take = Math.min(bombEntry.count, room);
         slot.count += take;
-        pickup.count -= take;
+        bombEntry.count -= take;
       } else {
-        // Different type — swap: old stack → create a new collectible at this tile
+        // Swap: old bombs go back into the chest
         const oldType = slot.type;
         const oldCount = slot.count;
-        const take = Math.min(pickup.count, stackLimit);
-        me.inventory.slots[invIdx] = { type: pickup.type, count: take };
-        pickup.count -= take;
-        // Drop old bombs as a new collectible on this tile
-        this.state.collectibleBombs.push({
-          id: `swap_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
-          x: me.x,
-          y: me.y,
-          type: oldType,
-          count: oldCount,
-        });
+        const take = Math.min(bombEntry.count, stackLimit);
+        me.inventory.slots[invIdx] = { type: bombEntry.type, count: take };
+        bombEntry.count -= take;
+        const existing = chest.bombs.find(b => b.type === oldType);
+        if (existing) {
+          existing.count += oldCount;
+        } else {
+          chest.bombs.push({ type: oldType, count: oldCount });
+        }
       }
 
-      // Remove the pickup if fully consumed
-      if (pickup.count <= 0) {
-        this.state.collectibleBombs = this.state.collectibleBombs.filter(p => p.id !== msg.sourceId);
-      }
+      chest.bombs = chest.bombs.filter(b => b.count > 0);
 
     } else if (msg.sourceKind === 'body') {
       const body = this.state.bodies.find(
@@ -317,6 +407,25 @@ export class MatchRoom {
     }
 
     this.state = nextState;
+
+    // Immediately strip dead Bombermen from player profiles so a page
+    // refresh doesn't let them re-use a dead Bomberman.
+    for (const ev of events) {
+      if ((ev as { kind: string }).kind !== 'died') continue;
+      const diedPlayerId = (ev as { playerId: string }).playerId;
+      const participant = this.participants.find(p => p.playerId === diedPlayerId);
+      if (!participant || !participant.socketId) continue; // skip bots
+      const profile = participant.profile;
+      const bm = this.state.bombermen.find(b => b.playerId === diedPlayerId);
+      if (!bm) continue;
+      const idx = profile.ownedBombermen.findIndex(ob => ob.id === bm.bombermanId);
+      if (idx >= 0) profile.ownedBombermen.splice(idx, 1);
+      if (profile.equippedBombermanId === bm.bombermanId) {
+        profile.equippedBombermanId = profile.ownedBombermen.length > 0 ? profile.ownedBombermen[0].id : null;
+      }
+      this.playerStore.save(profile).catch(() => {});
+    }
+
     this.io.to(this.id).emit('match_state', { state: this.state });
     this.io.to(this.id).emit('turn_result', { events });
 
@@ -334,7 +443,20 @@ export class MatchRoom {
     this.state.phase = 'input';
     this.state.phaseEndsAt = Date.now() + BALANCE.match.inputPhaseSeconds * 1000;
     this.broadcastState();
+    this.tickBots();
     this.scheduleInputPhaseEnd();
+  }
+
+  /** Have each bot compute and submit its action for this input phase. */
+  private tickBots(): void {
+    for (const bot of this.bots) {
+      const action = bot.tick(
+        this.state,
+        this.map,
+        (msg) => this.handleLoot(bot.playerId, msg),
+      );
+      this.submitAction(bot.playerId, action);
+    }
   }
 
   private broadcastState(): void {
@@ -345,6 +467,7 @@ export class MatchRoom {
     if (this.phaseTimer) clearTimeout(this.phaseTimer);
 
     for (const participant of this.participants) {
+      if (!participant.socketId) continue; // skip bots — no profile to save
       const b = this.state.bombermen.find(bb => bb.playerId === participant.playerId);
       if (!b) continue;
       const profile = participant.profile;
@@ -377,8 +500,10 @@ export class MatchRoom {
       }
 
       await this.playerStore.save(profile);
-      const sock = this.io.sockets.sockets.get(participant.socketId);
-      if (sock) sock.emit('profile', { profile });
+      if (participant.socketId) {
+        const sock = this.io.sockets.sockets.get(participant.socketId);
+        if (sock) sock.emit('profile', { profile });
+      }
     }
 
     this.io.to(this.id).emit('match_end', {

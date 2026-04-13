@@ -127,6 +127,17 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
     // Backfill: old profiles saved before the `tint` field existed. Pick a
     // deterministic-ish vivid tint based on the owned id hash so refreshes
     // don't change the color randomly. Sprite tint must be non-gray.
+    // Backfill name for old Bombermen that don't have one
+    if (!b.name) {
+      const tierNames: Record<string, string[]> = {
+        free: ["O'Brien", 'Murphy', 'Kelly', 'Sullivan', 'Walsh', 'Byrne'],
+        paid: ['Dusty', 'Slim', 'Butch', 'Doc', 'Hoss', 'Maverick'],
+        paid_expensive: ['Achilles', 'Ajax', 'Apollo', 'Ares', 'Atlas', 'Hermes'],
+      };
+      const pool = tierNames[b.tier ?? 'free'] ?? tierNames.free;
+      const idx = ((b.id ?? '').length + (b.tier ?? '').length) % pool.length;
+      b = { ...b, name: pool[idx] };
+    }
     if (typeof b.tint === 'number') return b;
     const hash = (b.id ?? '').split('').reduce((acc, ch) => ((acc * 31 + ch.charCodeAt(0)) >>> 0), 0);
     const hue = hash % 360;

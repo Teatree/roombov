@@ -1,0 +1,43 @@
+{
+  "id": "p_9ae9701e3ad6",
+  "createdAt": 1776035774759,
+  "updatedAt": 1776035878351,
+  "coins": 500,
+  "ownedBombermen": [
+    {
+      "id": "owned_p_9ae9701e3ad6_1776035776956_bpcc",
+      "name": "Ryan",
+      "tier": "free",
+      "colors": {
+        "shirt": 4380482,
+        "pants": 9064488,
+        "hair": 11686452
+      },
+      "tint": 8885213,
+      "inventory": {
+        "slots": [
+          {
+            "type": "delay_tricky",
+            "count": 2
+          },
+          {
+            "type": "delay_wide",
+            "count": 1
+          },
+          {
+            "type": "contact",
+            "count": 3
+          },
+          {
+            "type": "banana",
+            "count": 2
+          }
+        ]
+      },
+      "purchasedAt": 1776035776956,
+      "sourceTemplateId": "cycle_1776035705642_1_free"
+    }
+  ],
+  "equippedBombermanId": "owned_p_9ae9701e3ad6_1776035776956_bpcc",
+  "bombStockpile": {}
+}

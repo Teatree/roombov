@@ -61,5 +61,7 @@ export class ResultsScene extends Phaser.Scene {
     playBtn.on('pointerdown', () => {
       this.scene.start('LobbyScene');
     });
+
+    this.input.keyboard?.on('keydown-ESC', () => this.scene.start('LobbyScene'));
   }
 }

@@ -49,6 +49,7 @@ export function emptyInventory(): BombInventory {
 export interface BombermanTemplate {
   /** Unique within the current shop cycle. */
   id: string;
+  name: string;
   tier: BombermanTier;
   price: number;
   colors: CosmeticColors;
@@ -65,6 +66,7 @@ export interface BombermanTemplate {
 /** A Bomberman the player owns. Same shape as template + purchase metadata. */
 export interface OwnedBomberman {
   id: string;
+  name: string;
   tier: BombermanTier;
   colors: CosmeticColors;
   tint: number;
@@ -100,4 +102,8 @@ export interface BombermanState {
   bleedingTurns: number;
   /** True once the Bomberman has stepped onto an escape tile at turn transition. */
   escaped: boolean;
+  /** Consecutive peaceful turns (no enemy nearby, no attacks). Resets on combat. */
+  rushCooldown: number;
+  /** True when Out of Combat Rush is active (2 tiles/turn movement). */
+  rushActive: boolean;
 }

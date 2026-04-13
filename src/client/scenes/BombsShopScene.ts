@@ -3,9 +3,11 @@ import { NetworkManager } from '../NetworkManager.ts';
 import { ProfileStore } from '../ClientState.ts';
 import { ActivityIndicator } from '../systems/ActivityIndicator.ts';
 import { ensureBombermanAnims, createShopBombermanSprite, preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
+import { BombermanSelector } from '../systems/BombermanSelector.ts';
 import type { BombType } from '@shared/types/bombs.ts';
 import type { BombsCatalogEntry } from '@shared/types/messages.ts';
 import { BALANCE } from '@shared/config/balance.ts';
+import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
 
 /**
  * Bombs Shop scene.
@@ -27,6 +29,7 @@ export class BombsShopScene extends Phaser.Scene {
   private toastText!: Phaser.GameObjects.Text;
   private unsubProfile: (() => void) | null = null;
   private activity: ActivityIndicator | null = null;
+  private selector: BombermanSelector | null = null;
 
   constructor() {
     super({ key: 'BombsShopScene' });
@@ -34,6 +37,7 @@ export class BombsShopScene extends Phaser.Scene {
 
   preload(): void {
     preloadBombermanSpritesheets(this);
+    preloadBombIcons(this);
   }
 
   create(): void {
@@ -61,7 +65,14 @@ export class BombsShopScene extends Phaser.Scene {
     backBtn.on('pointerout', () => backBtn.setColor('#888888'));
     backBtn.on('pointerdown', () => this.scene.start('MainMenuScene'));
 
+    this.input.keyboard?.on('keydown-ESC', () => this.scene.start('MainMenuScene'));
+
     this.activity = new ActivityIndicator(this);
+
+    // Bomberman selector at the bottom — switch equipped Bomberman from here
+    const { height: sceneH } = this.scale;
+    this.selector = new BombermanSelector(this, sceneH - 130);
+    this.selector.create();
 
     const socket = NetworkManager.connect();
     NetworkManager.track('bombs_shop_request', 'bombs_catalog');
@@ -90,6 +101,8 @@ export class BombsShopScene extends Phaser.Scene {
     this.unsubProfile = null;
     this.activity?.destroy();
     this.activity = null;
+    this.selector?.destroy();
+    this.selector = null;
     for (const c of this.containers) c.destroy();
     this.containers = [];
     const socket = NetworkManager.getSocket();
@@ -135,10 +148,14 @@ export class BombsShopScene extends Phaser.Scene {
       rowBg.strokeRoundedRect(col1X, y, colWidth, 38, 4);
       catalogCol.add(rowBg);
 
-      catalogCol.add(this.add.text(col1X + 10, y + 8, entry.name, {
+      const icon = this.add.image(col1X + 22, y + 19, 'bomb_icons', bombIconFrame(entry.type))
+        .setDisplaySize(28, 28);
+      catalogCol.add(icon);
+
+      catalogCol.add(this.add.text(col1X + 42, y + 8, entry.name, {
         fontSize: '13px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
       }));
-      catalogCol.add(this.add.text(col1X + 10, y + 22, entry.description, {
+      catalogCol.add(this.add.text(col1X + 42, y + 22, entry.description, {
         fontSize: '9px', color: '#888888', fontFamily: 'monospace',
         wordWrap: { width: colWidth - 100 },
       }));
@@ -187,7 +204,10 @@ export class BombsShopScene extends Phaser.Scene {
         bg.strokeRoundedRect(col2X, y, colWidth, 34, 4);
         stockCol.add(bg);
 
-        const label = this.add.text(col2X + 10, y + 17, `${name}  x${count}`, {
+        const sIcon = this.add.image(col2X + 22, y + 17, 'bomb_icons', bombIconFrame(type))
+          .setDisplaySize(24, 24);
+        stockCol.add(sIcon);
+        const label = this.add.text(col2X + 40, y + 17, `${name}  x${count}`, {
           fontSize: '13px', color: '#ffffff', fontFamily: 'monospace',
         }).setOrigin(0, 0.5);
         stockCol.add(label);
@@ -246,7 +266,10 @@ export class BombsShopScene extends Phaser.Scene {
         if (slot) {
           const entry = this.catalog.find(c => c.type === slot.type);
           const name = entry?.name ?? slot.type;
-          eqCol.add(this.add.text(col3X + 10, y + 10, `SLOT ${slotIdx + 1}: ${name}`, {
+          const eqIcon = this.add.image(col3X + 26, y + slotH / 2, 'bomb_icons', bombIconFrame(slot.type))
+            .setDisplaySize(28, 28);
+          eqCol.add(eqIcon);
+          eqCol.add(this.add.text(col3X + 46, y + 10, `SLOT ${slotIdx + 1}: ${name}`, {
             fontSize: '12px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
           }));
           eqCol.add(this.add.text(col3X + 10, y + 26, `x${slot.count} / ${BALANCE.match.bombSlotStackLimit}`, {
@@ -293,10 +316,13 @@ export class BombsShopScene extends Phaser.Scene {
       rockBg.lineStyle(1, 0x554433, 1);
       rockBg.strokeRoundedRect(col3X, rockY, colWidth, slotH, 4);
       eqCol.add(rockBg);
-      eqCol.add(this.add.text(col3X + 10, rockY + 10, 'SLOT 5: Rock', {
+      const rockIcon = this.add.image(col3X + 26, rockY + slotH / 2, 'bomb_icons', bombIconFrame('rock'))
+        .setDisplaySize(28, 28);
+      eqCol.add(rockIcon);
+      eqCol.add(this.add.text(col3X + 46, rockY + 10, 'SLOT 5: Rock', {
         fontSize: '12px', color: '#ccaa88', fontFamily: 'monospace', fontStyle: 'bold',
       }));
-      eqCol.add(this.add.text(col3X + 10, rockY + 26, 'infinite (fallback)', {
+      eqCol.add(this.add.text(col3X + 46, rockY + 26, 'infinite (fallback)', {
         fontSize: '11px', color: '#776655', fontFamily: 'monospace',
       }));
     }

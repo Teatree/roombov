@@ -1,39 +1,43 @@
 {
   "id": "p_3a9ad8b22613",
   "createdAt": 1775946762703,
-  "updatedAt": 1775949269705,
-  "coins": 521,
+  "updatedAt": 1776110593300,
+  "coins": 774,
   "ownedBombermen": [
     {
-      "id": "owned_p_3a9ad8b22613_1775947655882_0sqn",
+      "id": "owned_p_3a9ad8b22613_1776109079135_pgdv",
+      "name": "Callaghan",
       "tier": "free",
       "colors": {
-        "shirt": 4380568,
-        "pants": 7113256,
-        "hair": 10596916
+        "shirt": 4577090,
+        "pants": 9067304,
+        "hair": 3435954
       },
-      "tint": 11858287,
+      "tint": 15849109,
       "inventory": {
         "slots": [
           {
-            "type": "molotov",
-            "count": 1
+            "type": "banana",
+            "count": 2
           },
           {
             "type": "contact",
-            "count": 1
+            "count": 2
           },
           {
-            "type": "banana",
-            "count": 1
+            "type": "ender_pearl",
+            "count": 2
           },
-          null
+          {
+            "type": "flare",
+            "count": 5
+          }
         ]
       },
-      "purchasedAt": 1775947655883,
-      "sourceTemplateId": "cycle_1775947644782_1_free"
+      "purchasedAt": 1776109079135,
+      "sourceTemplateId": "cycle_1776109070062_1_free"
     }
   ],
-  "equippedBombermanId": "owned_p_3a9ad8b22613_1775947655882_0sqn",
+  "equippedBombermanId": "owned_p_3a9ad8b22613_1776109079135_pgdv",
   "bombStockpile": {}
 }

@@ -120,9 +120,9 @@ export interface MatchEndMsg {
  * stack is swapped back to the source (per the brief).
  */
 export interface LootBombMsg {
-  /** 'collectible' for floor pickups, 'body' for corpse loot. */
-  sourceKind: 'collectible' | 'body';
-  /** Id of the CollectibleBomb or DroppedBody. */
+  /** 'chest' for chest pickups, 'body' for corpse loot. */
+  sourceKind: 'chest' | 'body';
+  /** Id of the Chest or DroppedBody. */
   sourceId: string;
   /** The bomb type the player wants to take. */
   bombType: BombType;

@@ -35,11 +35,13 @@ export const TIER_CONFIG: Record<BombermanTier, TierConfig> = {
     weights: {
       delay: 5,
       delay_big: 1,
+      delay_wide: 2,
       delay_tricky: 3,
       contact: 3,
       banana: 1,
       flare: 4,
       molotov: 1,
+      ender_pearl: 1,
     },
   },
   paid: {
@@ -48,11 +50,13 @@ export const TIER_CONFIG: Record<BombermanTier, TierConfig> = {
     weights: {
       delay: 4,
       delay_big: 3,
+      delay_wide: 3,
       delay_tricky: 3,
       contact: 4,
       banana: 2,
       flare: 3,
       molotov: 3,
+      ender_pearl: 2,
     },
   },
   paid_expensive: {
@@ -61,11 +65,13 @@ export const TIER_CONFIG: Record<BombermanTier, TierConfig> = {
     weights: {
       delay: 3,
       delay_big: 4,
+      delay_wide: 3,
       delay_tricky: 3,
       contact: 4,
       banana: 4,
       flare: 2,
       molotov: 4,
+      ender_pearl: 3,
     },
   },
 };

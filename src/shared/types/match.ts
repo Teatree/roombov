@@ -23,22 +23,28 @@ export interface MatchListing {
   countdown: number;
 }
 
-/** Coin bag sitting on a tile (not yet collected). */
-export interface CoinBag {
+/** A loot chest on the map. Contains coins (auto-collected on step) and
+ *  bombs (manual loot panel pickup). Stays permanently open once any player
+ *  steps on it. */
+export interface Chest {
   id: string;
+  tier: 1 | 2;
   x: number;
   y: number;
-  /** Amount of coins this bag is worth when collected. */
-  amount: number;
+  /** Remaining coins — 0 after the first player steps on the tile. */
+  coins: number;
+  /** Remaining bombs available for looting. Entries are removed/decremented as players pick them up. */
+  bombs: Array<{ type: BombType; count: number }>;
+  /** Permanently true after any player steps on the chest tile. */
+  opened: boolean;
 }
 
-/** Collectible bomb sitting on a tile. */
-export interface CollectibleBomb {
-  id: string;
-  x: number;
-  y: number;
-  type: BombType;
-  count: number;
+/** A double door on the map. Opens on proximity or explosion and stays open. */
+export interface DoorInstance {
+  id: number;
+  tiles: Array<{ x: number; y: number }>;
+  orientation: 'horizontal' | 'vertical';
+  opened: boolean;
 }
 
 /**
@@ -87,8 +93,8 @@ export interface MatchState {
   /** Unix ms when the current phase ends. Used for client-side countdown. */
   phaseEndsAt: number;
   bombermen: BombermanState[];
-  coinBags: CoinBag[];
-  collectibleBombs: CollectibleBomb[];
+  chests: Chest[];
+  doors: DoorInstance[];
   bodies: DroppedBody[];
   bombs: BombInstance[];
   fireTiles: FireTile[];

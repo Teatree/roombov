@@ -23,7 +23,7 @@
 import { BALANCE } from '../config/balance.ts';
 import { BOMB_CATALOG } from '../config/bombs.ts';
 import type {
-  CoinBag, CollectibleBomb, DroppedBody, MatchState, PlayerAction,
+  DroppedBody, MatchState, PlayerAction,
 } from '../types/match.ts';
 import type { BombermanState, BombInventory, BombSlot } from '../types/bomberman.ts';
 import type { BombInstance, FireTile, LightTile, BombType } from '../types/bombs.ts';
@@ -44,8 +44,8 @@ function cloneState(s: MatchState): MatchState {
   return {
     ...s,
     bombermen: s.bombermen.map(b => ({ ...b, inventory: cloneInventory(b.inventory) })),
-    coinBags: s.coinBags.map(c => ({ ...c })),
-    collectibleBombs: s.collectibleBombs.map(c => ({ ...c })),
+    chests: s.chests.map(c => ({ ...c, bombs: c.bombs.map(b => ({ ...b })) })),
+    doors: (s.doors ?? []).map(d => ({ ...d, tiles: d.tiles.map(t => ({ ...t })) })),
     bodies: s.bodies.map(b => ({ ...b, bombs: b.bombs.map(bb => ({ ...bb })) })),
     bombs: s.bombs.map(b => ({ ...b })),
     fireTiles: s.fireTiles.map(f => ({ ...f })),
@@ -69,6 +69,31 @@ function isWalkable(map: MapData, x: number, y: number): boolean {
   return row[x] === TileType.FLOOR;
 }
 
+/** BFS outward from (sx, sy) to find the nearest walkable tile. Returns null if none found. */
+function nearestWalkable(map: MapData, sx: number, sy: number): { x: number; y: number } | null {
+  if (isWalkable(map, sx, sy)) return { x: sx, y: sy };
+  const visited = new Set<string>();
+  const queue: Array<{ x: number; y: number }> = [{ x: sx, y: sy }];
+  visited.add(`${sx},${sy}`);
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = cur.x + dx;
+        const ny = cur.y + dy;
+        const key = `${nx},${ny}`;
+        if (visited.has(key)) continue;
+        visited.add(key);
+        if (nx < 0 || ny < 0 || nx >= map.width || ny >= map.height) continue;
+        if (isWalkable(map, nx, ny)) return { x: nx, y: ny };
+        queue.push({ x: nx, y: ny });
+      }
+    }
+  }
+  return null;
+}
+
 /** Chebyshev distance — diagonal moves cost 1. */
 function chebyshevDistance(ax: number, ay: number, bx: number, by: number): number {
   return Math.max(Math.abs(ax - bx), Math.abs(ay - by));
@@ -89,7 +114,10 @@ export type TurnEvent =
   | { kind: 'died'; playerId: string; x: number; y: number }
   | { kind: 'escaped'; playerId: string }
   | { kind: 'coin_collected'; playerId: string; amount: number }
-  | { kind: 'body_looted'; playerId: string; bodyId: string; coins: number };
+  | { kind: 'body_looted'; playerId: string; bodyId: string; coins: number }
+  | { kind: 'teleport'; playerId: string; fromX: number; fromY: number; toX: number; toY: number }
+  | { kind: 'door_opened'; doorId: number }
+  | { kind: 'rush_changed'; playerId: string; active: boolean };
 
 export function resolveTurn(
   prev: MatchState,
@@ -102,23 +130,32 @@ export function resolveTurn(
   // Only alive, non-escaped Bombermen can act
   const actors = state.bombermen.filter(b => b.alive && !b.escaped);
 
-  // --- 1. Movement ---
+  // --- 1. Movement (supports Out of Combat Rush: 2 tiles/turn when active) ---
   for (const bomberman of actors) {
     const action = actions.get(bomberman.playerId) ?? { kind: 'idle' };
     if (action.kind !== 'move') continue;
 
     const dist = chebyshevDistance(bomberman.x, bomberman.y, action.x, action.y);
-    if (dist === 1 && isWalkable(map, action.x, action.y)) {
+    const maxDist = (BALANCE.match.rush.enabled && bomberman.rushActive) ? 2 : 1;
+    let validMove = dist >= 1 && dist <= maxDist && isWalkable(map, action.x, action.y);
+
+    // For 2-tile rush moves, validate the intermediate tile is walkable
+    if (validMove && dist === 2) {
+      const midX = Math.round((bomberman.x + action.x) / 2);
+      const midY = Math.round((bomberman.y + action.y) / 2);
+      if (!isWalkable(map, midX, midY)) validMove = false;
+    }
+
+    if (validMove) {
       const fromX = bomberman.x;
       const fromY = bomberman.y;
       bomberman.x = action.x;
       bomberman.y = action.y;
       events.push({ kind: 'moved', playerId: bomberman.playerId, fromX, fromY, toX: action.x, toY: action.y });
       if (bomberman.bleedingTurns > 0) {
-        state.bloodTiles.push({ x: action.x, y: action.y });
+        state.bloodTiles.push({ x: fromX, y: fromY });
       }
     } else {
-      // Invalid move — treated as idle
       events.push({ kind: 'idle', playerId: bomberman.playerId, x: bomberman.x, y: bomberman.y });
     }
   }
@@ -135,13 +172,15 @@ export function resolveTurn(
   for (const bomberman of actors) {
     if (!bomberman.alive) continue;
 
-    // Coin bags — auto-collect on walk-over
-    const coinIdx = state.coinBags.findIndex(c => c.x === bomberman.x && c.y === bomberman.y);
-    if (coinIdx >= 0) {
-      const bag = state.coinBags[coinIdx];
-      bomberman.coins += bag.amount;
-      events.push({ kind: 'coin_collected', playerId: bomberman.playerId, amount: bag.amount });
-      state.coinBags.splice(coinIdx, 1);
+    // Chest coins — auto-collect on walk-over; also marks chest as opened
+    const chest = state.chests.find(c => c.x === bomberman.x && c.y === bomberman.y);
+    if (chest) {
+      if (chest.coins > 0) {
+        bomberman.coins += chest.coins;
+        events.push({ kind: 'coin_collected', playerId: bomberman.playerId, amount: chest.coins });
+        chest.coins = 0;
+      }
+      if (!chest.opened) chest.opened = true;
     }
 
     // Body coins — auto-transfer on walk-over (bombs are looted manually via loot panel)
@@ -159,6 +198,48 @@ export function resolveTurn(
     const onEscape = state.escapeTiles.some(t => t.x === bomberman.x && t.y === bomberman.y);
     if (onEscape) {
       bomberman.escaped = true;
+    }
+  }
+
+  // Door proximity: open doors when any alive Bomberman is within Chebyshev 1
+  for (const door of state.doors ?? []) {
+    if (door.opened) continue;
+    const nearby = actors.some(b =>
+      b.alive && !b.escaped &&
+      door.tiles.some(t => Math.max(Math.abs(b.x - t.x), Math.abs(b.y - t.y)) <= 1),
+    );
+    if (nearby) {
+      door.opened = true;
+      events.push({ kind: 'door_opened', doorId: door.id });
+    }
+  }
+
+  // --- 2b. Out of Combat Rush state update ---
+  if (BALANCE.match.rush.enabled) {
+    const rushCfg = BALANCE.match.rush;
+    for (const bomberman of actors) {
+      if (!bomberman.alive || bomberman.escaped) continue;
+      const action = actions.get(bomberman.playerId) ?? { kind: 'idle' };
+      const threw = action.kind === 'throw';
+      const enemyNearby = actors.some(other =>
+        other.playerId !== bomberman.playerId && other.alive && !other.escaped &&
+        chebyshevDistance(bomberman.x, bomberman.y, other.x, other.y) <= rushCfg.proximityRadius,
+      );
+      if (enemyNearby || threw) {
+        // Combat contact — break rush
+        if (bomberman.rushActive) {
+          bomberman.rushActive = false;
+          events.push({ kind: 'rush_changed', playerId: bomberman.playerId, active: false });
+        }
+        bomberman.rushCooldown = 0;
+      } else {
+        // Peaceful turn
+        bomberman.rushCooldown++;
+        if (!bomberman.rushActive && bomberman.rushCooldown >= rushCfg.cooldownTurns) {
+          bomberman.rushActive = true;
+          events.push({ kind: 'rush_changed', playerId: bomberman.playerId, active: true });
+        }
+      }
     }
   }
 
@@ -215,7 +296,18 @@ export function resolveTurn(
   }
 
   // --- 4 + 5. Tick fuses and resolve triggered bombs ---
-  // Map of playerId → boolean for "took damage this turn" (caps at 1)
+  // Build the set of closed door tiles for explosion ray-stopping.
+  // Recomputed each bomb so doors opened by earlier bombs in the same turn
+  // don't block subsequent explosions.
+  const buildClosedDoorTiles = (): Set<string> => {
+    const set = new Set<string>();
+    for (const door of state.doors ?? []) {
+      if (door.opened) continue;
+      for (const t of door.tiles) set.add(`${t.x},${t.y}`);
+    }
+    return set;
+  };
+
   const damagedThisTurn = new Set<string>();
   const triggeredBombIds = new Set<string>();
 
@@ -235,6 +327,34 @@ export function resolveTurn(
     if (triggeredBombIds.has(bomb.id)) continue;
     triggeredBombIds.add(bomb.id);
 
+    // Ender Pearl: teleport the thrower to the landing tile (or nearest
+    // walkable tile if the target is an obstacle). Handled before the fizzle
+    // check because the pearl explicitly shifts to a valid tile instead of
+    // fizzling.
+    if (bomb.type === 'ender_pearl') {
+      let destX = bomb.x;
+      let destY = bomb.y;
+      if (!isWalkable(map, destX, destY)) {
+        const alt = nearestWalkable(map, destX, destY);
+        if (alt) { destX = alt.x; destY = alt.y; }
+        // If no walkable tile exists at all, pearl fizzles (shouldn't happen on real maps)
+        else {
+          events.push({ kind: 'bomb_triggered', bombId: bomb.id, type: bomb.type, x: bomb.x, y: bomb.y, tiles: [] });
+          continue;
+        }
+      }
+      const thrower = state.bombermen.find(b => b.playerId === bomb.ownerId);
+      if (thrower && thrower.alive && !thrower.escaped) {
+        const fromX = thrower.x;
+        const fromY = thrower.y;
+        thrower.x = destX;
+        thrower.y = destY;
+        events.push({ kind: 'teleport', playerId: thrower.playerId, fromX, fromY, toX: destX, toY: destY });
+      }
+      events.push({ kind: 'bomb_triggered', bombId: bomb.id, type: bomb.type, x: destX, y: destY, tiles: [] });
+      continue;
+    }
+
     // Bombs on wall tiles fizzle — except Flare which still lights the area.
     // This allows players to throw blind into fog and have it fail silently.
     const onWall = !isWalkable(map, bomb.x, bomb.y);
@@ -245,7 +365,18 @@ export function resolveTurn(
       continue;
     }
 
-    const trigger = resolveBombTrigger(bomb.type, bomb.x, bomb.y, map);
+    const closedDoorTiles = buildClosedDoorTiles();
+    const trigger = resolveBombTrigger(bomb.type, bomb.x, bomb.y, map, closedDoorTiles);
+
+    // Open any closed doors hit by the explosion
+    const allBlastTiles = [...trigger.damageTiles, ...trigger.fireTiles, ...trigger.lightTiles];
+    for (const door of state.doors ?? []) {
+      if (door.opened) continue;
+      if (door.tiles.some(dt => allBlastTiles.some(bt => bt.x === dt.x && bt.y === dt.y))) {
+        door.opened = true;
+        events.push({ kind: 'door_opened', doorId: door.id });
+      }
+    }
 
     events.push({
       kind: 'bomb_triggered',

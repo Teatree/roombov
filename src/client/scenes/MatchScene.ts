@@ -15,6 +15,7 @@ import type { BombermanState } from '@shared/types/bomberman.ts';
 import type { BombType } from '@shared/types/bombs.ts';
 import { BOMB_CATALOG } from '@shared/config/bombs.ts';
 import { BALANCE } from '@shared/config/balance.ts';
+import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
 
 /**
  * Click targeting mode.
@@ -50,6 +51,9 @@ export class MatchScene extends Phaser.Scene {
   private state: MatchState | null = null;
   private myPlayerId: string | null = null;
   private inputMode: InputMode = { kind: 'idle' };
+  /** Which bomb slot is armed for throwing. Purely visual — movement continues
+   *  until the player actually clicks a tile to throw at. */
+  private selectedSlot: number | null = null;
   private lastPhase: string | null = null;
   private myDeathAt: number | null = null;
   private tiledInfo: ReturnType<typeof preloadTiledMap> = null;
@@ -62,7 +66,7 @@ export class MatchScene extends Phaser.Scene {
   //   15  escape hatch sprites
   //   40  bombLayer (persistent bombs, throw arcs, fire, flare flames, fuse nums)
   //   50  fog of war overlay
-  //   55  decalLayer (persistent scorch marks — visible above fog, under entities)
+  //   38  decalLayer (scorch marks, blood — below bombs/fire so fire renders on top)
   //   60  path line
   //   100 entitiesLayer (coin bags, pickups, bodies — pure rebuild-each-tick)
   //   105 bombermanLayer (persistent animated Bomberman sprites + their overlays)
@@ -92,6 +96,7 @@ export class MatchScene extends Phaser.Scene {
   private slotLabelTexts: Phaser.GameObjects.Text[] = [];
   private slotCountTexts: Phaser.GameObjects.Text[] = [];
   private slotHighlights: Phaser.GameObjects.Graphics[] = [];
+  private slotIcons: Phaser.GameObjects.Image[] = [];
   private errorText!: Phaser.GameObjects.Text;
 
   // Loot panel — appears above the bomb tray when standing on loot
@@ -99,7 +104,7 @@ export class MatchScene extends Phaser.Scene {
   private lootPanelVisible = false;
   /** If set, the player clicked a loot bomb that doesn't fit — highlight it
    * and the next inventory-slot click will swap. */
-  private lootPendingSwap: { sourceKind: 'collectible' | 'body'; sourceId: string; bombType: import('@shared/types/bombs.ts').BombType; count: number } | null = null;
+  private lootPendingSwap: { sourceKind: 'chest' | 'body'; sourceId: string; bombType: import('@shared/types/bombs.ts').BombType; count: number } | null = null;
 
   // Escape hatch animated sprites
   private escapeSprites: Array<{
@@ -107,6 +112,35 @@ export class MatchScene extends Phaser.Scene {
     sprite: Phaser.GameObjects.Sprite;
     state: 'closed' | 'opening' | 'open' | 'closing';
   }> = [];
+
+  // Chest animated sprites (persistent, like escape hatches)
+  private chestSprites: Array<{
+    id: string; x: number; y: number; tier: 1 | 2;
+    sprite: Phaser.GameObjects.Sprite;
+    state: 'closed' | 'opening' | 'open' | 'closing';
+    permanentlyOpened: boolean;
+  }> = [];
+
+  // Door animated sprites
+  private doorSprites: Array<{
+    id: number;
+    tiles: Array<{ x: number; y: number }>;
+    orientation: 'horizontal' | 'vertical';
+    sprite: Phaser.GameObjects.Sprite;
+    state: 'closed' | 'opening' | 'open';
+    opened: boolean;
+  }> = [];
+
+  // Blood trail decals (persistent, one per tile, tracked separately from explosion decals)
+  private bloodDecals = new Set<string>();
+
+  /**
+   * RTS-style fog: tracks which entities/decals the player has "discovered"
+   * by having them in LOS at least once. Objects in seen-dim areas are only
+   * rendered if they're in this set. New objects that appear while the area
+   * is in seen-dim stay hidden until the player revisits.
+   */
+  private knownEntities = new Set<string>();
 
   constructor() {
     super({ key: 'MatchScene' });
@@ -119,6 +153,13 @@ export class MatchScene extends Phaser.Scene {
       frameWidth: 48,
       frameHeight: 32,
     });
+    // Chests: 64x32 sheets, 4 frames of 16x32 each
+    this.load.spritesheet('chest_1', 'sprites/chest_1.png', { frameWidth: 16, frameHeight: 32 });
+    this.load.spritesheet('chest_2', 'sprites/chest_2.png', { frameWidth: 16, frameHeight: 32 });
+    // Doors: loaded as a plain image, frames added manually in create()
+    this.load.image('double_doors', 'sprites/double_doors.png');
+    // Bomb icons (safety fallback — normally loaded by BootScene)
+    preloadBombIcons(this);
     // Bomberman sheets are normally loaded by BootScene, but this is a
     // safety fallback in case MatchScene is reached without Boot running.
     preloadBombermanSpritesheets(this);
@@ -134,6 +175,8 @@ export class MatchScene extends Phaser.Scene {
     this.lastPhase = null;
     this.myDeathAt = null;
     this.escapeSprites = [];
+    this.bloodDecals = new Set();
+    this.knownEntities = new Set();
     if (!this.anims.exists('hatch_closed')) {
       this.anims.create({
         key: 'hatch_closed',
@@ -159,6 +202,36 @@ export class MatchScene extends Phaser.Scene {
       });
     }
 
+    // Chest animations (same pattern as escape hatches)
+    if (!this.anims.exists('chest_1_closed')) {
+      for (const tier of [1, 2] as const) {
+        const key = `chest_${tier}`;
+        this.anims.create({ key: `${key}_closed`,  frames: this.anims.generateFrameNumbers(key, { start: 0, end: 0 }), repeat: -1 });
+        this.anims.create({ key: `${key}_opening`, frames: this.anims.generateFrameNumbers(key, { start: 0, end: 3 }), frameRate: 8, repeat: 0 });
+        this.anims.create({ key: `${key}_open`,    frames: this.anims.generateFrameNumbers(key, { start: 3, end: 3 }), repeat: -1 });
+        this.anims.create({ key: `${key}_closing`, frames: this.anims.generateFrameNumbers(key, { start: 3, end: 0 }), frameRate: 8, repeat: 0 });
+      }
+    }
+
+    // Door animations — manually define frames from the non-uniform spritesheet
+    if (!this.anims.exists('door_h_closed')) {
+      const tex = this.textures.get('double_doors');
+      // Horizontal open-up: 6 frames of 64×32 at y=0
+      for (let i = 0; i < 6; i++) tex.add(`h_${i}`, 0, i * 64, 0, 64, 32);
+      // Vertical open-right: 6 frames of 32×64 at y=80
+      for (let i = 0; i < 6; i++) tex.add(`v_${i}`, 0, i * 32, 80, 32, 64);
+
+      const hFrames = Array.from({ length: 6 }, (_, i) => ({ key: 'double_doors', frame: `h_${i}` }));
+      this.anims.create({ key: 'door_h_closed',  frames: [hFrames[0]], repeat: -1 });
+      this.anims.create({ key: 'door_h_opening', frames: hFrames, frameRate: 4, repeat: 0 });
+      this.anims.create({ key: 'door_h_open',    frames: [hFrames[5]], repeat: -1 });
+
+      const vFrames = Array.from({ length: 6 }, (_, i) => ({ key: 'double_doors', frame: `v_${i}` }));
+      this.anims.create({ key: 'door_v_closed',  frames: [vFrames[0]], repeat: -1 });
+      this.anims.create({ key: 'door_v_opening', frames: vFrames, frameRate: 4, repeat: 0 });
+      this.anims.create({ key: 'door_v_open',    frames: [vFrames[5]], repeat: -1 });
+    }
+
     // Bomberman animations (idempotent — first scene to call this wins).
     ensureBombermanAnims(this);
 
@@ -169,7 +242,7 @@ export class MatchScene extends Phaser.Scene {
     // Decals sit ABOVE fog so all players see scorch marks left by any
     // explosion (including through fog), but BELOW entities so Bombermen
     // stand on top of them.
-    this.decalLayer = this.add.container(0, 0).setDepth(55);
+    this.decalLayer = this.add.container(0, 0).setDepth(38);
     this.entitiesLayer = this.add.container(0, 0).setDepth(100);
     // Persistent Bomberman sprites + their overlays (HP pips, ring, aim shadow)
     this.bombermanLayer = this.add.container(0, 0).setDepth(105);
@@ -248,6 +321,7 @@ export class MatchScene extends Phaser.Scene {
     this.slotLabelTexts = [];
     this.slotCountTexts = [];
     this.slotHighlights = [];
+    this.slotIcons = [];
     for (const esc of this.escapeSprites) esc.sprite.destroy();
     this.escapeSprites = [];
     this.hudObjects = [];
@@ -304,6 +378,62 @@ export class MatchScene extends Phaser.Scene {
           if (this.hudCamera) this.hudCamera.ignore(sprite);
           this.escapeSprites.push({ x: esc.x, y: esc.y, sprite, state: 'closed' });
         }
+        // Create chest sprites (persistent, same lifecycle as escape hatches)
+        for (const cs of this.chestSprites) cs.sprite.destroy();
+        this.chestSprites = [];
+        if (state.chests) {
+          for (const chest of state.chests) {
+            const key = `chest_${chest.tier}` as 'chest_1' | 'chest_2';
+            const sprite = this.add.sprite(
+              chest.x * mapTs + mapTs / 2,
+              chest.y * mapTs + mapTs,
+              key,
+            );
+            sprite.setDepth(46); // below fog (50) so darkest fog hides them
+            sprite.setOrigin(0.5, 1);
+            const opened = chest.opened;
+            sprite.play(opened ? `${key}_open` : `${key}_closed`);
+            if (this.hudCamera) this.hudCamera.ignore(sprite);
+            this.chestSprites.push({
+              id: chest.id, x: chest.x, y: chest.y, tier: chest.tier,
+              sprite, state: opened ? 'open' : 'closed',
+              permanentlyOpened: opened,
+            });
+          }
+        }
+
+        // Create door sprites
+        for (const ds of this.doorSprites) ds.sprite.destroy();
+        this.doorSprites = [];
+        if (state.doors) {
+          for (const door of state.doors) {
+            const prefix = door.orientation === 'horizontal' ? 'h' : 'v';
+            const animKey = `door_${prefix}`;
+            const tiles = door.tiles;
+            let sx: number, sy: number;
+            if (door.orientation === 'horizontal') {
+              // Center between the 2 tiles, bottom-aligned
+              sx = tiles[0].x * mapTs + mapTs;
+              sy = tiles[0].y * mapTs + mapTs;
+            } else {
+              // Vertical door: center of the tile column, bottom of lowest tile + 1 tile
+              // The sprite is 32×64 (4 tiles tall) but the door is only 3 tiles.
+              // Anchor at bottom-center, position at the bottom edge of the lowest tile.
+              sx = tiles[0].x * mapTs + mapTs / 2;
+              sy = (tiles[tiles.length - 1].y + 1) * mapTs + mapTs;
+            }
+            const sprite = this.add.sprite(sx, sy, 'double_doors', `${prefix}_0`);
+            sprite.setDepth(15);
+            sprite.setOrigin(0.5, 1);
+            sprite.play(door.opened ? `${animKey}_open` : `${animKey}_closed`);
+            if (this.hudCamera) this.hudCamera.ignore(sprite);
+            this.doorSprites.push({
+              id: door.id, tiles: door.tiles, orientation: door.orientation,
+              sprite, state: door.opened ? 'open' : 'closed', opened: door.opened,
+            });
+          }
+        }
+
         // Tell the HUD camera to ignore everything the map renderer created
         if (this.hudCamera) {
           this.mapRenderer.ignoreFromCamera(this.hudCamera);
@@ -356,7 +486,7 @@ export class MatchScene extends Phaser.Scene {
     this.bombermanSpriteSystem?.syncFromState(
       state,
       this.myPlayerId,
-      this.inputMode.kind === 'aim',
+      this.selectedSlot !== null || this.inputMode.kind === 'aim',
       (x, y) => this.fogRenderer?.isVisible(x, y) ?? true,
     );
 
@@ -371,6 +501,8 @@ export class MatchScene extends Phaser.Scene {
     if (state.phase === 'transition' && this.inputMode.kind === 'aim') {
       this.inputMode = { kind: 'idle' };
     }
+    // Note: selectedSlot is NOT cleared on transition — it persists until the
+    // player either throws (onClick clears it) or toggles it off (same key).
 
     this.lastPhase = state.phase;
     this.rebuildEntities();
@@ -393,19 +525,27 @@ export class MatchScene extends Phaser.Scene {
         return;
 
       case 'pathing': {
-        // Pop the next waypoint if we already reached it (i.e. a turn passed
-        // since we staged this move).
-        if (this.inputMode.path.length > 0) {
-          const next = this.inputMode.path[0];
-          if (next.x === me.x && next.y === me.y) this.inputMode.path.shift();
+        // Pop waypoints we've already reached (may be 1 or 2 if rush was active)
+        while (this.inputMode.path.length > 0 &&
+               this.inputMode.path[0].x === me.x && this.inputMode.path[0].y === me.y) {
+          this.inputMode.path.shift();
         }
         if (this.inputMode.path.length === 0) {
           this.inputMode = { kind: 'idle' };
           this.sendAction({ kind: 'idle' });
           return;
         }
-        const target = this.inputMode.path[0];
-        this.sendAction({ kind: 'move', x: target.x, y: target.y });
+        // Rush: skip 2 tiles ahead if active and path is long enough.
+        // Pop the intermediate waypoint immediately so the path doesn't stall.
+        const rushActive = me.rushActive ?? false;
+        if (rushActive && this.inputMode.path.length >= 2) {
+          const target = this.inputMode.path[1];
+          this.inputMode.path.shift(); // remove the skipped intermediate tile
+          this.sendAction({ kind: 'move', x: target.x, y: target.y });
+        } else {
+          const target = this.inputMode.path[0];
+          this.sendAction({ kind: 'move', x: target.x, y: target.y });
+        }
         return;
       }
 
@@ -483,7 +623,8 @@ export class MatchScene extends Phaser.Scene {
     // explosion starts when the bomb lands instead, which may compress the
     // burst window.
     const transitionMs = BALANCE.match.transitionPhaseSeconds * 1000;
-    const halfTransitionMs = transitionMs / 2;
+    // Explosions start at 30% of transition for a longer, more visible burst
+    const halfTransitionMs = Math.round(transitionMs * 0.3);
     for (const ev of events) {
       if (ev.kind !== 'bomb_triggered') continue;
       const type = ev.type as BombType;
@@ -497,25 +638,101 @@ export class MatchScene extends Phaser.Scene {
       this.bombRenderer.spawnExplosion(type, centerX, centerY, tiles, startDelay, animDuration);
     }
 
-    // Third pass: deaths.
+    // Teleport pass: Ender Pearl teleports the thrower at the halfway point
+    // of the transition (when the pearl visually arrives). Puff effects play
+    // at origin and destination, decals stamp after the puff completes.
+    for (const ev of events) {
+      if (ev.kind !== 'teleport') continue;
+      const playerId = ev.playerId as string;
+      const fromX = ev.fromX as number;
+      const fromY = ev.fromY as number;
+      const toX = ev.toX as number;
+      const toY = ev.toY as number;
+      const puffDuration = halfTransitionMs;
+      // At the halfway point: snap sprite, play puffs at both ends
+      this.time.delayedCall(halfTransitionMs, () => {
+        // Snap the Bomberman sprite to the destination tile
+        this.bombermanSpriteSystem?.applyTeleportEvent(playerId, toX, toY);
+        // Puff effects at origin and destination (on decalLayer = below fog)
+        this.bombRenderer?.spawnTeleportPuff(fromX, fromY, puffDuration);
+        this.bombRenderer?.spawnTeleportPuff(toX, toY, puffDuration);
+      });
+      // Stamp decals after the puff finishes (at the end of the transition)
+      this.time.delayedCall(halfTransitionMs + puffDuration, () => {
+        this.bombRenderer?.stampTeleportDecal(fromX, fromY);
+        this.bombRenderer?.stampTeleportDecal(toX, toY);
+      });
+    }
+
+    // Door-opened events: trigger opening animation on matching door sprites
+    for (const ev of events) {
+      if (ev.kind !== 'door_opened') continue;
+      const doorId = ev.doorId as number;
+      const ds = this.doorSprites.find(d => d.id === doorId);
+      if (ds && !ds.opened) {
+        ds.opened = true;
+        if (ds.state === 'closed') {
+          const prefix = ds.orientation === 'horizontal' ? 'h' : 'v';
+          ds.state = 'opening';
+          ds.sprite.play(`door_${prefix}_opening`);
+          ds.sprite.once('animationcomplete', () => {
+            ds.state = 'open';
+            ds.sprite.play(`door_${prefix}_open`);
+          });
+        }
+      }
+    }
+
+    // Third pass: deaths — delayed so the explosion/bomb effect plays out first.
+    // The death animation starts after the explosion visual completes (near
+    // the end of the transition), not at the start of the turn.
+    const deathDelay = Math.round(transitionMs * 0.85);
     for (const ev of events) {
       if (ev.kind !== 'died') continue;
       const playerId = ev.playerId as string;
       const x = ev.x as number;
       const y = ev.y as number;
-      // Drive the Bomberman sprite into its death animation. Returns ms.
-      const deathMs = this.bombermanSpriteSystem?.applyDeathEvent(playerId, x, y) ?? deathAnimationDurationMs();
-      // Blood splash particles for flavor (the sprite has its own toppling
-      // animation, so we no longer draw the procedural silhouette here).
-      this.bombRenderer.emitBloodSplash(x, y);
-      if (playerId === this.myPlayerId) {
-        this.myDeathAt = Date.now();
-        // Clear all input — dead players can't act
-        this.inputMode = { kind: 'idle' };
-        this.lootPendingSwap = null;
-        // Hold for the death animation duration + 2 seconds, then results.
-        this.time.delayedCall(deathMs + 2000, () => {
-          this.transitionToResults();
+
+      this.time.delayedCall(deathDelay, () => {
+        const deathMs = this.bombermanSpriteSystem?.applyDeathEvent(playerId, x, y) ?? deathAnimationDurationMs();
+        this.bombRenderer?.emitBloodSplash(x, y);
+        if (playerId === this.myPlayerId) {
+          this.myDeathAt = Date.now();
+          this.inputMode = { kind: 'idle' };
+          this.lootPendingSwap = null;
+          this.time.delayedCall(deathMs + 2000, () => {
+            this.transitionToResults();
+          });
+        }
+      });
+    }
+
+    // Rush changed indicators
+    if (this.mapData) {
+      const ts = this.mapData.tileSize;
+      for (const ev of events) {
+        if (ev.kind !== 'rush_changed') continue;
+        const bm = this.state?.bombermen.find(b => b.playerId === (ev.playerId as string));
+        if (!bm) continue;
+        // Only show for the local player's Bomberman
+        if (bm.playerId !== this.myPlayerId) continue;
+        const wx = bm.x * ts + ts / 2 + ts * 0.6;
+        const wy = bm.y * ts + ts / 2 - ts * 1.5;
+        const active = ev.active as boolean;
+        const txt = active ? '\u2191' : '!';  // ↑ or !
+        const color = active ? '#44ff88' : '#ff4444';
+        const indicator = this.add.text(wx, wy, txt, {
+          fontSize: '20px', color, fontFamily: 'monospace', fontStyle: 'bold',
+          stroke: '#000000', strokeThickness: 3,
+        }).setOrigin(0.5).setDepth(150);
+        if (this.hudCamera) this.hudCamera.ignore(indicator);
+        this.tweens.add({
+          targets: indicator,
+          y: wy - ts * 1.5,
+          alpha: 0,
+          duration: 1200,
+          ease: 'Cubic.easeOut',
+          onComplete: () => indicator.destroy(),
         });
       }
     }
@@ -525,13 +742,18 @@ export class MatchScene extends Phaser.Scene {
       const ts = this.mapData.tileSize;
       for (const ev of events) {
         if (ev.kind === 'coin_collected') {
-          const me = this.state?.bombermen.find(b => b.playerId === ev.playerId as string);
-          if (me) this.spawnCoinPopup(me.x * ts + ts / 2, me.y * ts + ts / 2 - ts * 0.5, ev.amount as number);
+          const bm = this.state?.bombermen.find(b => b.playerId === ev.playerId as string);
+          // Only show coin popup if the collecting player's tile is in LOS
+          if (bm && (bm.playerId === this.myPlayerId || this.fogRenderer?.isVisible(bm.x, bm.y))) {
+            this.spawnCoinPopup(bm.x * ts + ts / 2, bm.y * ts + ts / 2 - ts * 0.5, ev.amount as number);
+          }
         }
         if (ev.kind === 'body_looted') {
-          const me = this.state?.bombermen.find(b => b.playerId === ev.playerId as string);
+          const bm = this.state?.bombermen.find(b => b.playerId === ev.playerId as string);
           const coins = ev.coins as number;
-          if (me && coins > 0) this.spawnCoinPopup(me.x * ts + ts / 2, me.y * ts + ts / 2 - ts * 0.5, coins);
+          if (bm && coins > 0 && (bm.playerId === this.myPlayerId || this.fogRenderer?.isVisible(bm.x, bm.y))) {
+            this.spawnCoinPopup(bm.x * ts + ts / 2, bm.y * ts + ts / 2 - ts * 0.5, coins);
+          }
         }
       }
     }
@@ -567,40 +789,31 @@ export class MatchScene extends Phaser.Scene {
     if (!this.state || !this.mapData) return;
     const ts = this.mapData.tileSize;
 
-    // Fog filter: pickups become visible once their tile is discovered
-    // (loose check). Bombermen have their own visibility handling inside
-    // BombermanSpriteSystem so we don't filter them here.
-    const seeEver = (x: number, y: number): boolean => this.fogRenderer?.isDiscovered(x, y) ?? true;
+    // RTS-style fog filter: objects are only shown if the player has actively
+    // seen them in LOS. Objects in seen-dim (previously visited but not
+    // currently visible) only show if they were already discovered by the
+    // player. New objects that appear while the area is dim stay hidden
+    // until the player revisits.
+    const rtsVisible = (entityId: string, x: number, y: number): boolean => {
+      if (this.fogRenderer?.isVisible(x, y)) {
+        this.knownEntities.add(entityId);
+        return true;
+      }
+      if (this.fogRenderer?.isDiscovered(x, y) && this.knownEntities.has(entityId)) {
+        return true; // stale — last-known state
+      }
+      return false;
+    };
 
-    // Coin bags (visible if the tile has ever been seen)
-    for (const bag of this.state.coinBags) {
-      if (!seeEver(bag.x, bag.y)) continue;
-      const g = this.add.graphics();
-      g.fillStyle(0xffd944, 1);
-      g.fillCircle(bag.x * ts + ts / 2, bag.y * ts + ts / 2, ts * 0.35);
-      g.lineStyle(2, 0x886600, 1);
-      g.strokeCircle(bag.x * ts + ts / 2, bag.y * ts + ts / 2, ts * 0.35);
-      this.entitiesLayer.add(g);
-      const t = this.add.text(bag.x * ts + ts / 2, bag.y * ts + ts / 2, '$', {
-        fontSize: '14px', color: '#332200', fontFamily: 'monospace', fontStyle: 'bold',
-      }).setOrigin(0.5);
-      this.entitiesLayer.add(t);
-    }
+    // Chests are rendered as persistent animated sprites (see chestSprites +
+    // updateChests), not rebuilt each frame like bodies.
 
-    // Collectible bombs
-    for (const pickup of this.state.collectibleBombs) {
-      if (!seeEver(pickup.x, pickup.y)) continue;
-      const g = this.add.graphics();
-      g.fillStyle(0x333344, 1);
-      g.fillCircle(pickup.x * ts + ts / 2, pickup.y * ts + ts / 2, ts * 0.3);
-      g.lineStyle(2, 0xaaaaff, 1);
-      g.strokeCircle(pickup.x * ts + ts / 2, pickup.y * ts + ts / 2, ts * 0.3);
-      this.entitiesLayer.add(g);
-    }
+    // Sync chest open state from server → local sprite permanence
+    this.updateChests();
 
-    // Dropped bodies
+    // Dropped bodies — only visible if discovered by player
     for (const body of this.state.bodies) {
-      if (!seeEver(body.x, body.y)) continue;
+      if (!rtsVisible(`body_${body.id}`, body.x, body.y)) continue;
       const g = this.add.graphics();
       g.fillStyle(0x552222, 0.8);
       g.fillRect(body.x * ts + 4, body.y * ts + ts - 10, ts - 8, 6);
@@ -616,11 +829,45 @@ export class MatchScene extends Phaser.Scene {
     // covers click-driven aim toggles since rebuildEntities runs after every
     // input action.
     if (this.myPlayerId) {
-      this.bombermanSpriteSystem?.setAimActive(this.myPlayerId, this.inputMode.kind === 'aim');
+      this.bombermanSpriteSystem?.setAimActive(this.myPlayerId, this.selectedSlot !== null || this.inputMode.kind === 'aim');
     }
 
     // Escape hatch state machine — runs only if you've wired up sprites
     if (this.escapeSprites.length > 0) this.updateEscapeHatches();
+
+    // Door state machine
+    if (this.doorSprites.length > 0) this.updateDoors();
+
+    // Blood trail decals — only created when their tile is currently visible
+    // (RTS fog: blood that appears while area is dim stays hidden until revisited)
+    for (const bt of this.state.bloodTiles) {
+      const key = `blood_${bt.x},${bt.y}`;
+      if (this.bloodDecals.has(key)) continue;
+      if (!rtsVisible(key, bt.x, bt.y)) continue;
+      this.bloodDecals.add(key);
+      const g = this.add.graphics();
+      const cx = bt.x * ts + ts / 2;
+      const cy = bt.y * ts + ts / 2;
+      // Larger blood splatters
+      g.fillStyle(0x881111, 0.75);
+      g.fillCircle(cx + (Math.random() - 0.5) * ts * 0.3, cy + (Math.random() - 0.5) * ts * 0.3, ts * 0.25);
+      g.fillStyle(0x660808, 0.65);
+      g.fillCircle(cx + (Math.random() - 0.5) * ts * 0.4, cy + (Math.random() - 0.5) * ts * 0.4, ts * 0.18);
+      g.fillCircle(cx + (Math.random() - 0.5) * ts * 0.35, cy + (Math.random() - 0.5) * ts * 0.35, ts * 0.12);
+      g.fillStyle(0x440505, 0.5);
+      g.fillCircle(cx + (Math.random() - 0.5) * ts * 0.2, cy + (Math.random() - 0.5) * ts * 0.2, ts * 0.08);
+      this.decalLayer.add(g);
+    }
+
+    // Explosion decals: only visible if tile is currently in LOS (RTS fog)
+    this.bombRenderer?.updateDecalVisibility((x, y) => {
+      const key = `decal_${x},${y}`;
+      if (this.fogRenderer?.isVisible(x, y)) {
+        this.knownEntities.add(key);
+        return true;
+      }
+      return this.knownEntities.has(key) && (this.fogRenderer?.isDiscovered(x, y) ?? false);
+    });
 
     // Path line + staged-action highlight
     this.drawPath();
@@ -675,6 +922,138 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Chest animation state machine — same proximity pattern as escape hatches.
+   * Once a chest is `opened` on the server, it stays permanently open.
+   */
+  private updateChests(): void {
+    if (!this.state) return;
+    for (const cs of this.chestSprites) {
+      const key = `chest_${cs.tier}` as 'chest_1' | 'chest_2';
+
+      // RTS fog: chest only visible if tile is in LOS or was previously discovered
+      const entityId = `chest_${cs.id}`;
+      const vis = this.fogRenderer?.isVisible(cs.x, cs.y);
+      if (vis) {
+        this.knownEntities.add(entityId);
+        cs.sprite.setVisible(true);
+      } else if (this.fogRenderer?.isDiscovered(cs.x, cs.y) && this.knownEntities.has(entityId)) {
+        cs.sprite.setVisible(true);
+        // In seen-dim: don't update animations (stale visual)
+        continue;
+      } else {
+        cs.sprite.setVisible(false);
+        continue;
+      }
+
+      // Sync server opened state → permanent
+      const serverChest = this.state.chests.find(c => c.id === cs.id);
+      if (serverChest?.opened && !cs.permanentlyOpened) {
+        cs.permanentlyOpened = true;
+        if (cs.state !== 'open' && cs.state !== 'opening') {
+          cs.state = 'open';
+          cs.sprite.play(`${key}_open`);
+        }
+      }
+
+      // Permanently opened chests skip proximity logic
+      if (cs.permanentlyOpened) {
+        if (cs.state === 'opening') continue; // let anim finish → becomes 'open'
+        if (cs.state !== 'open') {
+          cs.state = 'open';
+          cs.sprite.play(`${key}_open`);
+        }
+        continue;
+      }
+
+      // Proximity check: any alive, non-escaped Bomberman within Chebyshev ≤ 1
+      const nearby = this.state.bombermen.some(b =>
+        b.alive && !b.escaped &&
+        Math.max(Math.abs(b.x - cs.x), Math.abs(b.y - cs.y)) <= 1,
+      );
+
+      if (nearby && cs.state === 'closed') {
+        cs.state = 'opening';
+        cs.sprite.play(`${key}_opening`);
+        cs.sprite.once('animationcomplete', () => {
+          cs.state = 'open';
+          cs.sprite.play(`${key}_open`);
+        });
+      } else if (!nearby && cs.state === 'open') {
+        cs.state = 'closing';
+        cs.sprite.play(`${key}_closing`);
+        cs.sprite.once('animationcomplete', () => {
+          cs.state = 'closed';
+          cs.sprite.play(`${key}_closed`);
+        });
+      }
+    }
+  }
+
+  /**
+   * Door animation state machine. Doors open on proximity (Chebyshev ≤ 1 of
+   * any door tile) and stay open permanently. Also syncs server opened state.
+   */
+  private updateDoors(): void {
+    if (!this.state) return;
+    for (const ds of this.doorSprites) {
+      const prefix = ds.orientation === 'horizontal' ? 'h' : 'v';
+      const animKey = `door_${prefix}`;
+
+      // RTS fog: door visible if ANY of its tiles are in LOS or previously discovered
+      const entityId = `door_${ds.id}`;
+      const anyVisible = ds.tiles.some(t => this.fogRenderer?.isVisible(t.x, t.y));
+      if (anyVisible) {
+        this.knownEntities.add(entityId);
+        ds.sprite.setVisible(true);
+      } else {
+        const anyDiscovered = ds.tiles.some(t => this.fogRenderer?.isDiscovered(t.x, t.y));
+        if (anyDiscovered && this.knownEntities.has(entityId)) {
+          ds.sprite.setVisible(true);
+          continue; // stale — don't update animation
+        }
+        ds.sprite.setVisible(false);
+        continue;
+      }
+
+      // Sync server state
+      const serverDoor = this.state.doors?.find(d => d.id === ds.id);
+      if (serverDoor?.opened && !ds.opened) {
+        ds.opened = true;
+      }
+
+      // Already open → stick on open frame
+      if (ds.opened) {
+        if (ds.state !== 'open' && ds.state !== 'opening') {
+          ds.state = 'open';
+          ds.sprite.play(`${animKey}_open`);
+        }
+        if (ds.state === 'opening') continue; // let anim finish
+        if (ds.state !== 'open') {
+          ds.state = 'open';
+          ds.sprite.play(`${animKey}_open`);
+        }
+        continue;
+      }
+
+      // Proximity check: any alive Bomberman within Chebyshev ≤ 1 of any door tile
+      const nearby = this.state.bombermen.some(b =>
+        b.alive && !b.escaped &&
+        ds.tiles.some(t => Math.max(Math.abs(b.x - t.x), Math.abs(b.y - t.y)) <= 1),
+      );
+
+      if (nearby && ds.state === 'closed') {
+        ds.state = 'opening';
+        ds.sprite.play(`${animKey}_opening`);
+        ds.sprite.once('animationcomplete', () => {
+          ds.state = 'open';
+          ds.sprite.play(`${animKey}_open`);
+        });
+      }
+      // No closing — doors never close once opened by proximity either
+    }
+  }
+
   private drawPath(): void {
     this.pathGraphics.clear();
     if (this.inputMode.kind !== 'pathing' || !this.mapData) return;
@@ -688,20 +1067,32 @@ export class MatchScene extends Phaser.Scene {
       points.push(new Phaser.Math.Vector2(p.x * ts + ts / 2, p.y * ts + ts / 2));
     }
 
-    // Dashed-ish line: alternating colors per segment for legibility
-    this.pathGraphics.lineStyle(3, 0x44aaff, 0.9);
+    // Thin path line
+    this.pathGraphics.lineStyle(1.5, 0x44aaff, 0.5);
     this.pathGraphics.beginPath();
     this.pathGraphics.moveTo(points[0].x, points[0].y);
     for (let i = 1; i < points.length; i++) this.pathGraphics.lineTo(points[i].x, points[i].y);
     this.pathGraphics.strokePath();
 
-    // Waypoint markers
+    // Waypoint markers — appearance depends on match phase:
+    //   Input phase: ALL points are changeable (hollow cyan) — player can still re-click
+    //   Resolution phase: first point is LOCKED (solid yellow + ring), rest are queued (cyan)
+    const isResolution = this.state?.phase === 'transition';
     for (let i = 0; i < this.inputMode.path.length; i++) {
       const p = this.inputMode.path[i];
       const cx = p.x * ts + ts / 2;
       const cy = p.y * ts + ts / 2;
-      this.pathGraphics.fillStyle(i === 0 ? 0xffcc44 : 0x44aaff, 0.9);
-      this.pathGraphics.fillCircle(cx, cy, i === 0 ? 6 : 4);
+      if (i === 0 && isResolution) {
+        // Locked — solid yellow dot with ring (can't change during resolution)
+        this.pathGraphics.fillStyle(0xffcc44, 0.95);
+        this.pathGraphics.fillCircle(cx, cy, 3);
+        this.pathGraphics.lineStyle(1.5, 0xffcc44, 0.6);
+        this.pathGraphics.strokeCircle(cx, cy, 6);
+      } else {
+        // Changeable (input phase) or queued future step — hollow cyan
+        this.pathGraphics.lineStyle(1, 0x44aaff, 0.4);
+        this.pathGraphics.strokeCircle(cx, cy, 3);
+      }
     }
   }
 
@@ -751,7 +1142,7 @@ export class MatchScene extends Phaser.Scene {
     if (tx < 0 || ty < 0 || tx >= this.mapData.width || ty >= this.mapData.height) return;
     if (me.escaped) return;
 
-    // Click on self = cancel any staged action
+    // Click on self = cancel any staged action (armed slot stays)
     if (tx === me.x && ty === me.y) {
       this.inputMode = { kind: 'idle' };
       this.flushStagedAction();
@@ -760,10 +1151,9 @@ export class MatchScene extends Phaser.Scene {
       return;
     }
 
-    // Aim mode: click = set throw target
-    if (this.inputMode.kind === 'aim') {
-      // Figure out what bomb type is selected
-      const slotIdx = this.inputMode.slotIndex;
+    // Armed slot: click = throw at this tile (stops movement, goes idle after)
+    if (this.selectedSlot !== null) {
+      const slotIdx = this.selectedSlot;
       const selectedType: BombType = slotIdx === 0 ? 'rock'
         : (me.inventory.slots[slotIdx - 1]?.type ?? 'rock');
       const isFlare = selectedType === 'flare';
@@ -778,14 +1168,18 @@ export class MatchScene extends Phaser.Scene {
         return;
       }
 
+      // Stage the throw via aim mode (flushStagedAction handles sending +
+      // the input-phase gate so throws queued during transition are deferred).
       this.inputMode = {
         kind: 'aim',
-        slotIndex: this.inputMode.slotIndex,
+        slotIndex: slotIdx,
         targetX: tx,
         targetY: ty,
       };
+      this.selectedSlot = null;
       this.flushStagedAction();
       this.rebuildEntities();
+      this.renderHud();
       return;
     }
 
@@ -869,12 +1263,21 @@ export class MatchScene extends Phaser.Scene {
         .setDepth(1001);
       this.slotRects.push(this.hud(rect));
 
-      const label = this.add.text(sx + SLOT_SIZE / 2, trayY + 12, '—', {
-        fontSize: '10px', color: '#555', fontFamily: 'monospace', fontStyle: 'bold',
-      }).setOrigin(0.5, 0).setDepth(1002);
+      // Keyboard shortcut key badge — white bg, black text, bottom-left
+      const label = this.add.text(sx + 4, trayY + SLOT_SIZE - 4, `${i + 1}`, {
+        fontSize: '12px', color: '#000000', fontFamily: 'monospace', fontStyle: 'bold',
+        backgroundColor: '#ffffff', padding: { x: 3, y: 1 },
+      }).setOrigin(0, 1).setDepth(1003);
       this.slotLabelTexts.push(this.hud(label));
 
-      const countTxt = this.add.text(sx + SLOT_SIZE / 2, trayY + SLOT_SIZE - 12, '', {
+      // Bomb icon image centered in the slot
+      const icon = this.add.image(sx + SLOT_SIZE / 2, trayY + SLOT_SIZE / 2, 'bomb_icons', 0)
+        .setDisplaySize(SLOT_SIZE - 16, SLOT_SIZE - 16)
+        .setDepth(1001)
+        .setVisible(false);
+      this.slotIcons.push(this.hud(icon));
+
+      const countTxt = this.add.text(sx + SLOT_SIZE / 2, trayY + SLOT_SIZE - 4, '', {
         fontSize: '14px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
       }).setOrigin(0.5, 1).setDepth(1002);
       this.slotCountTexts.push(this.hud(countTxt));
@@ -928,28 +1331,38 @@ export class MatchScene extends Phaser.Scene {
   private renderBombSlots(me: BombermanState): void {
     // Slot layout: 0 = Rock (infinite), 1..4 = custom inventory[0..3]
     for (let i = 0; i < SLOT_COUNT; i++) {
-      let label = '—';
       let sub = '';
-      let color = '#555';
+      let bombType: import('@shared/types/bombs.ts').BombType | null = null;
 
       if (i === 0) {
-        label = 'Rock';
+        bombType = 'rock';
         sub = '∞';
-        color = '#ccaa88';
       } else {
         const slot = me.inventory.slots[i - 1];
         if (slot) {
-          label = BOMB_CATALOG[slot.type].name;
+          bombType = slot.type;
           sub = `x${slot.count}`;
-          color = '#ffffff';
         }
       }
 
-      this.slotLabelTexts[i].setText(`${i + 1}. ${label}`).setColor(color);
+      // Show bomb icon or hide if empty slot
+      const icon = this.slotIcons[i];
+      if (icon) {
+        if (bombType) {
+          icon.setFrame(bombIconFrame(bombType));
+          icon.setVisible(true);
+        } else {
+          icon.setVisible(false);
+        }
+      }
+
+      // Key badge always shows the number; dim it when slot is empty
+      this.slotLabelTexts[i].setAlpha(bombType ? 1 : 0.3);
       this.slotCountTexts[i].setText(sub);
 
-      // Highlight selected slot
-      const isSelected = this.inputMode.kind === 'aim' && this.inputMode.slotIndex === i;
+      // Highlight selected slot (armed for throwing, or staged throw in aim mode)
+      const isSelected = this.selectedSlot === i
+        || (this.inputMode.kind === 'aim' && this.inputMode.slotIndex === i);
       const hl = this.slotHighlights[i];
       hl.clear();
       if (isSelected) {
@@ -981,25 +1394,15 @@ export class MatchScene extends Phaser.Scene {
     }
     if (!hasBomb) return;
 
-    // Clicking the same slot again cancels the aim
-    if (this.inputMode.kind === 'aim' && this.inputMode.slotIndex === slotIndex) {
-      this.inputMode = { kind: 'idle' };
-      // Clear any previously-queued action on the server
-      this.sendAction({ kind: 'idle' });
+    // Toggle the armed slot. Movement continues uninterrupted — the player
+    // only commits to a throw when they click a target tile.
+    if (this.selectedSlot === slotIndex) {
+      this.selectedSlot = null;
     } else {
-      const prevTarget = this.inputMode.kind === 'aim'
-        ? { x: this.inputMode.targetX, y: this.inputMode.targetY }
-        : { x: null, y: null };
-      this.inputMode = { kind: 'aim', slotIndex, targetX: prevTarget.x, targetY: prevTarget.y };
-      // If there's no target yet, proactively cancel any previously-queued
-      // move action so the server doesn't execute a stale path step this turn.
-      if (prevTarget.x === null || prevTarget.y === null) {
-        this.sendAction({ kind: 'idle' });
-      }
+      this.selectedSlot = slotIndex;
     }
 
     this.lootPendingSwap = null;
-    this.flushStagedAction();
     this.rebuildEntities();
     this.renderHud();
   }
@@ -1014,20 +1417,20 @@ export class MatchScene extends Phaser.Scene {
 
     // Find what's on the player's tile
     type LootSource = {
-      kind: 'collectible' | 'body';
+      kind: 'chest' | 'body';
       id: string;
       bombs: Array<{ type: import('@shared/types/bombs.ts').BombType; count: number }>;
       label: string;
     };
 
     const sources: LootSource[] = [];
-    for (const p of this.state.collectibleBombs) {
-      if (p.x === me.x && p.y === me.y) {
+    for (const c of this.state.chests) {
+      if (c.x === me.x && c.y === me.y && c.bombs.length > 0) {
         sources.push({
-          kind: 'collectible',
-          id: p.id,
-          bombs: [{ type: p.type, count: p.count }],
-          label: 'COLLECTIBLE BOMB',
+          kind: 'chest',
+          id: c.id,
+          bombs: c.bombs.map(b => ({ type: b.type, count: b.count })),
+          label: `CHEST (TIER ${c.tier})`,
         });
       }
     }
@@ -1070,7 +1473,7 @@ export class MatchScene extends Phaser.Scene {
     this.lootPanelObjects.push(title);
 
     // Flatten all lootable bombs across sources into 4 visual slots
-    const lootSlots: Array<{ kind: 'collectible' | 'body'; sourceId: string; type: import('@shared/types/bombs.ts').BombType; count: number }> = [];
+    const lootSlots: Array<{ kind: 'chest' | 'body'; sourceId: string; type: import('@shared/types/bombs.ts').BombType; count: number }> = [];
     for (const src of sources) {
       for (const bomb of src.bombs) {
         lootSlots.push({ kind: src.kind, sourceId: src.id, type: bomb.type, count: bomb.count });
@@ -1102,14 +1505,15 @@ export class MatchScene extends Phaser.Scene {
       }
 
       const isPending = this.lootPendingSwap?.sourceId === loot.sourceId && this.lootPendingSwap?.bombType === loot.type;
-      const name = BOMB_CATALOG[loot.type].name;
-      const nameText = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + 12, name, {
-        fontSize: '9px', color: isPending ? '#ffcc44' : '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
-      }).setOrigin(0.5, 0).setDepth(1012));
-      this.lootPanelObjects.push(nameText);
 
-      const countText = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + 38, `x${loot.count}`, {
-        fontSize: '12px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
+      // Bomb icon
+      const lootIcon = this.hud(this.add.image(
+        sx + lootSlotSize / 2, slotY + 22, 'bomb_icons', bombIconFrame(loot.type),
+      ).setDisplaySize(28, 28).setDepth(1012));
+      this.lootPanelObjects.push(lootIcon);
+
+      const countText = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + 42, `x${loot.count}`, {
+        fontSize: '12px', color: isPending ? '#ffcc44' : '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
       }).setOrigin(0.5, 1).setDepth(1012));
       this.lootPanelObjects.push(countText);
 
@@ -1153,10 +1557,13 @@ export class MatchScene extends Phaser.Scene {
     if (!me) return;
 
     // Gather all available loot on this tile (same logic as renderLootPanel)
-    const lootSlots: Array<{ kind: 'collectible' | 'body'; sourceId: string; type: import('@shared/types/bombs.ts').BombType; count: number }> = [];
-    for (const p of this.state.collectibleBombs) {
-      if (p.x === me.x && p.y === me.y) {
-        lootSlots.push({ kind: 'collectible', sourceId: p.id, type: p.type, count: p.count });
+    const lootSlots: Array<{ kind: 'chest' | 'body'; sourceId: string; type: import('@shared/types/bombs.ts').BombType; count: number }> = [];
+    for (const c of this.state.chests) {
+      if (c.x === me.x && c.y === me.y && c.bombs.length > 0) {
+        for (const b of c.bombs) {
+          lootSlots.push({ kind: 'chest', sourceId: c.id, type: b.type, count: b.count });
+          if (lootSlots.length >= 4) break;
+        }
         if (lootSlots.length >= 4) break;
       }
     }

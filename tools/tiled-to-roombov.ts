@@ -98,8 +98,9 @@ interface BombermanMap {
   grid: number[][];
   spawns: { id: number; x: number; y: number }[];
   escapeTiles: { id: number; x: number; y: number }[];
-  coinZones: { x: number; y: number; w: number; h: number }[];
-  bombZones: { x: number; y: number; w: number; h: number }[];
+  chest1Zones: { x: number; y: number; w: number; h: number }[];
+  chest2Zones: { x: number; y: number; w: number; h: number }[];
+  doors: { id: number; tiles: { x: number; y: number }[]; orientation: 'horizontal' | 'vertical' }[];
 }
 
 // ------- Helpers -------
@@ -331,13 +332,61 @@ function rectLayerToZones(layer: TiledObjectLayer | undefined): { x: number; y: 
 
 const spawns = pointLayerToTiles(findObjectLayer('Spawns'));
 const escapeTiles = pointLayerToTiles(findObjectLayer('EscapeTiles', 'Exits'));
-const bombZones = rectLayerToZones(findObjectLayer('BombZones', 'TurretZones'));
-const coinZones = rectLayerToZones(findObjectLayer('CoinZones', 'GoodiesZones', 'GoodieZones'));
+// Chest zones — new names preferred, old names as fallback for transition
+const chest1Zones = rectLayerToZones(findObjectLayer('Chest1Zones', 'CoinZones', 'GoodiesZones', 'GoodieZones'));
+const chest2Zones = rectLayerToZones(findObjectLayer('Chest2Zones', 'BombZones', 'TurretZones'));
 
 console.log(`\nSpawns: ${spawns.length}${spawns.length > 0 ? ' → ' + spawns.map(s => `(${s.x},${s.y})`).join(', ') : ''}`);
 console.log(`EscapeTiles: ${escapeTiles.length}${escapeTiles.length > 0 ? ' → ' + escapeTiles.map(e => `(${e.x},${e.y})`).join(', ') : ''}`);
-console.log(`BombZones: ${bombZones.length}`);
-console.log(`CoinZones: ${coinZones.length}`);
+console.log(`Chest1Zones: ${chest1Zones.length}`);
+console.log(`Chest2Zones: ${chest2Zones.length}`);
+
+// Scan "Doors" tile layer — find connected groups of door tiles
+const doorLayer = tileLayers.find(l => l.name.toLowerCase() === 'doors');
+const doors: BombermanMap['doors'] = [];
+if (doorLayer) {
+  // Collect all door tile positions
+  const doorTiles = new Set<string>();
+  for (let row = 0; row < finalH; row++) {
+    for (let col = 0; col < finalW; col++) {
+      if (readGid(doorLayer, col, row) !== 0) {
+        doorTiles.add(`${col},${row}`);
+      }
+    }
+  }
+  // Flood-fill connected groups
+  const visited = new Set<string>();
+  for (const key of doorTiles) {
+    if (visited.has(key)) continue;
+    const [sx, sy] = key.split(',').map(Number);
+    const group: { x: number; y: number }[] = [];
+    const queue = [{ x: sx, y: sy }];
+    visited.add(key);
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      group.push(cur);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nk = `${cur.x + dx},${cur.y + dy}`;
+        if (doorTiles.has(nk) && !visited.has(nk)) {
+          visited.add(nk);
+          queue.push({ x: cur.x + dx, y: cur.y + dy });
+        }
+      }
+    }
+    // Sort tiles: by x for horizontal, by y for vertical
+    group.sort((a, b) => a.x - b.x || a.y - b.y);
+    // Determine orientation: all same y → horizontal; all same x → vertical
+    const allSameY = group.every(t => t.y === group[0].y);
+    const allSameX = group.every(t => t.x === group[0].x);
+    let orientation: 'horizontal' | 'vertical' = 'horizontal';
+    if (allSameX && group.length >= 3) orientation = 'vertical';
+    else if (allSameY && group.length >= 2) orientation = 'horizontal';
+    doors.push({ id: doors.length, tiles: group, orientation });
+  }
+  console.log(`Doors: ${doors.length} (${doors.filter(d => d.orientation === 'horizontal').length}H, ${doors.filter(d => d.orientation === 'vertical').length}V)`);
+} else {
+  console.log('Doors: 0 (no "Doors" tile layer found)');
+}
 
 // Validate spawns land on walkable tiles
 for (const s of spawns) {
@@ -361,8 +410,9 @@ const output: BombermanMap = {
   grid,
   spawns,
   escapeTiles,
-  coinZones,
-  bombZones,
+  chest1Zones,
+  chest2Zones,
+  doors,
 };
 
 const outPath = join(dirname(inputPath), `${mapId}.json`);
@@ -377,7 +427,33 @@ if (existsSync(join(publicMapsDir, '..'))) {
   if (!existsSync(publicMapsDir)) mkdirSync(publicMapsDir, { recursive: true });
 
   // Patch tileset image paths in the tmj and write to public/maps/
-  const patched = JSON.parse(raw) as TiledMap & { tilesets: Array<{ image?: string; [k: string]: unknown }> };
+  const patched = JSON.parse(raw) as TiledMap & { tilesets: Array<{ image?: string; source?: string; [k: string]: unknown }> };
+  // Strip external (non-embedded) tilesets — Phaser can't load them
+  patched.tilesets = patched.tilesets.filter(ts => {
+    if (ts.source) {
+      console.log(`  stripping external tileset: ${ts.source} (embed it in Tiled to include it)`);
+      return false;
+    }
+    return true;
+  });
+  // Strip data-only tile layers (Collision, Doors) — their tiles may
+  // reference stripped tilesets and Phaser crashes trying to resolve them.
+  if (patched.layers) {
+    const stripLayers = (layers: Array<{ name?: string; type?: string; layers?: unknown[] }>): void => {
+      for (let i = layers.length - 1; i >= 0; i--) {
+        const l = layers[i];
+        const ln = (l.name ?? '').toLowerCase();
+        if (l.type === 'tilelayer' && (ln === 'doors')) {
+          console.log(`  stripping data-only tile layer: ${l.name}`);
+          layers.splice(i, 1);
+        } else if (l.type === 'group' && l.layers) {
+          stripLayers(l.layers as typeof layers);
+        }
+      }
+    };
+    stripLayers(patched.layers as Array<{ name?: string; type?: string; layers?: unknown[] }>);
+  }
+
   const copiedPngs = new Set<string>();
   for (const tsEntry of patched.tilesets) {
     if (tsEntry.image) {

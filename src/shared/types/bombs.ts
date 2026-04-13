@@ -15,12 +15,14 @@ export type BombType =
   | 'rock'
   | 'delay'
   | 'delay_big'
+  | 'delay_wide'
   | 'delay_tricky'
   | 'contact'
   | 'banana'
   | 'banana_child'
   | 'flare'
-  | 'molotov';
+  | 'molotov'
+  | 'ender_pearl';
 
 /**
  * Shape primitives used by BombResolver to compute the affected tile set.
@@ -45,7 +47,9 @@ export type BombBehavior =
   /** Light up tiles (no damage). Used by the Flare. */
   | { kind: 'light'; shape: BombShape; durationTurns: number }
   /** Leave burning tiles that damage anything on them each turn. Used by the Molotov. */
-  | { kind: 'fire'; shape: BombShape; durationTurns: number };
+  | { kind: 'fire'; shape: BombShape; durationTurns: number }
+  /** Teleport the thrower to the landing tile. Used by Ender Pearl. */
+  | { kind: 'teleport' };
 
 export interface BombDef {
   type: BombType;

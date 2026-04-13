@@ -39,6 +39,11 @@ interface TilesetInfo {
  * Tiled assets for loading. Returns the tileset info needed at create time.
  * Returns null if the map has no .tmj in public/maps/.
  */
+/**
+ * Dynamically discovers tilesets from the .tmj file at preload time.
+ * Reads the JSON, extracts all embedded tilesets (those with an `image`
+ * field), and pre-loads their PNG images from `public/maps/`.
+ */
 export function preloadTiledMap(
   scene: Phaser.Scene,
   mapId: string,
@@ -48,23 +53,46 @@ export function preloadTiledMap(
 
   scene.load.tilemapTiledJSON(tilemapKey, tmjPath);
 
-  // We don't know the tileset names until the JSON is parsed, so we
-  // pre-register the known tileset images by convention. The tileset
-  // image filenames in public/maps/ match the Tiled tileset names.
-  const knownTilesets: TilesetInfo[] = [
-    { name: 'Tileset', key: 'ts_Tileset', tileWidth: 16, tileHeight: 16, margin: 0, spacing: 0, firstgid: 1 },
-    { name: 'Animated_objects', key: 'ts_Animated_objects', tileWidth: 16, tileHeight: 16, margin: 0, spacing: 0, firstgid: 210 },
-    { name: 'Objects', key: 'ts_Objects', tileWidth: 16, tileHeight: 16, margin: 0, spacing: 0, firstgid: 703 },
-    { name: 'Objects_small_details', key: 'ts_Objects_small_details', tileWidth: 16, tileHeight: 16, margin: 0, spacing: 0, firstgid: 1023 },
-  ];
-
-  for (const ts of knownTilesets) {
-    if (!scene.textures.exists(ts.key)) {
-      scene.load.image(ts.key, `maps/${ts.name}.png`);
+  // Fetch the .tmj synchronously via XMLHttpRequest so we can discover
+  // tileset names before Phaser's preload queue finishes. This runs during
+  // preload(), so the images we queue here are loaded alongside the tmj.
+  const tilesets: TilesetInfo[] = [];
+  try {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', tmjPath, false); // synchronous
+    xhr.send();
+    if (xhr.status === 200) {
+      const tmj = JSON.parse(xhr.responseText) as {
+        tilesets: Array<{
+          name?: string; firstgid: number; image?: string; source?: string;
+          tilewidth?: number; tileheight?: number; margin?: number; spacing?: number;
+        }>;
+      };
+      for (const ts of tmj.tilesets) {
+        if (!ts.image || ts.source) continue; // skip external tilesets
+        const name = ts.name ?? ts.image.replace(/\.png$/i, '');
+        const key = `ts_${name}`;
+        tilesets.push({
+          name,
+          key,
+          tileWidth: ts.tilewidth ?? 16,
+          tileHeight: ts.tileheight ?? 16,
+          margin: ts.margin ?? 0,
+          spacing: ts.spacing ?? 0,
+          firstgid: ts.firstgid,
+        });
+        if (!scene.textures.exists(key)) {
+          // Image filename = just the basename from the tileset's image path
+          const imgFile = ts.image.split(/[\\/]/).pop() ?? ts.image;
+          scene.load.image(key, `maps/${imgFile}`);
+        }
+      }
     }
+  } catch (e) {
+    console.warn('[preloadTiledMap] Failed to pre-discover tilesets:', e);
   }
 
-  return { tilemapKey, tilesets: knownTilesets };
+  return { tilemapKey, tilesets };
 }
 
 /** One animated tile instance — keeps its own clock and frame pointer. */
@@ -137,10 +165,11 @@ export class MapRenderer {
       return;
     }
 
-    // Create all tile layers (skip the Collision layer — it's invisible)
+    // Create all tile layers (skip data-only layers)
     let layerDepth = this.baseDepth;
     for (const layerData of tilemap.layers) {
-      if (layerData.name.toLowerCase() === 'collision') continue;
+      const ln = layerData.name.toLowerCase();
+      if (ln === 'collision' || ln === 'doors') continue;
       const layer = tilemap.createLayer(layerData.name, phaserTilesets);
       if (layer) {
         layer.setDepth(layerDepth);

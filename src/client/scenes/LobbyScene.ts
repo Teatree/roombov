@@ -2,6 +2,9 @@ import Phaser from 'phaser';
 import { NetworkManager } from '../NetworkManager.ts';
 import { ProfileStore } from '../ClientState.ts';
 import { ActivityIndicator } from '../systems/ActivityIndicator.ts';
+import { BombermanSelector } from '../systems/BombermanSelector.ts';
+import { preloadBombIcons } from '../systems/BombIcons.ts';
+import { preloadBombermanSpritesheets, ensureBombermanAnims } from '../systems/BombermanAnimations.ts';
 import type { MatchListing } from '@shared/types/match.ts';
 
 const CARD_WIDTH = 260;
@@ -19,12 +22,19 @@ export class LobbyScene extends Phaser.Scene {
   private statusText!: Phaser.GameObjects.Text;
   private warnText!: Phaser.GameObjects.Text;
   private activity: ActivityIndicator | null = null;
+  private selector: BombermanSelector | null = null;
 
   constructor() {
     super({ key: 'LobbyScene' });
   }
 
+  preload(): void {
+    preloadBombermanSpritesheets(this);
+    preloadBombIcons(this);
+  }
+
   create(): void {
+    ensureBombermanAnims(this);
     this.events.once('shutdown', this.shutdown, this);
     this.joinedMatchId = null;
     this.listings = [];
@@ -54,6 +64,11 @@ export class LobbyScene extends Phaser.Scene {
     backBtn.on('pointerover', () => backBtn.setColor('#ccc'));
     backBtn.on('pointerout', () => backBtn.setColor('#888'));
     backBtn.on('pointerdown', () => {
+      if (this.joinedMatchId) NetworkManager.getSocket().emit('leave_match');
+      this.scene.start('MainMenuScene');
+    });
+
+    this.input.keyboard?.on('keydown-ESC', () => {
       if (this.joinedMatchId) NetworkManager.getSocket().emit('leave_match');
       this.scene.start('MainMenuScene');
     });
@@ -95,6 +110,10 @@ export class LobbyScene extends Phaser.Scene {
     if (!profile?.equippedBombermanId) {
       this.warnText.setText('⚠ No Bomberman equipped — visit the shop first');
     }
+
+    // Bomberman selector at the bottom — equip from the lobby
+    this.selector = new BombermanSelector(this, height - 130);
+    this.selector.create();
   }
 
   shutdown(): void {
@@ -106,6 +125,8 @@ export class LobbyScene extends Phaser.Scene {
     socket.off('match_start');
     this.activity?.destroy();
     this.activity = null;
+    this.selector?.destroy();
+    this.selector = null;
     for (const c of this.cardContainers) c.destroy();
     this.cardContainers = [];
   }
@@ -120,7 +141,7 @@ export class LobbyScene extends Phaser.Scene {
 
     const totalW = count * CARD_WIDTH + (count - 1) * CARD_GAP;
     const startX = (width - totalW) / 2 + CARD_WIDTH / 2;
-    const y = height / 2 + 20;
+    const y = height * 0.4;
 
     for (let i = 0; i < count; i++) {
       const card = this.createCard(startX + i * (CARD_WIDTH + CARD_GAP), y, this.listings[i]);
@@ -159,9 +180,21 @@ export class LobbyScene extends Phaser.Scene {
     }).setOrigin(0.5));
 
     if (isJoined) {
-      container.add(this.add.text(0, CARD_HEIGHT / 2 - 40, 'JOINED - WAITING...', {
+      container.add(this.add.text(0, CARD_HEIGHT / 2 - 56, 'JOINED - WAITING...', {
         fontSize: '13px', color: '#44ff88', fontFamily: 'monospace', fontStyle: 'bold',
       }).setOrigin(0.5));
+      const unjoinBtn = this.add.text(0, CARD_HEIGHT / 2 - 30, '[ UNJOIN ]', {
+        fontSize: '14px', color: '#ff6644', fontFamily: 'monospace', fontStyle: 'bold',
+        backgroundColor: '#2a1818', padding: { x: 16, y: 6 },
+      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+      unjoinBtn.on('pointerover', () => unjoinBtn.setColor('#ffaa88'));
+      unjoinBtn.on('pointerout', () => unjoinBtn.setColor('#ff6644'));
+      unjoinBtn.on('pointerdown', () => {
+        NetworkManager.getSocket().emit('leave_match');
+        this.joinedMatchId = null;
+        this.rebuildCards();
+      });
+      container.add(unjoinBtn);
     } else if (this.joinedMatchId === null) {
       const profile = ProfileStore.get();
       const canJoin = !!profile?.equippedBombermanId;

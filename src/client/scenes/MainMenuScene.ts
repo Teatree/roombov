@@ -143,8 +143,8 @@ export class MainMenuScene extends Phaser.Scene {
     const preview = createShopBombermanSprite(this, 0, 0, equipped.tint, 1);
     this.equippedContainer.add(preview);
 
-    const label = this.add.text(0, 70, `Equipped: ${equipped.tier.replace('_', ' ')}`, {
-      fontSize: '12px', color: '#aaaaaa', fontFamily: 'monospace',
+    const label = this.add.text(0, 70, `${equipped.name ?? equipped.tier.replace('_', ' ')}`, {
+      fontSize: '14px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5);
     this.equippedContainer.add(label);
   }

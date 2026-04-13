@@ -52,14 +52,17 @@ export interface MapData {
   grid: TileType[][];
   spawns: SpawnPoint[];
   escapeTiles: EscapeTile[];
-  /**
-   * Zones where coin bags may spawn. Each match seeds random positions
-   * inside these zones. Empty array → no coin bags on this map.
-   */
-  coinZones: Zone[];
-  /**
-   * Zones where collectible bombs may spawn. Same seeded-random behavior
-   * as coinZones.
-   */
-  bombZones: Zone[];
+  /** Zones where Tier 1 chests spawn (small: coins + 1 bomb). */
+  chest1Zones: Zone[];
+  /** Zones where Tier 2 chests spawn (large: more coins + 2 bombs). */
+  chest2Zones: Zone[];
+  /** Double doors detected from the Doors tile layer. */
+  doors: DoorDef[];
+}
+
+/** A double door placed on the map. */
+export interface DoorDef {
+  id: number;
+  tiles: Array<{ x: number; y: number }>;
+  orientation: 'horizontal' | 'vertical';
 }

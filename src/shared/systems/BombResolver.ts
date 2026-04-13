@@ -36,7 +36,10 @@ function isFloor(map: MapData, x: number, y: number): boolean {
  * The center tile is always included (a bomb detonates where it sits even if
  * by some edge case it's not a floor).
  */
-export function shapeTiles(shape: BombShape, cx: number, cy: number, map: MapData): Tile[] {
+export function shapeTiles(
+  shape: BombShape, cx: number, cy: number, map: MapData,
+  closedDoorTiles: Set<string> = new Set(),
+): Tile[] {
   const seen = new Set<string>();
   const out: Tile[] = [];
   const push = (x: number, y: number): void => {
@@ -46,13 +49,16 @@ export function shapeTiles(shape: BombShape, cx: number, cy: number, map: MapDat
     out.push({ x, y });
   };
 
-  // Walk a ray one step at a time, stopping at the first non-floor tile.
+  // Walk a ray one step at a time, stopping at walls. Closed door tiles are
+  // included in the blast (the explosion reaches them) but the ray stops
+  // there — it doesn't pass through.
   const castRay = (dx: number, dy: number, radius: number): void => {
     for (let r = 1; r <= radius; r++) {
       const nx = cx + dx * r;
       const ny = cy + dy * r;
       if (!isFloor(map, nx, ny)) return;
       push(nx, ny);
+      if (closedDoorTiles.has(`${nx},${ny}`)) return; // include but stop
     }
   };
 
@@ -96,6 +102,8 @@ export function shapeTiles(shape: BombShape, cx: number, cy: number, map: MapDat
             if (seen.has(key)) continue;
             if (!isFloor(map, nx, ny)) continue;
             push(nx, ny);
+            // Closed doors: include tile but don't expand past them
+            if (closedDoorTiles.has(`${nx},${ny}`)) continue;
             queue.push({ x: nx, y: ny, d: cur.d + 1 });
           }
         }
@@ -129,7 +137,10 @@ export interface BombTriggerResult {
   scatterSpawns: Array<{ type: BombType; x: number; y: number }>;
 }
 
-export function resolveBombTrigger(type: BombType, cx: number, cy: number, map: MapData): BombTriggerResult {
+export function resolveBombTrigger(
+  type: BombType, cx: number, cy: number, map: MapData,
+  closedDoorTiles: Set<string> = new Set(),
+): BombTriggerResult {
   const def: BombDef = BOMB_CATALOG[type];
   const result: BombTriggerResult = {
     damageTiles: [],
@@ -142,11 +153,11 @@ export function resolveBombTrigger(type: BombType, cx: number, cy: number, map: 
 
   switch (def.behavior.kind) {
     case 'explode':
-      result.damageTiles = shapeTiles(def.behavior.shape, cx, cy, map);
+      result.damageTiles = shapeTiles(def.behavior.shape, cx, cy, map, closedDoorTiles);
       break;
 
     case 'fire': {
-      const tiles = shapeTiles(def.behavior.shape, cx, cy, map);
+      const tiles = shapeTiles(def.behavior.shape, cx, cy, map, closedDoorTiles);
       result.fireTiles = tiles;
       result.fireDuration = def.behavior.durationTurns;
       // Molotov also deals immediate damage to Bombermen on the landing tiles
@@ -156,7 +167,7 @@ export function resolveBombTrigger(type: BombType, cx: number, cy: number, map: 
     }
 
     case 'light':
-      result.lightTiles = shapeTiles(def.behavior.shape, cx, cy, map);
+      result.lightTiles = shapeTiles(def.behavior.shape, cx, cy, map, closedDoorTiles);
       result.lightDuration = def.behavior.durationTurns;
       break;
 
@@ -168,6 +179,10 @@ export function resolveBombTrigger(type: BombType, cx: number, cy: number, map: 
           y: cy + off.dy,
         });
       }
+      break;
+
+    case 'teleport':
+      // Teleport is handled directly in TurnResolver — no tiles to compute.
       break;
   }
 

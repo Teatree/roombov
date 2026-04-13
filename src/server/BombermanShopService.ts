@@ -15,6 +15,7 @@
  */
 
 import type { BombType } from '../shared/types/bombs.ts';
+import { rollBombermanName } from '../shared/config/bomberman-names.ts';
 import type {
   BombermanTemplate,
   BombermanTier,
@@ -126,8 +127,11 @@ export class BombermanShopService {
 
     const inventory = packInventory(counts);
 
+    const name = rollBombermanName(tier, rng);
+
     return {
       id: `${idPrefix}_${tier}`,
+      name,
       tier,
       price,
       colors,
@@ -164,6 +168,7 @@ export class BombermanShopService {
     // Purchase — clone inventory so owned is independent from template
     const owned: OwnedBomberman = {
       id: `owned_${profile.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: template.name,
       tier: template.tier,
       colors: { ...template.colors },
       tint: template.tint,
