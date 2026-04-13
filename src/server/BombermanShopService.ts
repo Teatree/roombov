@@ -106,22 +106,31 @@ export class BombermanShopService {
 
     // Starting inventory: roll `totalBombs` units against weights, then pack
     // into 4 stack-limited slots.
-    const weights = cfg.weights;
-    let totalWeight = 0;
-    for (const [, w] of Object.entries(weights) as [BombType, number][]) {
-      totalWeight += w ?? 0;
-    }
-    if (totalWeight === 0) throw new Error(`Tier ${tier} has no bomb weights`);
+    const weightEntries = (Object.entries(cfg.weights) as [BombType, number][])
+      .filter(([, w]) => (w ?? 0) > 0);
+    if (weightEntries.length === 0) throw new Error(`Tier ${tier} has no bomb weights`);
 
+    // First: pick which unique bomb types this Bomberman will carry
+    // (limited to maxUniqueSlots). Weighted random selection without replacement.
+    const maxSlots = cfg.maxUniqueSlots ?? 4;
+    const chosenTypes: BombType[] = [];
+    const available = [...weightEntries];
+    for (let s = 0; s < Math.min(maxSlots, available.length); s++) {
+      const totalW = available.reduce((sum, [, w]) => sum + w, 0);
+      let roll = rng() * totalW;
+      let idx = 0;
+      for (let j = 0; j < available.length; j++) {
+        roll -= available[j][1];
+        if (roll <= 0) { idx = j; break; }
+      }
+      chosenTypes.push(available[idx][0]);
+      available.splice(idx, 1); // remove to prevent duplicates
+    }
+
+    // Second: distribute totalBombs among the chosen types (uniform random)
     const counts: Partial<Record<BombType, number>> = {};
     for (let i = 0; i < cfg.totalBombs; i++) {
-      let roll = rng() * totalWeight;
-      let picked: BombType = 'contact';
-      for (const [t, w] of Object.entries(weights) as [BombType, number][]) {
-        if (w === undefined || w === 0) continue;
-        roll -= w;
-        if (roll <= 0) { picked = t; break; }
-      }
+      const picked = chosenTypes[Math.floor(rng() * chosenTypes.length)];
       counts[picked] = (counts[picked] ?? 0) + 1;
     }
 

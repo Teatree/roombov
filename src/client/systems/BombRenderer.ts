@@ -789,40 +789,44 @@ export class BombRenderer {
     const cfg = bombLook(bomb.type);
     drawBombBody(g, cfg, ts);
 
-    // Clock circle indicator — sweeps like an hourglass over the transition phase.
-    // For multi-turn fuses, an outer ring shows total turns remaining.
+    // Clock circle indicator — sweeps like an hourglass over the full turn cycle.
+    // The sweep completes right as the bomb triggers (explosion plays), so the
+    // visual countdown aligns with the actual fuse timing.
     let clockGraphics: Phaser.GameObjects.Graphics | null = null;
     let clockTween: Phaser.Tweens.Tween | null = null;
-    const clockRadius = ts * 0.45;
+    const clockRadius = ts * 0.5;
     if (bomb.fuseRemaining > 0) {
       clockGraphics = this.scene.add.graphics();
       clockGraphics.setPosition(cx, cy);
       clockGraphics.setAlpha(0);
       this.layer.add(clockGraphics);
 
+      // Full turn cycle = input phase + transition phase
+      const turnMs = (BALANCE.match.inputPhaseSeconds + BALANCE.match.transitionPhaseSeconds) * 1000;
+
       // Outer ring for multi-turn indicator
       if (bomb.fuseRemaining > 1) {
-        clockGraphics.lineStyle(2, 0xffffff, 0.3);
-        clockGraphics.strokeCircle(0, 0, clockRadius + 3);
+        clockGraphics.lineStyle(3, 0xffffff, 0.4);
+        clockGraphics.strokeCircle(0, 0, clockRadius + 4);
       }
 
-      // Animated sweep: full circle → empty over the transition phase
+      // Animated sweep: full circle → empty over one full turn, repeats per fuse
       const counter = { t: 0 };
       clockTween = this.scene.tweens.add({
         targets: counter,
         t: 1,
-        duration: BALANCE.match.transitionPhaseSeconds * 1000,
+        duration: turnMs,
         repeat: bomb.fuseRemaining - 1,
         onUpdate: () => {
           clockGraphics!.clear();
           // Outer ring redraw for multi-turn
           if (bomb.fuseRemaining > 1) {
-            clockGraphics!.lineStyle(2, 0xffffff, 0.3);
-            clockGraphics!.strokeCircle(0, 0, clockRadius + 3);
+            clockGraphics!.lineStyle(3, 0xffffff, 0.4);
+            clockGraphics!.strokeCircle(0, 0, clockRadius + 4);
           }
-          // Sweeping arc: starts full, empties clockwise
+          // Sweeping arc: starts full, empties clockwise — thick bright line
           const endAngle = -Math.PI / 2 + (1 - counter.t) * Math.PI * 2;
-          clockGraphics!.lineStyle(2, 0xffffff, 0.7);
+          clockGraphics!.lineStyle(3, 0xffcc44, 0.9);
           clockGraphics!.beginPath();
           clockGraphics!.arc(0, 0, clockRadius, -Math.PI / 2, endAngle, true);
           clockGraphics!.strokePath();

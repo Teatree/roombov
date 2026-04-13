@@ -424,6 +424,11 @@ export class MatchRoom {
         profile.equippedBombermanId = profile.ownedBombermen.length > 0 ? profile.ownedBombermen[0].id : null;
       }
       this.playerStore.save(profile).catch(() => {});
+      // Push updated profile to the client so ProfileStore reflects the death
+      if (participant.socketId) {
+        const sock = this.io.sockets.sockets.get(participant.socketId);
+        if (sock) sock.emit('profile', { profile });
+      }
     }
 
     this.io.to(this.id).emit('match_state', { state: this.state });

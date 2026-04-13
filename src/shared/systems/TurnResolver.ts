@@ -335,6 +335,14 @@ export function resolveTurn(
       bomb.fuseRemaining -= 1;
     }
   }
+  // Ender pearls resolve first — teleport the thrower out of danger
+  // before any explosions deal damage. Without this, a player who throws
+  // a pearl the same turn a bomb kills them would die before teleporting.
+  toResolve.sort((a, b) => {
+    const aP = a.type === 'ender_pearl' ? 0 : 1;
+    const bP = b.type === 'ender_pearl' ? 0 : 1;
+    return aP - bP;
+  });
 
   while (toResolve.length > 0) {
     const bomb = toResolve.shift()!;

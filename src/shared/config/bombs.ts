@@ -27,7 +27,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     name: 'Delay Bomb',
     fuseTurns: 1,
     behavior: { kind: 'explode', shape: { kind: 'plus', radius: 2 } },
-    price: 20,
+    price: 10,
     description: '+ pattern, radius 2. Explodes next turn.',
   },
   delay_big: {
@@ -35,7 +35,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     name: 'Delay Bomb Big',
     fuseTurns: 1,
     behavior: { kind: 'explode', shape: { kind: 'plus', radius: 3 } },
-    price: 35,
+    price: 25,
     description: '+ pattern, radius 3. Explodes next turn.',
   },
   delay_tricky: {
@@ -51,7 +51,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     name: 'Contact Bomb',
     fuseTurns: 0,
     behavior: { kind: 'explode', shape: { kind: 'plus', radius: 1 } },
-    price: 30,
+    price: 100,
     description: '+ pattern, radius 1. Explodes on impact.',
   },
   banana: {
@@ -70,7 +70,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
       ],
       childType: 'banana_child',
     },
-    price: 45,
+    price: 50,
     description: 'Lands, waits 1 turn, scatters 4 sub-bombs diagonally; each explodes next turn.',
   },
   banana_child: {
@@ -86,7 +86,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     name: 'Flare',
     fuseTurns: 0,
     behavior: { kind: 'light', shape: { kind: 'circle', radius: 4 }, durationTurns: 3 },
-    price: 15,
+    price: 25,
     description: 'Lights up a 9x9 area for 3 turns. No damage.',
   },
   molotov: {
@@ -94,7 +94,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     name: 'Molotov',
     fuseTurns: 0,
     behavior: { kind: 'fire', shape: { kind: 'plus', radius: 1 }, durationTurns: 2 },
-    price: 40,
+    price: 150,
     description: 'Sets a + pattern (radius 1) on fire for 2 turns. Deals damage on landing and each turn.',
   },
   delay_wide: {
@@ -102,7 +102,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     name: 'Wide Delay Bomb',
     fuseTurns: 1,
     behavior: { kind: 'explode', shape: { kind: 'circle', radius: 1 } },
-    price: 30,
+    price: 50,
     description: 'Hits every tile around the landing tile (3x3). Explodes next turn.',
   },
   ender_pearl: {
@@ -110,7 +110,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     name: 'Ender Pearl',
     fuseTurns: 0,
     behavior: { kind: 'teleport' },
-    price: 50,
+    price: 100,
     description: 'Teleports you to the landing tile on contact. Shifts to nearest floor if blocked.',
   },
 };

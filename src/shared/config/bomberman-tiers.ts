@@ -19,6 +19,8 @@ import type { BombermanTier } from '../types/bomberman.ts';
 export interface TierConfig {
   /** How many bomb units (total, across the 4 slots) the Bomberman starts with. */
   totalBombs: number;
+  /** Max number of unique bomb types (slots used). 1-4. */
+  maxUniqueSlots: number;
   /** Price range in coins (inclusive). Rounded to the nearest 5. */
   priceRange: [number, number];
   /**
@@ -30,48 +32,54 @@ export interface TierConfig {
 
 export const TIER_CONFIG: Record<BombermanTier, TierConfig> = {
   free: {
-    totalBombs: 7,
+    /** 3 unique slots, 10 bombs total */
+    totalBombs: 10,
+    maxUniqueSlots: 3,
     priceRange: [0, 0],
     weights: {
-      delay: 5,
-      delay_big: 1,
-      delay_wide: 2,
-      delay_tricky: 3,
-      contact: 3,
-      banana: 1,
-      flare: 4,
-      molotov: 1,
-      ender_pearl: 1,
+      delay: 50,
+      delay_big: 50,
+      delay_wide: 50,
+      delay_tricky: 50,
+      contact: 5,
+      banana: 25,
+      flare: 100,
+      molotov: 5,
+      ender_pearl: 25,
     },
   },
   paid: {
-    totalBombs: 10,
+    /** 4 unique slots, 14 bombs total */
+    totalBombs: 14,
+    maxUniqueSlots: 4,
     priceRange: [100, 200],
     weights: {
-      delay: 4,
-      delay_big: 3,
-      delay_wide: 3,
-      delay_tricky: 3,
-      contact: 4,
-      banana: 2,
-      flare: 3,
-      molotov: 3,
-      ender_pearl: 2,
+      delay: 50,
+      delay_big: 50,
+      delay_wide: 50,
+      delay_tricky: 50,
+      contact: 10,
+      banana: 25,
+      flare: 100,
+      molotov: 10,
+      ender_pearl: 25,
     },
   },
   paid_expensive: {
-    totalBombs: 13,
+    /** 4 unique slots, 16 bombs total */
+    totalBombs: 16,
+    maxUniqueSlots: 4,
     priceRange: [250, 300],
     weights: {
-      delay: 3,
-      delay_big: 4,
-      delay_wide: 3,
-      delay_tricky: 3,
-      contact: 4,
-      banana: 4,
-      flare: 2,
-      molotov: 4,
-      ender_pearl: 3,
+      delay: 50,
+      delay_big: 50,
+      delay_wide: 50,
+      delay_tricky: 50,
+      contact: 20,
+      banana: 25,
+      flare: 100,
+      molotov: 20,
+      ender_pearl: 25,
     },
   },
 };

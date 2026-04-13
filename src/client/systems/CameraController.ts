@@ -37,10 +37,16 @@ export class CameraController {
     this.camera.setBounds(-padX, -padY, worldWidth + padX * 2, worldHeight + padY * 2);
     this.camera.setZoom(2.5);
 
-    // Start centered on the given world pixel coords (player spawn)
+    // Start centered on the given world pixel coords (player spawn).
+    // Force immediate snap via scrollTo — centerOn alone may not stick
+    // before the first render frame.
     this.targetX = startX ?? worldWidth / 2;
     this.targetY = startY ?? worldHeight / 2;
     this.camera.centerOn(this.targetX, this.targetY);
+    const halfW = this.camera.width / (2 * this.camera.zoom);
+    const halfH = this.camera.height / (2 * this.camera.zoom);
+    this.camera.scrollX = this.targetX - halfW;
+    this.camera.scrollY = this.targetY - halfH;
 
     this.setupInput();
     this.preventContextMenu();

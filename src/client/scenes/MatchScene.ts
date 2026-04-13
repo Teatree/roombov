@@ -459,6 +459,7 @@ export class MatchScene extends Phaser.Scene {
         const spawnMe = this.myBomberman();
         const startX = spawnMe ? spawnMe.x * ts + ts / 2 : bounds.width / 2;
         const startY = spawnMe ? spawnMe.y * ts + ts / 2 : bounds.height / 2;
+        console.log(`[MatchScene] camera init: spawn=(${spawnMe?.x},${spawnMe?.y}) startPx=(${startX},${startY}) bounds=(${bounds.width},${bounds.height})`);
         this.cameraController = new CameraController(this, bounds.width, bounds.height, startX, startY);
       }
     } catch (err) {

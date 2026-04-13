@@ -1,40 +1,43 @@
 {
   "id": "p_3a9ad8b22613",
   "createdAt": 1775946762703,
-  "updatedAt": 1776117297769,
-  "coins": 1121,
+  "updatedAt": 1776122331593,
+  "coins": 1468,
   "ownedBombermen": [
     {
-      "id": "owned_p_3a9ad8b22613_1776112036397_tbck",
-      "name": "McGrath",
+      "id": "owned_p_3a9ad8b22613_1776122139962_dmwu",
+      "name": "Connolly",
       "tier": "free",
       "colors": {
-        "shirt": 4380599,
-        "pants": 2656884,
-        "hair": 9057458
+        "shirt": 4380493,
+        "pants": 2656839,
+        "hair": 11678825
       },
-      "tint": 12645519,
+      "tint": 12383359,
       "inventory": {
         "slots": [
           {
-            "type": "flare",
-            "count": 3
-          },
-          {
             "type": "delay_tricky",
-            "count": 2
+            "count": 5
           },
           {
             "type": "delay_wide",
-            "count": 2
+            "count": 5
           },
-          null
+          {
+            "type": "flare",
+            "count": 5
+          },
+          {
+            "type": "contact",
+            "count": 3
+          }
         ]
       },
-      "purchasedAt": 1776112036397,
-      "sourceTemplateId": "cycle_1776112028716_1_free"
+      "purchasedAt": 1776122139962,
+      "sourceTemplateId": "cycle_1776122090247_1_free"
     }
   ],
-  "equippedBombermanId": "owned_p_3a9ad8b22613_1776112036397_tbck",
+  "equippedBombermanId": "owned_p_3a9ad8b22613_1776122139962_dmwu",
   "bombStockpile": {}
 }
