@@ -14,14 +14,14 @@ export const BALANCE = {
     visibleMatches: 3,
     matchIntervalSeconds: 3,
     // Dev: short countdown for fast iteration. Bump back up before shipping.
-    countdownDuration: 15,
+    countdownDuration: 16,
     maxPlayersPerMatch: 4,
     // Dev: allow solo matches so you can test controls without a second tab.
     // Raise back to 2 before shipping.
     minPlayersToStart: 1,
   },
   match: {
-    turnLimit: 150,
+    turnLimit: 250,
     turnsLeftWarning: 10,
     inputPhaseSeconds: 2,
     transitionPhaseSeconds: 2,
@@ -52,7 +52,7 @@ export const BALANCE = {
   },
   bots: {
     /** Max bots that can be added to a single match. */
-    maxPerMatch: 2,
+    maxPerMatch: 0,
     /** Only add bots if at least this many real players joined. */
     minPlayersForBots: 1,
     /** Fill the match up to this many total players (real + bot). */
