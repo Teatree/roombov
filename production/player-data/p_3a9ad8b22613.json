@@ -1,43 +1,9 @@
 {
   "id": "p_3a9ad8b22613",
   "createdAt": 1775946762703,
-  "updatedAt": 1776122331593,
+  "updatedAt": 1776199269491,
   "coins": 1468,
-  "ownedBombermen": [
-    {
-      "id": "owned_p_3a9ad8b22613_1776122139962_dmwu",
-      "name": "Connolly",
-      "tier": "free",
-      "colors": {
-        "shirt": 4380493,
-        "pants": 2656839,
-        "hair": 11678825
-      },
-      "tint": 12383359,
-      "inventory": {
-        "slots": [
-          {
-            "type": "delay_tricky",
-            "count": 5
-          },
-          {
-            "type": "delay_wide",
-            "count": 5
-          },
-          {
-            "type": "flare",
-            "count": 5
-          },
-          {
-            "type": "contact",
-            "count": 3
-          }
-        ]
-      },
-      "purchasedAt": 1776122139962,
-      "sourceTemplateId": "cycle_1776122090247_1_free"
-    }
-  ],
-  "equippedBombermanId": "owned_p_3a9ad8b22613_1776122139962_dmwu",
+  "ownedBombermen": [],
+  "equippedBombermanId": null,
   "bombStockpile": {}
 }

@@ -71,12 +71,19 @@ interface BombermanSpriteEntry {
 export class BombermanSpriteSystem {
   private scene: Phaser.Scene;
   private layer: Phaser.GameObjects.Container;
+  private corpseLayer: Phaser.GameObjects.Container;
   private tileSize: number;
   private entries = new Map<string, BombermanSpriteEntry>();
 
-  constructor(scene: Phaser.Scene, layer: Phaser.GameObjects.Container, tileSize: number) {
+  constructor(
+    scene: Phaser.Scene,
+    layer: Phaser.GameObjects.Container,
+    corpseLayer: Phaser.GameObjects.Container,
+    tileSize: number,
+  ) {
     this.scene = scene;
     this.layer = layer;
+    this.corpseLayer = corpseLayer;
     this.tileSize = tileSize;
   }
 
@@ -258,9 +265,11 @@ export class BombermanSpriteSystem {
 
     this.setAnim(entry, 'death');
     if (entry.aimShadow) entry.aimShadow.setVisible(false);
-    // Dead sprites render below living ones within the same container
-    entry.sprite.setDepth(0);
-    entry.hpPips.setDepth(0);
+    // Move corpse sprite to the dedicated corpseLayer (spec: bombs render above corpses).
+    this.layer.remove(entry.sprite);
+    this.layer.remove(entry.hpPips);
+    this.corpseLayer.add(entry.sprite);
+    this.corpseLayer.add(entry.hpPips);
     return deathAnimationDurationMs();
   }
 
@@ -281,13 +290,12 @@ export class BombermanSpriteSystem {
       }
       this.applyVisualPosition(entry);
     }
-    // Sort container children so alive sprites (depth 1) render above dead corpses (depth 0)
-    this.layer.sort('depth');
   }
 
-  /** Make the HUD camera ignore every object in this system's layer. */
+  /** Make the HUD camera ignore every object in this system's layers. */
   ignoreFromCamera(camera: Phaser.Cameras.Scene2D.Camera): void {
     camera.ignore(this.layer);
+    camera.ignore(this.corpseLayer);
   }
 
   destroy(): void {
@@ -308,7 +316,6 @@ export class BombermanSpriteSystem {
     // Native scale per plan — the sprite visually overflows the tile on purpose
     sprite.setScale(1);
     sprite.setTint(b.tint);
-    sprite.setDepth(1); // alive sprites render above dead corpses (depth 0)
     sprite.play('bomber_idle_down');
     this.layer.add(sprite);
 

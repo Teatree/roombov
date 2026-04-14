@@ -12,9 +12,9 @@ export const BALANCE = {
   },
   lobby: {
     visibleMatches: 3,
-    matchIntervalSeconds: 10,
+    matchIntervalSeconds: 3,
     // Dev: short countdown for fast iteration. Bump back up before shipping.
-    countdownDuration: 25,
+    countdownDuration: 5,
     maxPlayersPerMatch: 4,
     // Dev: allow solo matches so you can test controls without a second tab.
     // Raise back to 2 before shipping.
@@ -52,7 +52,7 @@ export const BALANCE = {
   },
   bots: {
     /** Max bots that can be added to a single match. */
-    maxPerMatch: 0,
+    maxPerMatch: 2,
     /** Only add bots if at least this many real players joined. */
     minPlayersForBots: 1,
     /** Fill the match up to this many total players (real + bot). */

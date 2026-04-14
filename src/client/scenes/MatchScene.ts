@@ -63,23 +63,33 @@ export class MatchScene extends Phaser.Scene {
   private hudCamera: Phaser.Cameras.Scene2D.Camera | null = null;
 
   // World-space display layers (draw order enforced by setDepth).
+  // Spec: top → bottom render order is
+  //   Explosion Burst > Bomberman (alive) > Bombs > Corpse > Blood >
+  //     Ender Pearl Decal > Scorch Decal > Chests > Doors/Hatches > Map
   // Depths:
   //   0   map (tilemap layers and tileset graphics)
-  //   15  escape hatch sprites
-  //   40  bombLayer (persistent bombs, throw arcs, fire, flare flames, fuse nums)
+  //   10  doors + escape hatch sprites
+  //   15  chests
+  //   20  scorchDecalLayer (explosion/burn scorch marks)
+  //   22  pearlDecalLayer (ender pearl teleport decals)
+  //   25  bloodDecalLayer (blood splatter)
+  //   28  corpseLayer (dead Bomberman sprites)
+  //   35  bombLayer (persistent bombs, throw arcs, fire, flare flames, fuse nums)
   //   50  fog of war overlay
-  //   38  decalLayer (scorch marks, blood — below bombs/fire so fire renders on top)
   //   60  path line
-  //   100 entitiesLayer (coin bags, pickups, bodies — pure rebuild-each-tick)
-  //   105 bombermanLayer (persistent animated Bomberman sprites + their overlays)
-  //   120 explosionLayer (shockwaves that must render through fog)
+  //   100 bombermanLayer (alive Bomberman sprites + overlays)
+  //   105 entitiesLayer (coin bags, pickups, bodies — pure rebuild-each-tick)
+  //   120 explosionLayer (shockwaves + ender pearl FROM puff, always through fog)
   //   150 highlights (aim/move targets)
   //   1000+ HUD
   private entitiesLayer!: Phaser.GameObjects.Container;
   private bombermanLayer!: Phaser.GameObjects.Container;
+  private corpseLayer!: Phaser.GameObjects.Container;
   private bombLayer!: Phaser.GameObjects.Container;
   private explosionLayer!: Phaser.GameObjects.Container;
-  private decalLayer!: Phaser.GameObjects.Container;
+  private scorchDecalLayer!: Phaser.GameObjects.Container;
+  private pearlDecalLayer!: Phaser.GameObjects.Container;
+  private bloodDecalLayer!: Phaser.GameObjects.Container;
   private effectsLayer!: Phaser.GameObjects.Container;
   private highlightGraphics!: Phaser.GameObjects.Graphics;
   private pathGraphics!: Phaser.GameObjects.Graphics;
@@ -239,17 +249,18 @@ export class MatchScene extends Phaser.Scene {
     // Bomberman animations (idempotent — first scene to call this wins).
     ensureBombermanAnims(this);
 
-    // Explicit depth stack
-    // Bomb layer is BELOW fog (depth 50) — placed bombs, throw arcs, fire
-    // tiles, flare flames and fuse numbers all hide in fog of war.
-    this.bombLayer = this.add.container(0, 0).setDepth(40);
-    // Decals sit ABOVE fog so all players see scorch marks left by any
-    // explosion (including through fog), but BELOW entities so Bombermen
-    // stand on top of them.
-    this.decalLayer = this.add.container(0, 0).setDepth(38);
-    this.entitiesLayer = this.add.container(0, 0).setDepth(100);
-    // Persistent Bomberman sprites + their overlays (HP pips, ring, aim shadow)
-    this.bombermanLayer = this.add.container(0, 0).setDepth(105);
+    // Explicit depth stack — see class-level comment for the full spec.
+    // Decals are split into 3 containers so blood > pearl > scorch ordering is enforced.
+    this.scorchDecalLayer = this.add.container(0, 0).setDepth(20);
+    this.pearlDecalLayer = this.add.container(0, 0).setDepth(22);
+    this.bloodDecalLayer = this.add.container(0, 0).setDepth(25);
+    // Corpses get their own layer so bombs (depth 35) render on top of them per spec.
+    this.corpseLayer = this.add.container(0, 0).setDepth(28);
+    // Bombs render above corpses/decals, below fog.
+    this.bombLayer = this.add.container(0, 0).setDepth(35);
+    // Alive Bombermen render above fog — managed visibility via setVisible.
+    this.bombermanLayer = this.add.container(0, 0).setDepth(100);
+    this.entitiesLayer = this.add.container(0, 0).setDepth(105);
     // Explosion layer is ABOVE fog — shockwaves always visible.
     this.explosionLayer = this.add.container(0, 0).setDepth(120);
     this.effectsLayer = this.add.container(0, 0).setDepth(150);
@@ -263,7 +274,11 @@ export class MatchScene extends Phaser.Scene {
     this.hudCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height, false, 'hud');
     this.hudCamera.setScroll(0, 0);
     // Tell the HUD camera to ignore all world-space containers
-    this.hudCamera.ignore([this.bombLayer, this.decalLayer, this.explosionLayer, this.entitiesLayer, this.bombermanLayer, this.effectsLayer, this.highlightGraphics, this.pathGraphics]);
+    this.hudCamera.ignore([
+      this.bombLayer, this.scorchDecalLayer, this.pearlDecalLayer, this.bloodDecalLayer,
+      this.corpseLayer, this.explosionLayer, this.entitiesLayer, this.bombermanLayer,
+      this.effectsLayer, this.highlightGraphics, this.pathGraphics,
+    ]);
 
     this.buildHud();
 
@@ -380,7 +395,7 @@ export class MatchScene extends Phaser.Scene {
             esc.y * mapTs + mapTs,
             'escape_hatch',
           );
-          sprite.setDepth(15);
+          sprite.setDepth(10);
           sprite.setOrigin(0.5, 1);
           sprite.play('hatch_closed');
           if (this.hudCamera) this.hudCamera.ignore(sprite);
@@ -397,7 +412,7 @@ export class MatchScene extends Phaser.Scene {
               chest.y * mapTs + mapTs,
               key,
             );
-            sprite.setDepth(46); // below fog (50) so darkest fog hides them
+            sprite.setDepth(15); // below decals per spec; fog overlay handles dim/hide
             sprite.setOrigin(0.5, 1);
             const opened = chest.opened;
             sprite.play(opened ? `${key}_open` : `${key}_closed`);
@@ -431,7 +446,7 @@ export class MatchScene extends Phaser.Scene {
               sy = (tiles[tiles.length - 1].y + 1) * mapTs + mapTs;
             }
             const sprite = this.add.sprite(sx, sy, 'double_doors', `${prefix}_0`);
-            sprite.setDepth(15);
+            sprite.setDepth(10);
             sprite.setOrigin(0.5, 1);
             sprite.play(door.opened ? `${animKey}_open` : `${animKey}_closed`);
             if (this.hudCamera) this.hudCamera.ignore(sprite);
@@ -450,9 +465,9 @@ export class MatchScene extends Phaser.Scene {
         this.fogRenderer = new FogRenderer(this, this.mapData, BALANCE.match.losRadius, 50);
         if (this.hudCamera) this.fogRenderer.ignoreFromCamera(this.hudCamera);
         this.bombRenderer?.destroy();
-        this.bombRenderer = new BombRenderer(this, this.bombLayer, this.explosionLayer, this.decalLayer, this.mapData.tileSize);
+        this.bombRenderer = new BombRenderer(this, this.bombLayer, this.explosionLayer, this.scorchDecalLayer, this.pearlDecalLayer, this.mapData.tileSize);
         this.bombermanSpriteSystem?.destroy();
-        this.bombermanSpriteSystem = new BombermanSpriteSystem(this, this.bombermanLayer, this.mapData.tileSize);
+        this.bombermanSpriteSystem = new BombermanSpriteSystem(this, this.bombermanLayer, this.corpseLayer, this.mapData.tileSize);
         if (this.hudCamera) this.bombermanSpriteSystem.ignoreFromCamera(this.hudCamera);
         const bounds = this.mapRenderer.getWorldBounds();
         const ts = this.mapData.tileSize;
@@ -724,7 +739,7 @@ export class MatchScene extends Phaser.Scene {
       this.time.delayedCall(halfTransitionMs, () => {
         // Snap the Bomberman sprite to the destination tile
         this.bombermanSpriteSystem?.applyTeleportEvent(playerId, toX, toY);
-        // Puff effects at origin and destination (on decalLayer = below fog)
+        // Puff effects at origin and destination (TO puff on pearlDecalLayer = RTS-fog gated)
         this.bombRenderer?.spawnTeleportPuff(fromX, fromY, puffDuration, true);  // FROM: above fog (visible like explosions)
         this.bombRenderer?.spawnTeleportPuff(toX, toY, puffDuration, false);  // TO: below fog (hidden)
       });
@@ -938,7 +953,7 @@ export class MatchScene extends Phaser.Scene {
       g.fillCircle(cx + (Math.random() - 0.5) * ts * 0.35, cy + (Math.random() - 0.5) * ts * 0.35, ts * 0.12);
       g.fillStyle(0x440505, 0.5);
       g.fillCircle(cx + (Math.random() - 0.5) * ts * 0.2, cy + (Math.random() - 0.5) * ts * 0.2, ts * 0.08);
-      this.decalLayer.add(g);
+      this.bloodDecalLayer.add(g);
     }
 
     // Explosion decals: only visible if tile is currently in LOS (RTS fog)

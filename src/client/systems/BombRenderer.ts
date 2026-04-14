@@ -31,11 +31,14 @@ export class BombRenderer {
    */
   private explosionLayer: Phaser.GameObjects.Container;
   /**
-   * Layer for persistent scorch marks left by explosions. Sits above fog
-   * (visible to all players even through fog of war) but below entities
-   * (Bombermen stand on top of decals).
+   * Layer for scorch/burn decals from explosions. Sits below pearl and blood
+   * decals per the layer spec.
    */
-  private decalLayer: Phaser.GameObjects.Container;
+  private scorchDecalLayer: Phaser.GameObjects.Container;
+  /**
+   * Layer for ender pearl teleport decals. Sits above scorch, below blood.
+   */
+  private pearlDecalLayer: Phaser.GameObjects.Container;
   private tileSize: number;
   private bombVisuals = new Map<string, BombVisual>();
   private fireVisuals = new Map<string, FireVisual>();
@@ -50,13 +53,15 @@ export class BombRenderer {
     scene: Phaser.Scene,
     layer: Phaser.GameObjects.Container,
     explosionLayer: Phaser.GameObjects.Container,
-    decalLayer: Phaser.GameObjects.Container,
+    scorchDecalLayer: Phaser.GameObjects.Container,
+    pearlDecalLayer: Phaser.GameObjects.Container,
     tileSize: number,
   ) {
     this.scene = scene;
     this.layer = layer;
     this.explosionLayer = explosionLayer;
-    this.decalLayer = decalLayer;
+    this.scorchDecalLayer = scorchDecalLayer;
+    this.pearlDecalLayer = pearlDecalLayer;
     this.tileSize = tileSize;
   }
 
@@ -259,8 +264,8 @@ export class BombRenderer {
 
   /**
    * Stamp a persistent scorch mark on a tile. First explosion wins — if a
-   * decal already exists on this tile, skip. The decal lives in decalLayer
-   * (above fog, below entities) so everyone sees it regardless of LOS.
+   * decal already exists on this tile, skip. The decal lives in scorchDecalLayer
+   * and is RTS-fog gated via updateDecalVisibility.
    */
   private stampDecal(type: BombType, tile: Tile): void {
     const key = `${tile.x},${tile.y}`;
@@ -270,7 +275,7 @@ export class BombRenderer {
     const cx = tile.x * ts + ts / 2;
     const cy = tile.y * ts + ts / 2;
     const g = this.scene.add.graphics();
-    this.decalLayer.add(g);
+    this.scorchDecalLayer.add(g);
 
     switch (type) {
       case 'rock':
@@ -680,7 +685,7 @@ export class BombRenderer {
   /**
    * Ender Pearl teleport puff — greenish-blue expanding cloud at a tile.
    * @param aboveFog — if true, renders on explosionLayer (visible through fog);
-   *   if false, renders on decalLayer (hidden by fog). FROM puff uses true,
+   *   if false, renders on pearlDecalLayer (RTS-fog gated). FROM puff uses true,
    *   TO puff uses false.
    */
   spawnTeleportPuff(tileX: number, tileY: number, durationMs: number, aboveFog = false): void {
@@ -689,7 +694,7 @@ export class BombRenderer {
     const cy = tileY * ts + ts / 2;
 
     const g = this.scene.add.graphics();
-    (aboveFog ? this.explosionLayer : this.decalLayer).add(g);
+    (aboveFog ? this.explosionLayer : this.pearlDecalLayer).add(g);
     this.scene.tweens.add({
       targets: g,
       duration: durationMs,
@@ -708,7 +713,7 @@ export class BombRenderer {
     });
 
     // A few sparkle particles on the same layer as the puff
-    const particleLayer = aboveFog ? this.explosionLayer : this.decalLayer;
+    const particleLayer = aboveFog ? this.explosionLayer : this.pearlDecalLayer;
     for (let i = 0; i < 6; i++) {
       const angle = Math.random() * Math.PI * 2;
       const dot = this.scene.add.graphics();
@@ -736,7 +741,7 @@ export class BombRenderer {
     const cx = tileX * ts + ts / 2;
     const cy = tileY * ts + ts / 2;
     const g = this.scene.add.graphics();
-    this.decalLayer.add(g);
+    this.pearlDecalLayer.add(g);
     // Teal outer ring
     g.fillStyle(0x115544, 0.6);
     g.fillCircle(cx, cy, ts * 0.35);
@@ -746,8 +751,6 @@ export class BombRenderer {
     // Bright center dot
     g.fillStyle(0x33aa88, 0.5);
     g.fillCircle(cx, cy, ts * 0.08);
-    // Render on top of other decals within the container
-    g.setDepth(1);
     this.decals.set(key, g);
   }
 
