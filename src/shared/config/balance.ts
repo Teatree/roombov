@@ -12,7 +12,7 @@ export const BALANCE = {
   },
   lobby: {
     visibleMatches: 3,
-    matchIntervalSeconds: 3,
+    matchIntervalSeconds: 10,
     // Dev: short countdown for fast iteration. Bump back up before shipping.
     countdownDuration: 25,
     maxPlayersPerMatch: 4,
