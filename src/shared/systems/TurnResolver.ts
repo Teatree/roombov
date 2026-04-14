@@ -504,8 +504,10 @@ export function resolveTurn(
   }
 
   // --- 9. Deaths ---
+  // Bombermen on escape tiles are immune to death this turn — if they reach
+  // the escape with 0 HP they still make it out alive.
   for (const b of state.bombermen) {
-    if (b.alive && b.hp <= 0) {
+    if (b.alive && b.hp <= 0 && !b.escaped) {
       b.alive = false;
       events.push({ kind: 'died', playerId: b.playerId, x: b.x, y: b.y, killerId: lastDamagedBy.get(b.playerId) ?? null });
       // Drop a body with current coins + inventory

@@ -14,7 +14,7 @@ export const BALANCE = {
     visibleMatches: 3,
     matchIntervalSeconds: 3,
     // Dev: short countdown for fast iteration. Bump back up before shipping.
-    countdownDuration: 16,
+    countdownDuration: 25,
     maxPlayersPerMatch: 4,
     // Dev: allow solo matches so you can test controls without a second tab.
     // Raise back to 2 before shipping.
