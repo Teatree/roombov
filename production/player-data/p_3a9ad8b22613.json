@@ -1,9 +1,43 @@
 {
   "id": "p_3a9ad8b22613",
   "createdAt": 1775946762703,
-  "updatedAt": 1776199269491,
-  "coins": 1468,
-  "ownedBombermen": [],
-  "equippedBombermanId": null,
+  "updatedAt": 1776380918367,
+  "coins": 1978,
+  "ownedBombermen": [
+    {
+      "id": "owned_p_3a9ad8b22613_1776202972053_g7gn",
+      "name": "Nolan",
+      "tier": "free",
+      "colors": {
+        "shirt": 4380623,
+        "pants": 6826122,
+        "hair": 3453500
+      },
+      "tint": 13797361,
+      "inventory": {
+        "slots": [
+          {
+            "type": "delay_wide",
+            "count": 3
+          },
+          {
+            "type": "flare",
+            "count": 5
+          },
+          {
+            "type": "delay",
+            "count": 3
+          },
+          {
+            "type": "ender_pearl",
+            "count": 2
+          }
+        ]
+      },
+      "purchasedAt": 1776202972053,
+      "sourceTemplateId": "cycle_1776202971181_1_free"
+    }
+  ],
+  "equippedBombermanId": "owned_p_3a9ad8b22613_1776202972053_g7gn",
   "bombStockpile": {}
 }

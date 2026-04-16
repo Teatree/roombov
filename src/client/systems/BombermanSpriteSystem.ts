@@ -66,6 +66,8 @@ interface BombermanSpriteEntry {
   resumeAfter: AnimState;
   /** Facing to restore when a throw anim resumes to walk (so the walk cycle goes back to the move direction). */
   preThrowFacing: Facing;
+  /** Wall-clock time at which this escaped Bomberman should be destroyed. 0 means not pending. */
+  escapeDestroyAt: number;
 }
 
 export class BombermanSpriteSystem {
@@ -116,7 +118,19 @@ export class BombermanSpriteSystem {
   ): void {
     const seen = new Set<string>();
     for (const b of state.bombermen) {
-      if (b.escaped) continue;
+      if (b.escaped) {
+        // Don't destroy immediately — let the walk lerp finish so the sprite
+        // visually reaches the escape hatch before disappearing. tick() will
+        // destroy once the grace window has passed AND the lerp is done.
+        const existing = this.entries.get(b.playerId);
+        if (existing) {
+          seen.add(b.playerId);
+          if (existing.escapeDestroyAt === 0) {
+            existing.escapeDestroyAt = this.scene.time.now + BALANCE.match.transitionPhaseSeconds * 1000;
+          }
+        }
+        continue;
+      }
       seen.add(b.playerId);
       let entry = this.entries.get(b.playerId);
       if (!entry) {
@@ -275,7 +289,8 @@ export class BombermanSpriteSystem {
 
   /** Per-frame tick from MatchScene.update. Advances lerps and repositions overlays. */
   tick(nowMs: number): void {
-    for (const entry of this.entries.values()) {
+    const toDestroy: string[] = [];
+    for (const [playerId, entry] of this.entries) {
       if (entry.lerpEndMs > 0 && nowMs < entry.lerpEndMs) {
         const total = entry.lerpEndMs - entry.lerpStartMs;
         const t = Math.min(1, Math.max(0, (nowMs - entry.lerpStartMs) / total));
@@ -289,6 +304,18 @@ export class BombermanSpriteSystem {
         if (entry.animState === 'walk') this.setAnim(entry, 'idle');
       }
       this.applyVisualPosition(entry);
+      // Escape: destroy only after the walk lerp has finished AND the grace
+      // window has passed, so the sprite is seen reaching the hatch.
+      if (entry.escapeDestroyAt > 0 && nowMs >= entry.escapeDestroyAt && entry.lerpEndMs === 0) {
+        toDestroy.push(playerId);
+      }
+    }
+    for (const pid of toDestroy) {
+      const e = this.entries.get(pid);
+      if (e) {
+        this.destroyEntry(e);
+        this.entries.delete(pid);
+      }
     }
   }
 
@@ -353,6 +380,7 @@ export class BombermanSpriteSystem {
       lerpEndMs: 0,
       resumeAfter: 'idle',
       preThrowFacing: 'down',
+      escapeDestroyAt: 0,
     };
     this.drawHpPips(entry);
     this.applyVisualPosition(entry);

@@ -639,9 +639,9 @@ export class MatchScene extends Phaser.Scene {
     // Each lerp lasts the full transition phase so the sprite physically
     // walks from old tile to new tile in sync with the resolution timer.
     // Group moved events by player — rush moves produce 2 events for one player.
-    // Chain them over the first 70% of the transition so the walk completes
-    // before the turn ends, making it clear whether a Bomberman escaped a blast.
-    const moveDurationMs = BALANCE.match.transitionPhaseSeconds * 1000 * 0.7;
+    // Chain them over the first 50% of the transition so walks finish before
+    // explosions kick in at the halfway mark.
+    const moveDurationMs = BALANCE.match.transitionPhaseSeconds * 1000 * 0.5;
     const movesByPlayer = new Map<string, Array<{ fromX: number; fromY: number; toX: number; toY: number }>>();
     for (const ev of events) {
       if (ev.kind !== 'moved') continue;
@@ -701,16 +701,16 @@ export class MatchScene extends Phaser.Scene {
       }
     }
 
-    // Second pass: explosions. The visual burst starts at the halfway point
-    // of the transition phase and runs until the end — animations are
-    // stretched to fill the remaining window so the boom "fills in" the tail
-    // of the turn. Decals only stamp after the burst finishes (end of turn).
-    // For thrown bombs whose arc flight exceeds the halfway mark, the
-    // explosion starts when the bomb lands instead, which may compress the
-    // burst window.
+    // Second pass: explosions. Walks finish at 50% of the transition; the
+    // burst starts at that halfway mark. The animation is long enough to
+    // linger PAST the transition end for impact — explosions aren't clipped
+    // by the turn boundary. For thrown bombs whose arc exceeds 50%, the
+    // explosion starts when the bomb lands instead.
     const transitionMs = BALANCE.match.transitionPhaseSeconds * 1000;
-    // Explosions start at 30% of transition for a longer, more visible burst
-    const halfTransitionMs = Math.round(transitionMs * 0.3);
+    const explosionStartMs = Math.round(transitionMs * 0.5);
+    // Burst lasts ~70% of a transition — with a 50% start, it ends at ~120%
+    // of the transition, which is the intended linger.
+    const burstDurationMs = Math.round(transitionMs * 0.7);
     for (const ev of events) {
       if (ev.kind !== 'bomb_triggered') continue;
       const type = ev.type as BombType;
@@ -719,9 +719,8 @@ export class MatchScene extends Phaser.Scene {
       const centerY = ev.y as number;
       const bombId = ev.bombId as string;
       const arcDelay = arcDurationByBombId.get(bombId) ?? 0;
-      const startDelay = Math.max(arcDelay, halfTransitionMs);
-      const animDuration = Math.max(100, transitionMs - startDelay);
-      this.bombRenderer.spawnExplosion(type, centerX, centerY, tiles, startDelay, animDuration);
+      const startDelay = Math.max(arcDelay, explosionStartMs);
+      this.bombRenderer.spawnExplosion(type, centerX, centerY, tiles, startDelay, burstDurationMs);
     }
 
     // Teleport pass: Ender Pearl teleports the thrower at the halfway point
@@ -734,9 +733,9 @@ export class MatchScene extends Phaser.Scene {
       const fromY = ev.fromY as number;
       const toX = ev.toX as number;
       const toY = ev.toY as number;
-      const puffDuration = halfTransitionMs;
+      const puffDuration = explosionStartMs;
       // At the halfway point: snap sprite, play puffs at both ends
-      this.time.delayedCall(halfTransitionMs, () => {
+      this.time.delayedCall(explosionStartMs, () => {
         // Snap the Bomberman sprite to the destination tile
         this.bombermanSpriteSystem?.applyTeleportEvent(playerId, toX, toY);
         // Puff effects at origin and destination (TO puff on pearlDecalLayer = RTS-fog gated)
@@ -744,7 +743,7 @@ export class MatchScene extends Phaser.Scene {
         this.bombRenderer?.spawnTeleportPuff(toX, toY, puffDuration, false);  // TO: below fog (hidden)
       });
       // Stamp decals after the puff finishes (at the end of the transition)
-      this.time.delayedCall(halfTransitionMs + puffDuration, () => {
+      this.time.delayedCall(explosionStartMs + puffDuration, () => {
         this.bombRenderer?.stampTeleportDecal(fromX, fromY);
         this.bombRenderer?.stampTeleportDecal(toX, toY);
       });
@@ -908,14 +907,9 @@ export class MatchScene extends Phaser.Scene {
     // Sync chest open state from server → local sprite permanence
     this.updateChests();
 
-    // Dropped bodies — only visible if discovered by player
-    for (const body of this.state.bodies) {
-      if (!rtsVisible(`body_${body.id}`, body.x, body.y)) continue;
-      const g = this.add.graphics();
-      g.fillStyle(0x552222, 0.8);
-      g.fillRect(body.x * ts + 4, body.y * ts + ts - 10, ts - 8, 6);
-      this.entitiesLayer.add(g);
-    }
+    // Dropped bodies no longer need a separate indicator — the corpse sprite
+    // in corpseLayer already communicates "something is here to loot". The
+    // loot panel surfaces the contents when the local player stands on one.
 
     // Bombermen are no longer drawn here — BombermanSpriteSystem owns the
     // persistent animated sprites, HP pips, self-ring and aim shadow. They
@@ -1036,7 +1030,15 @@ export class MatchScene extends Phaser.Scene {
         cs.sprite.setVisible(true);
       } else if (this.fogRenderer?.isDiscovered(cs.x, cs.y) && this.knownEntities.has(entityId)) {
         cs.sprite.setVisible(true);
-        // In seen-dim: don't update animations (stale visual)
+        // In seen-dim: snap any in-progress transition to its rest frame so
+        // the user doesn't see the tail end of opening/closing animations.
+        if (cs.state === 'opening') {
+          cs.state = 'open';
+          cs.sprite.play(`${key}_open`);
+        } else if (cs.state === 'closing') {
+          cs.state = 'closed';
+          cs.sprite.play(`${key}_closed`);
+        }
         continue;
       } else {
         cs.sprite.setVisible(false);
@@ -1107,7 +1109,15 @@ export class MatchScene extends Phaser.Scene {
         const anyDiscovered = ds.tiles.some(t => this.fogRenderer?.isDiscovered(t.x, t.y));
         if (anyDiscovered && this.knownEntities.has(entityId)) {
           ds.sprite.setVisible(true);
-          continue; // stale — don't update animation
+          // In seen-dim: snap any in-progress opening animation to its final
+          // rest frame. Phaser keeps playing frame-by-frame once play() is
+          // called, so a door mid-open when the player walks away would keep
+          // animating visibly through the dim fog without this.
+          if (ds.state === 'opening') {
+            ds.state = 'open';
+            ds.sprite.play(`${animKey}_open`);
+          }
+          continue;
         }
         ds.sprite.setVisible(false);
         continue;
