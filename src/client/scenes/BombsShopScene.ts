@@ -7,7 +7,7 @@ import { BombermanSelector } from '../systems/BombermanSelector.ts';
 import type { BombType } from '@shared/types/bombs.ts';
 import type { BombsCatalogEntry } from '@shared/types/messages.ts';
 import { BALANCE } from '@shared/config/balance.ts';
-import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
+import { preloadBombIcons, bombIconFrame, createBombLabelOverlay } from '../systems/BombIcons.ts';
 
 /**
  * Bombs Shop scene.
@@ -151,6 +151,8 @@ export class BombsShopScene extends Phaser.Scene {
       const icon = this.add.image(col1X + 22, y + 19, 'bomb_icons', bombIconFrame(entry.type))
         .setDisplaySize(28, 28);
       catalogCol.add(icon);
+      const catLabel = createBombLabelOverlay(this, col1X + 22, y + 19, entry.type, 28);
+      if (catLabel) catalogCol.add(catLabel);
 
       catalogCol.add(this.add.text(col1X + 42, y + 8, entry.name, {
         fontSize: '13px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
@@ -207,6 +209,8 @@ export class BombsShopScene extends Phaser.Scene {
         const sIcon = this.add.image(col2X + 22, y + 17, 'bomb_icons', bombIconFrame(type))
           .setDisplaySize(24, 24);
         stockCol.add(sIcon);
+        const stockLabel = createBombLabelOverlay(this, col2X + 22, y + 17, type, 24);
+        if (stockLabel) stockCol.add(stockLabel);
         const label = this.add.text(col2X + 40, y + 17, `${name}  x${count}`, {
           fontSize: '13px', color: '#ffffff', fontFamily: 'monospace',
         }).setOrigin(0, 0.5);
@@ -273,6 +277,8 @@ export class BombsShopScene extends Phaser.Scene {
           const eqIcon = this.add.image(col3X + 26, y + slotH / 2, 'bomb_icons', bombIconFrame(slot.type))
             .setDisplaySize(28, 28);
           eqCol.add(eqIcon);
+          const eqLabel = createBombLabelOverlay(this, col3X + 26, y + slotH / 2, slot.type, 28);
+          if (eqLabel) eqCol.add(eqLabel);
           eqCol.add(this.add.text(col3X + 46, y + 10, `SLOT ${slotIdx + 1}: ${name}`, {
             fontSize: '12px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
           }));
@@ -280,11 +286,31 @@ export class BombsShopScene extends Phaser.Scene {
             fontSize: '11px', color: '#888888', fontFamily: 'monospace',
           }));
 
+          // IMPORTANT: create the whole-slot equip-click zone FIRST so the
+          // [UNEQUIP] button added after it wins input priority. Previously
+          // the zone was added last and intercepted unequip clicks,
+          // emitting equip_bomb for the same slot instead of unequipping.
+          if (this.selectedStockpile) {
+            const selected = this.selectedStockpile;
+            const hit = this.add.zone(col3X, y, colWidth, slotH).setOrigin(0, 0);
+            hit.setInteractive({ useHandCursor: true });
+            hit.on('pointerdown', () => {
+              NetworkManager.track('equip_bomb', 'profile');
+              NetworkManager.getSocket().emit('equip_bomb', {
+                type: selected,
+                slotIndex: slotIdx,
+                quantity: BALANCE.match.bombSlotStackLimit,
+              });
+            });
+            eqCol.add(hit);
+          }
+
           const unBtn = this.add.text(col3X + colWidth - 10, y + slotH / 2, '[ UNEQUIP ]', {
             fontSize: '10px', color: '#ff8844', fontFamily: 'monospace',
             backgroundColor: '#221a2e', padding: { x: 6, y: 3 },
           }).setOrigin(1, 0.5).setInteractive({ useHandCursor: true });
-          unBtn.on('pointerdown', () => {
+          unBtn.on('pointerdown', (_p: Phaser.Input.Pointer, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
+            ev.stopPropagation();
             NetworkManager.track('unequip_bomb', 'profile');
             NetworkManager.getSocket().emit('unequip_bomb', { slotIndex: slotIdx });
           });
@@ -293,22 +319,23 @@ export class BombsShopScene extends Phaser.Scene {
           eqCol.add(this.add.text(col3X + 10, y + slotH / 2, `SLOT ${slotIdx + 1}: empty`, {
             fontSize: '12px', color: '#666', fontFamily: 'monospace',
           }).setOrigin(0, 0.5));
-        }
 
-        // Whole slot is clickable for equip when a stockpile bomb is selected
-        if (this.selectedStockpile) {
-          const selected = this.selectedStockpile;
-          const hit = this.add.zone(col3X, y, colWidth, slotH).setOrigin(0, 0);
-          hit.setInteractive({ useHandCursor: true });
-          hit.on('pointerdown', () => {
-            NetworkManager.track('equip_bomb', 'profile');
-            NetworkManager.getSocket().emit('equip_bomb', {
-              type: selected,
-              slotIndex: slotIdx,
-              quantity: BALANCE.match.bombSlotStackLimit,
+          // Whole slot is clickable for equip when a stockpile bomb is
+          // selected AND the slot is empty.
+          if (this.selectedStockpile) {
+            const selected = this.selectedStockpile;
+            const hit = this.add.zone(col3X, y, colWidth, slotH).setOrigin(0, 0);
+            hit.setInteractive({ useHandCursor: true });
+            hit.on('pointerdown', () => {
+              NetworkManager.track('equip_bomb', 'profile');
+              NetworkManager.getSocket().emit('equip_bomb', {
+                type: selected,
+                slotIndex: slotIdx,
+                quantity: BALANCE.match.bombSlotStackLimit,
+              });
             });
-          });
-          eqCol.add(hit);
+            eqCol.add(hit);
+          }
         }
       }
 

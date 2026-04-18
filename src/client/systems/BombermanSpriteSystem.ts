@@ -89,6 +89,9 @@ interface BombermanSpriteEntry {
   rushActive: boolean;
   /** Which char1/char2/char3 sprite sheet this Bomberman uses. */
   character: CharacterVariant;
+  /** Stun indicator icon above the bomberman's head. Shown to all players
+   *  whenever the bomberman has the `stunned` status effect. */
+  stunIcon: Phaser.GameObjects.Graphics;
 }
 
 export class BombermanSpriteSystem {
@@ -137,6 +140,14 @@ export class BombermanSpriteSystem {
     isEnemyVisibleNow: (x: number, y: number) => boolean,
     isCorpseVisible: (playerId: string, x: number, y: number) => boolean,
   ): void {
+    // Precompute smoke cloud tiles once per sync — bombermen on any smoke
+    // tile become invisible to enemies (only the owner sees themselves at
+    // reduced opacity). Cheap set lookup below.
+    const smokedTiles = new Set<string>();
+    for (const c of state.smokeClouds ?? []) {
+      for (const t of c.tiles) smokedTiles.add(`${t.x},${t.y}`);
+    }
+    const isSmoked = (x: number, y: number): boolean => smokedTiles.has(`${x},${y}`);
     const seen = new Set<string>();
     for (const b of state.bombermen) {
       if (b.escaped) {
@@ -170,18 +181,35 @@ export class BombermanSpriteSystem {
       const isMe = b.playerId === myPlayerId;
       let visible: boolean;
       let dimmed = false;
+      let alpha = 1;
       if (isMe) {
         visible = true;
+        // Owner inside their own smoke renders at reduced opacity so they
+        // see themselves but feel submerged in the cloud.
+        if (isSmoked(b.x, b.y)) alpha = 0.65;
       } else if (!b.alive || entry.animState === 'death') {
         visible = isCorpseVisible(b.playerId, b.x, b.y);
         // Dimmed if visible but NOT in direct LOS (i.e. in seen-dim)
         if (visible && !isEnemyVisibleNow(b.x, b.y)) dimmed = true;
       } else {
         visible = isEnemyVisibleNow(b.x, b.y);
+        // Enemies inside any smoke cloud are fully invisible to other
+        // players — the smoke masks them entirely (spec: "other Bomberman
+        // become straight up invisible").
+        if (isSmoked(b.x, b.y)) visible = false;
       }
       entry.sprite.setVisible(visible);
-      entry.sprite.setAlpha(dimmed ? CORPSE_SEEN_DIM_ALPHA : 1);
+      entry.sprite.setAlpha(dimmed ? CORPSE_SEEN_DIM_ALPHA : alpha);
       entry.hpPips.setVisible(visible && !dimmed);
+
+      // Stun icon: visible for any bomberman with an active stunned status
+      // effect, as long as the sprite itself is visible to this client.
+      // Animates as a gentle bob so it reads as a distinct overlay.
+      const stunned = (b.statusEffects ?? []).some(
+        s => s.kind === 'stunned' && s.turnsRemaining > 0,
+      );
+      entry.stunIcon.setVisible(stunned && visible && !dimmed);
+      entry.stunIcon.setAlpha(dimmed ? CORPSE_SEEN_DIM_ALPHA : 1);
     }
     // Destroy entries for players no longer in state OR that escaped.
     // Keep dead Bombermen — their corpse persists.
@@ -382,12 +410,19 @@ export class BombermanSpriteSystem {
       this.layer.add(aimShadow);
     }
 
+    // Stun icon — blue star/bolt above the head. All players can see it.
+    const stunIcon = this.scene.add.graphics();
+    stunIcon.setVisible(false);
+    this.drawStunIcon(stunIcon);
+    this.layer.add(stunIcon);
+
     const entry: BombermanSpriteEntry = {
       playerId: b.playerId,
       isMe,
       sprite,
       hpPips,
       aimShadow,
+      stunIcon,
       facing: 'down',
       animState: 'idle',
       tint: b.tint,
@@ -416,6 +451,33 @@ export class BombermanSpriteSystem {
     entry.sprite.destroy();
     entry.hpPips.destroy();
     entry.aimShadow?.destroy();
+    entry.stunIcon.destroy();
+  }
+
+  /** Draw a stylized blue stun icon (5-point star) into the given graphics. */
+  private drawStunIcon(g: Phaser.GameObjects.Graphics): void {
+    const ts = this.tileSize;
+    const outerR = ts * 0.2;
+    const innerR = ts * 0.09;
+    g.clear();
+    // Outer glow
+    g.fillStyle(0x88ccff, 0.4);
+    g.fillCircle(0, 0, outerR * 1.4);
+    // Star body
+    g.fillStyle(0x3399ff, 1);
+    g.lineStyle(1.5, 0xffffff, 1);
+    g.beginPath();
+    const spikes = 5;
+    for (let i = 0; i < spikes * 2; i++) {
+      const r = i % 2 === 0 ? outerR : innerR;
+      const ang = (Math.PI / spikes) * i - Math.PI / 2;
+      const px = Math.cos(ang) * r;
+      const py = Math.sin(ang) * r;
+      if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+    }
+    g.closePath();
+    g.fillPath();
+    g.strokePath();
   }
 
   /**
@@ -449,6 +511,10 @@ export class BombermanSpriteSystem {
     } else {
       entry.hpPips.setVisible(false);
     }
+
+    // Stun icon floats slightly above the head, bobbing gently via time.
+    const bob = Math.sin(this.scene.time.now / 220) * 2;
+    entry.stunIcon.setPosition(visualX, visualY - ts * 1.75 + bob);
 
     if (entry.aimShadow) {
       entry.aimShadow.clear();

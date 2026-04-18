@@ -6,7 +6,10 @@
  */
 
 import type { BombermanState } from './bomberman.ts';
-import type { BombInstance, BombType, FireTile, LightTile } from './bombs.ts';
+import type {
+  BombInstance, BombType, FireTile, LightTile,
+  SmokeCloud, Mine, PhosphorusPending,
+} from './bombs.ts';
 
 export interface MatchConfig {
   id: string;
@@ -70,6 +73,12 @@ export interface ActiveFlare {
   initialRadius: number;
   /** Full turns remaining (3→2→1→gone). After turn 2, radius shrinks by 1. */
   turnsRemaining: number;
+  /**
+   * Rendering variant: 'flare' (default white-yellow), 'phosphorus' (red),
+   * 'motion_detector' (orange). Affects both the flame visual and the
+   * flash/light tile rendering.
+   */
+  kind?: 'flare' | 'phosphorus' | 'motion_detector';
 }
 
 export type TurnPhase = 'input' | 'transition' | 'ended';
@@ -101,6 +110,12 @@ export interface MatchState {
   lightTiles: LightTile[];
   /** Active flares. Client uses these to render the flame + derive fog reveals. */
   flares: ActiveFlare[];
+  /** Active smoke clouds (Fart Escape). */
+  smokeClouds: SmokeCloud[];
+  /** Dormant mines on the map (Motion Detector + Cluster). */
+  mines: Mine[];
+  /** Deferred Phosphorus fire spawns (impact turn records; next turn spawns fire tiles). */
+  phosphorusPending: PhosphorusPending[];
   /**
    * Tiles with blood splatter left by bleeding Bombermen. Purely cosmetic.
    */

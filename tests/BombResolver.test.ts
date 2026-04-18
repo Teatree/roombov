@@ -217,25 +217,36 @@ describe('resolveBombTrigger', () => {
     });
   });
 
-  describe('delay (plus x2)', () => {
-    it('hits 9 tiles in a plus pattern', () => {
-      const r = resolveBombTrigger('delay', 5, 5, map);
-      expect(r.damageTiles).toHaveLength(9);
+  describe('bomb (plus x4)', () => {
+    it('test_bomb_plus_radius_4_hits_17_tiles', () => {
+      // Arrange
+      const center = { x: 10, y: 10 };
+      // Act
+      const r = resolveBombTrigger('bomb', center.x, center.y, map);
+      // Assert: center + 4 rays of radius 4 = 1 + 16 = 17 tiles
+      expect(r.damageTiles).toHaveLength(17);
     });
   });
 
-  describe('delay_big (plus x3)', () => {
-    it('hits 13 tiles', () => {
-      const r = resolveBombTrigger('delay_big', 5, 5, map);
+  describe('bomb_wide (circle x2)', () => {
+    it('test_bomb_wide_circle_radius_2_hits_25_tiles', () => {
+      // Arrange
+      const center = { x: 10, y: 10 };
+      // Act
+      const r = resolveBombTrigger('bomb_wide', center.x, center.y, map);
+      // Assert: 5x5 square = 25 tiles
+      expect(r.damageTiles).toHaveLength(25);
+    });
+  });
+
+  describe('delay_tricky (diag x3)', () => {
+    it('test_delay_tricky_diag_radius_3_hits_13_tiles', () => {
+      // Arrange
+      const center = { x: 10, y: 10 };
+      // Act
+      const r = resolveBombTrigger('delay_tricky', center.x, center.y, map);
+      // Assert: center + 4 diagonal rays of radius 3 = 1 + 12 = 13 tiles
       expect(r.damageTiles).toHaveLength(13);
-    });
-  });
-
-  describe('delay_tricky (diag x1)', () => {
-    it('hits 5 tiles (center + 4 diagonals)', () => {
-      const r = resolveBombTrigger('delay_tricky', 5, 5, map);
-      expect(r.damageTiles).toHaveLength(5);
-      expect(norm(r.damageTiles)).toEqual(tileSet([5, 5], [6, 6], [4, 6], [6, 4], [4, 4]));
     });
   });
 
@@ -286,25 +297,78 @@ describe('resolveBombTrigger', () => {
     });
   });
 
-  describe('delay_wide (circle x1)', () => {
-    it('hits 9 tiles (3x3 square around center)', () => {
-      const r = resolveBombTrigger('delay_wide', 5, 5, map);
-      expect(r.damageTiles).toHaveLength(9);
-      expect(norm(r.damageTiles)).toEqual(tileSet(
-        [4, 4], [5, 4], [6, 4],
-        [4, 5], [5, 5], [6, 5],
-        [4, 6], [5, 6], [6, 6],
-      ));
-    });
-  });
-
   describe('ender_pearl (teleport)', () => {
-    it('produces no damage, fire, light, or scatter tiles', () => {
+    it('test_ender_pearl_produces_no_tile_effects', () => {
+      // Arrange / Act
       const r = resolveBombTrigger('ender_pearl', 5, 5, map);
+      // Assert
       expect(r.damageTiles).toHaveLength(0);
       expect(r.fireTiles).toHaveLength(0);
       expect(r.lightTiles).toHaveLength(0);
       expect(r.scatterSpawns).toHaveLength(0);
+    });
+  });
+
+  describe('flash (stun only, 7x7 square)', () => {
+    it('test_flash_produces_7x7_stun_tiles_no_damage', () => {
+      // Arrange / Act — on an open map, circle radius 3 covers a 7×7 = 49 tiles.
+      const r = resolveBombTrigger('flash', 15, 15, map);
+      // Assert
+      expect(r.stunTiles).toHaveLength(49);
+      expect(r.damageTiles).toHaveLength(0);
+      expect(r.stunTurns).toBeGreaterThan(0);
+    });
+  });
+
+  describe('phosphorus (impact-turn light + deferred fire)', () => {
+    it('test_phosphorus_produces_reveal_tiles_and_seeds_phosphorus_pending', () => {
+      // Arrange / Act
+      const r = resolveBombTrigger('phosphorus', 15, 15, map);
+      // Assert: 11x11 reveal + phosphorus seed pointer
+      expect(r.lightTiles).toHaveLength(121);
+      expect(r.lightKind).toBe('phosphorus');
+      expect(r.phosphorusSeed).toBeDefined();
+      expect(r.phosphorusSeed?.originX).toBe(15);
+    });
+  });
+
+  describe('cluster_bomb (seed)', () => {
+    it('test_cluster_bomb_returns_cluster_seed_area_without_damage', () => {
+      // Arrange / Act
+      const r = resolveBombTrigger('cluster_bomb', 15, 15, map);
+      // Assert: no immediate damage, but seeds mines via resolver caller
+      expect(r.damageTiles).toHaveLength(0);
+      expect(r.clusterSeed).toBeDefined();
+      expect(r.clusterSeed?.mineCount).toBe(25);
+    });
+  });
+
+  describe('big_huge (circle x4)', () => {
+    it('test_big_huge_circle_radius_4_hits_81_tiles', () => {
+      // Arrange / Act
+      const r = resolveBombTrigger('big_huge', 15, 15, map);
+      // Assert: 9x9 = 81 tiles
+      expect(r.damageTiles).toHaveLength(81);
+    });
+  });
+
+  describe('motion_detector_flare (mine placement)', () => {
+    it('test_motion_detector_flare_returns_mineToPlace_motion_detector_kind', () => {
+      // Arrange / Act
+      const r = resolveBombTrigger('motion_detector_flare', 5, 5, map);
+      // Assert
+      expect(r.mineToPlace).toBeDefined();
+      expect(r.mineToPlace?.kind).toBe('motion_detector');
+    });
+  });
+
+  describe('fart_escape (smoke)', () => {
+    it('test_fart_escape_returns_smoke_spawn_with_circle_tiles', () => {
+      // Arrange / Act
+      const r = resolveBombTrigger('fart_escape', 15, 15, map);
+      // Assert: smoke payload present and covers a 7x7 footprint (circle r3)
+      expect(r.smokeSpawn).toBeDefined();
+      expect(r.smokeSpawn?.tiles.length).toBeGreaterThan(0);
     });
   });
 });

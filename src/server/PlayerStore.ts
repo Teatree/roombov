@@ -6,6 +6,28 @@ import { randomBytes } from 'crypto';
 import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import { createEmptyProfile } from '../shared/types/player-profile.ts';
 import { CHARACTER_VARIANTS } from '../shared/types/bomberman.ts';
+import type { BombType } from '../shared/types/bombs.ts';
+
+/**
+ * Rename map for the Apr-2026 bomb catalog cleanup:
+ *   - `delay`      → REMOVED (silently strip).
+ *   - `delay_big`  → `bomb`
+ *   - `delay_wide` → `bomb_wide`
+ *
+ * Applied during migrateProfile() so older saves keep working without a
+ * migration script. Any reference to the removed/renamed types in stockpiles,
+ * inventory slots, or bodies is normalized here.
+ */
+const LEGACY_BOMB_RENAMES: Record<string, BombType | null> = {
+  delay_big: 'bomb',
+  delay_wide: 'bomb_wide',
+  delay: null, // strip
+};
+
+function normalizeBombType(raw: string): BombType | null {
+  if (raw in LEGACY_BOMB_RENAMES) return LEGACY_BOMB_RENAMES[raw];
+  return raw as BombType;
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, '../../production/player-data');
@@ -164,6 +186,27 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
     const tint = (Math.round((r + m) * 255) << 16) | (Math.round((g + m) * 255) << 8) | Math.round((bl + m) * 255);
     return { ...b, tint };
   });
+  // Normalize bomb types in the stockpile: rename legacy entries, drop removed.
+  const rawStockpile = (raw.bombStockpile ?? {}) as Record<string, number>;
+  const normalizedStockpile: Record<string, number> = {};
+  for (const [type, count] of Object.entries(rawStockpile)) {
+    if (typeof count !== 'number' || count <= 0) continue;
+    const mapped = normalizeBombType(type);
+    if (mapped == null) continue; // `delay` is silently stripped
+    normalizedStockpile[mapped] = (normalizedStockpile[mapped] ?? 0) + count;
+  }
+
+  // Normalize inventory slots on every owned bomberman (same rules).
+  for (const b of owned) {
+    if (!b.inventory || !Array.isArray(b.inventory.slots)) continue;
+    b.inventory.slots = b.inventory.slots.map((slot) => {
+      if (!slot) return null;
+      const mapped = normalizeBombType(slot.type as unknown as string);
+      if (mapped == null) return null; // strip `delay`
+      return { type: mapped, count: slot.count };
+    });
+  }
+
   return {
     id: raw.id ?? generatePlayerId(),
     createdAt: raw.createdAt ?? now,
@@ -171,6 +214,6 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
     coins: raw.coins ?? 500,
     ownedBombermen: owned,
     equippedBombermanId: raw.equippedBombermanId ?? null,
-    bombStockpile: raw.bombStockpile ?? {},
+    bombStockpile: normalizedStockpile as PlayerProfile['bombStockpile'],
   };
 }

@@ -210,6 +210,7 @@ export class MatchRoom {
         rushActive: false,
         teleportedThisTurn: false,
         onHatchIdleTurns: 0,
+        statusEffects: [],
       };
     });
 
@@ -275,6 +276,9 @@ export class MatchRoom {
       flares: [],
       bloodTiles: [],
       escapeTiles: this.map.escapeTiles.map(t => ({ x: t.x, y: t.y })),
+      smokeClouds: [],
+      mines: [],
+      phosphorusPending: [],
     };
   }
 
@@ -436,8 +440,56 @@ export class MatchRoom {
       }
     }
 
+    // Immediately persist escaped players' match-end state to their profile.
+    // Without this, a player who escapes mid-match (while bots/others still
+    // alive) keeps their pre-match inventory + coins until finalize runs —
+    // which only happens when the WHOLE match ends. If finalize never runs
+    // (player quits, bots keep playing), the match-end changes were lost.
+    for (const ev of events) {
+      if ((ev as { kind: string }).kind !== 'escaped') continue;
+      const escapedPlayerId = (ev as { playerId: string }).playerId;
+      const participant = this.participants.find(p => p.playerId === escapedPlayerId);
+      if (!participant || !participant.socketId) continue; // skip bots
+      const profile = participant.profile;
+      const bm = this.state.bombermen.find(b => b.playerId === escapedPlayerId);
+      if (!bm) continue;
+      const ownedBomberman = profile.ownedBombermen.find(ob => ob.id === bm.bombermanId);
+      profile.coins += bm.coins;
+      // Drain so finalize() doesn't double-count if the match ends this turn.
+      bm.coins = 0;
+      if (ownedBomberman) {
+        ownedBomberman.inventory = {
+          slots: bm.inventory.slots.map(s => (s ? { ...s } : null)),
+        };
+      }
+      this.playerStore.save(profile).catch(() => {});
+      if (participant.socketId) {
+        const sock = this.io.sockets.sockets.get(participant.socketId);
+        if (sock) sock.emit('profile', { profile });
+      }
+    }
+
     this.io.to(this.id).emit('match_state', { state: this.state });
     this.io.to(this.id).emit('turn_result', { events });
+
+    // Per-owner notification when one of their mines trips. Only sent to the
+    // mine's owner (private ping); the public turn_result still carries the
+    // broadcast mine_triggered event for all clients to render the explosion.
+    for (const ev of events) {
+      const e = ev as { kind: string; mineId?: string; x?: number; y?: number; ownerId?: string };
+      if (e.kind !== 'mine_triggered') continue;
+      const ownerId = e.ownerId;
+      if (!ownerId) continue;
+      const participant = this.participants.find(p => p.playerId === ownerId);
+      if (!participant || !participant.socketId) continue;
+      const sock = this.io.sockets.sockets.get(participant.socketId);
+      if (!sock) continue;
+      sock.emit('mine_triggered', {
+        mineId: e.mineId ?? '',
+        x: e.x ?? 0,
+        y: e.y ?? 0,
+      });
+    }
 
     if (this.state.phase === 'ended') {
       this.finalize();

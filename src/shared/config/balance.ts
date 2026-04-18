@@ -66,9 +66,38 @@ export const BALANCE = {
     fadeTurns: 20,
     minOpacity: 0.5,
   },
+  bombs: {
+    /** Phosphorus: how many turns the impact-turn reveal lasts. */
+    phosphorusRevealTurns: 1,
+    /** Phosphorus: how many turns each spawned fire tile burns. */
+    phosphorusFireTurns: 2,
+    /** Flash: how many turns Stunned status lasts. */
+    flashStunTurns: 1,
+    /** Visual opacity for the owner's own bomberman inside their smoke. */
+    smokePlayerOpacity: 0.65,
+    /** Visual opacity for effects (fire/bombs/decals) visible through smoke. */
+    smokeFxOpacity: 0.65,
+    /** Motion Detector: Chebyshev trigger radius. */
+    motionDetectorRadius: 3,
+    /** Motion Detector: turns before passive expiry trigger. */
+    motionDetectorLifetime: 50,
+    /** Fart Escape: how many tiles Bomberman moves toward target on cast. */
+    fartEscapeMoveTiles: 2,
+    /** Fart Escape: circle radius for the smoke cloud. Bumped from 3 (≈49
+     *  tiles) to 5 (≈121 tiles) — roughly doubled area per design request. */
+    fartEscapeSmokeRadius: 5,
+    /** Fart Escape: how many turns the cloud persists. */
+    fartEscapeSmokeTurns: 4,
+    /** Cluster Bomb: area dimensions for mine scattering. */
+    clusterArea: { w: 11, h: 11 },
+    /** Cluster Bomb: attempted mine placements per throw. */
+    clusterMineCount: 25,
+    /** Client-only: whether bombs visibly shake on the turn before detonation. */
+    shakePreDetonation: true,
+  },
   bots: {
     /** Max bots that can be added to a single match. */
-    maxPerMatch: 2,
+    maxPerMatch: 0,
     /** Only add bots if at least this many real players joined. */
     minPlayersForBots: 1,
     /** Fill the match up to this many total players (real + bot). */

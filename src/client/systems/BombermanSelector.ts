@@ -11,7 +11,7 @@ import Phaser from 'phaser';
 import { NetworkManager } from '../NetworkManager.ts';
 import { ProfileStore, UiAnimLock } from '../ClientState.ts';
 import { createShopBombermanSprite, pickRandomUiAnimation } from './BombermanAnimations.ts';
-import { bombIconFrame } from './BombIcons.ts';
+import { bombIconFrame, createBombLabelOverlay } from './BombIcons.ts';
 import type { OwnedBomberman } from '@shared/types/bomberman.ts';
 
 const SELECTOR_CARD_W = 140;
@@ -109,6 +109,8 @@ export class BombermanSelector {
         const icon = this.scene.add.image(ix, iconY, 'bomb_icons', bombIconFrame(slot.type))
           .setDisplaySize(iconSize, iconSize);
         container.add(icon);
+        const iconLabel = createBombLabelOverlay(this.scene, ix, iconY, slot.type, iconSize);
+        if (iconLabel) container.add(iconLabel);
         container.add(this.scene.add.text(ix, iconY + 12, `${slot.count}`, {
           fontSize: '8px', color: '#ffd944', fontFamily: 'monospace',
         }).setOrigin(0.5, 0));

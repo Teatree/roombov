@@ -140,6 +140,13 @@ export interface ShopResultMsg {
 
 // --- Server → client event map ---
 
+/** Server → client: one of your placed mines just tripped. */
+export interface MineTriggeredMsg {
+  mineId: string;
+  x: number;
+  y: number;
+}
+
 export interface ServerToClientEvents {
   profile: (msg: ProfileMsg) => void;
   bomberman_shop_cycle: (msg: BombermanShopCycleMsg) => void;
@@ -151,6 +158,7 @@ export interface ServerToClientEvents {
   match_state: (msg: MatchStateMsg) => void;
   turn_result: (msg: TurnResultMsg) => void;
   match_end: (msg: MatchEndMsg) => void;
+  mine_triggered: (msg: MineTriggeredMsg) => void;
 }
 
 // --- Client → server event map ---

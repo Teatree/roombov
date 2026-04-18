@@ -5,7 +5,7 @@ import { ActivityIndicator } from '../systems/ActivityIndicator.ts';
 import { ensureBombermanAnims, createShopBombermanSprite, preloadBombermanSpritesheets, pickRandomUiAnimation } from '../systems/BombermanAnimations.ts';
 import type { BombermanTemplate } from '@shared/types/bomberman.ts';
 import { BOMB_CATALOG } from '@shared/config/bombs.ts';
-import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
+import { preloadBombIcons, bombIconFrame, createBombLabelOverlay } from '../systems/BombIcons.ts';
 import { BombermanSelector } from '../systems/BombermanSelector.ts';
 
 const CARD_WIDTH = 180;
@@ -203,6 +203,8 @@ export class BombermanShopScene extends Phaser.Scene {
         const slotIcon = this.add.image(-40, rowY, 'bomb_icons', bombIconFrame(slot.type))
           .setDisplaySize(14, 14);
         container.add(slotIcon);
+        const slotLabel = createBombLabelOverlay(this, -40, rowY, slot.type, 14);
+        if (slotLabel) container.add(slotLabel);
         container.add(this.add.text(-28, rowY, `${name} x${slot.count}`, {
           fontSize: '10px', color: '#cccccc', fontFamily: 'monospace',
         }).setOrigin(0, 0.5));

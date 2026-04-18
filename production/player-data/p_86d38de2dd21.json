@@ -1,0 +1,49 @@
+{
+  "id": "p_86d38de2dd21",
+  "createdAt": 1776551434983,
+  "updatedAt": 1776552132148,
+  "coins": 422,
+  "ownedBombermen": [
+    {
+      "id": "owned_p_86d38de2dd21_1776551439618_f0n8",
+      "name": "Wyatt",
+      "tier": "paid",
+      "colors": {
+        "shirt": 4511554,
+        "pants": 7506472,
+        "hair": 3552434
+      },
+      "tint": 11565283,
+      "character": "char4",
+      "inventory": {
+        "slots": [
+          {
+            "type": "cluster_bomb",
+            "count": 1
+          },
+          {
+            "type": "motion_detector_flare",
+            "count": 3
+          },
+          {
+            "type": "big_huge",
+            "count": 2
+          },
+          {
+            "type": "fart_escape",
+            "count": 2
+          }
+        ]
+      },
+      "purchasedAt": 1776551439618,
+      "sourceTemplateId": "cycle_1776551399032_2_paid"
+    }
+  ],
+  "equippedBombermanId": "owned_p_86d38de2dd21_1776551439618_f0n8",
+  "bombStockpile": {
+    "delay_tricky": 5,
+    "bomb_wide": 3,
+    "flare": 2,
+    "phosphorus": 3
+  }
+}

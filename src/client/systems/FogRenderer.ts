@@ -23,6 +23,13 @@ export class FogRenderer {
   private state: Map<string, Stage> = new Map();
   /** Extra tiles force-revealed this turn (e.g. by Flare). Cleared each update. */
   private externalReveals = new Set<string>();
+  /**
+   * When true, LoS computation is suppressed — the player sees no newly-
+   * visible tiles this update. Everything falls back to 'seen-dim' (if
+   * previously discovered) or 'unseen' (if never seen). Used when the local
+   * bomberman is inside a Fart Escape smoke cloud.
+   */
+  private losSuppressed = false;
 
   constructor(scene: Phaser.Scene, mapData: MapData, radius: number, depth: number) {
     this.scene = scene;
@@ -42,6 +49,17 @@ export class FogRenderer {
     }
   }
 
+  /**
+   * Suppress line-of-sight computation this update. While active, the only
+   * tiles marked 'visible' are the external reveals (flare light) and
+   * nothing else is added. Previously-seen tiles remain 'seen-dim'. Used
+   * when the local bomberman is inside a Fart Escape smoke cloud — the
+   * smoke blinds them to everything outside the cloud.
+   */
+  setLosSuppressed(on: boolean): void {
+    this.losSuppressed = on;
+  }
+
   update(centerX: number, centerY: number): void {
     // Demote previously-visible tiles to seen-dim
     for (const [key, stage] of this.state) {
@@ -52,25 +70,32 @@ export class FogRenderer {
     const fromPx = centerX * ts + ts / 2;
     const fromPy = centerY * ts + ts / 2;
 
-    // LOS from the player's Bomberman
-    for (let dy = -this.radius; dy <= this.radius; dy++) {
-      for (let dx = -this.radius; dx <= this.radius; dx++) {
-        if (Math.max(Math.abs(dx), Math.abs(dy)) > this.radius) continue;
-        const tx = centerX + dx;
-        const ty = centerY + dy;
-        if (tx < 0 || ty < 0 || tx >= this.mapData.width || ty >= this.mapData.height) continue;
+    if (this.losSuppressed) {
+      // Smoke cloud: bomberman only sees their own tile; the rest of the
+      // map falls back to seen-dim (if previously discovered) or unseen.
+      // Flare reveals from other players are also suppressed per spec.
+      this.state.set(`${centerX},${centerY}`, 'visible');
+    } else {
+      // LOS from the player's Bomberman
+      for (let dy = -this.radius; dy <= this.radius; dy++) {
+        for (let dx = -this.radius; dx <= this.radius; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) > this.radius) continue;
+          const tx = centerX + dx;
+          const ty = centerY + dy;
+          if (tx < 0 || ty < 0 || tx >= this.mapData.width || ty >= this.mapData.height) continue;
 
-        const toPx = tx * ts + ts / 2;
-        const toPy = ty * ts + ts / 2;
-        if (hasLineOfSight(fromPx, fromPy, toPx, toPy, this.mapData.grid, ts)) {
-          this.state.set(`${tx},${ty}`, 'visible');
+          const toPx = tx * ts + ts / 2;
+          const toPy = ty * ts + ts / 2;
+          if (hasLineOfSight(fromPx, fromPy, toPx, toPy, this.mapData.grid, ts)) {
+            this.state.set(`${tx},${ty}`, 'visible');
+          }
         }
       }
-    }
 
-    // External reveals (Flare) — force-visible regardless of LOS
-    for (const key of this.externalReveals) {
-      this.state.set(key, 'visible');
+      // External reveals (Flare) — force-visible regardless of LOS
+      for (const key of this.externalReveals) {
+        this.state.set(key, 'visible');
+      }
     }
 
     this.render();

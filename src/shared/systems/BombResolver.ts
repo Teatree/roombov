@@ -9,7 +9,7 @@
  * All coordinates are in tile space (integer x, y).
  */
 
-import type { BombDef, BombShape, BombType } from '../types/bombs.ts';
+import type { BombDef, BombShape, BombType, MineKind } from '../types/bombs.ts';
 import { BOMB_CATALOG } from '../config/bombs.ts';
 import { TileType, type MapData } from '../types/map.ts';
 
@@ -127,14 +127,43 @@ export interface BombTriggerResult {
   /** Fire tiles to spawn with this bomb's duration. */
   fireTiles: Tile[];
   fireDuration: number;
+  /** Fire kind: 'molotov' (standard orange) or 'phosphorus' (white) for rendering. */
+  fireKind?: 'molotov' | 'phosphorus';
   /** Light tiles to spawn (no damage). */
   lightTiles: Tile[];
   lightDuration: number;
+  /** Light kind: 'flare' / 'phosphorus' / 'motion_detector' for color variants. */
+  lightKind?: 'flare' | 'phosphorus' | 'motion_detector';
   /**
    * Sub-bombs to spawn as a scatter. These are added to the bomb list with the
    * child bomb's own fuse. Empty for non-scatter bombs.
    */
   scatterSpawns: Array<{ type: BombType; x: number; y: number }>;
+  /**
+   * Stun application — affected bombermen on `stunTiles` get `stunTurns`
+   * turns of Stunned. Non-zero only for stun_explode (Flash).
+   * Flash does NOT deal damage, only stun.
+   */
+  stunTurns: number;
+  stunTiles: Tile[];
+  /**
+   * Phosphorus only — seeds a deferred-fire spawn for next turn.
+   */
+  phosphorusSeed?: { originX: number; originY: number; fireDurationTurns: number };
+  /**
+   * Mine placement (Motion Detector). Only non-null for place_mine behavior.
+   */
+  mineToPlace?: { kind: MineKind; lifetimeTurns: number; detectionRadius?: number };
+  /**
+   * Cluster seed area (Cluster Bomb). TurnResolver does the actual RNG placement
+   * using the match's seeded random — BombResolver just surfaces the area.
+   */
+  clusterSeed?: { area: { w: number; h: number }; mineCount: number };
+  /**
+   * Smoke cloud deployment (Fart Escape). Tiles inside the circle (BFS-limited
+   * by walls, same as circle pattern).
+   */
+  smokeSpawn?: { tiles: Tile[]; durationTurns: number; radius: number };
 }
 
 export function resolveBombTrigger(
@@ -149,6 +178,8 @@ export function resolveBombTrigger(
     lightTiles: [],
     lightDuration: 0,
     scatterSpawns: [],
+    stunTurns: 0,
+    stunTiles: [],
   };
 
   switch (def.behavior.kind) {
@@ -184,6 +215,50 @@ export function resolveBombTrigger(
     case 'teleport':
       // Teleport is handled directly in TurnResolver — no tiles to compute.
       break;
+
+    case 'stun_explode': {
+      // Flash: NO damage, only stun. The shape defines the stun area.
+      result.stunTiles = shapeTiles(def.behavior.shape, cx, cy, map, closedDoorTiles);
+      result.stunTurns = def.behavior.stunTurns;
+      break;
+    }
+
+    case 'phosphorus_seed': {
+      result.lightTiles = shapeTiles(def.behavior.revealShape, cx, cy, map, closedDoorTiles);
+      result.lightDuration = def.behavior.revealTurns;
+      result.lightKind = 'phosphorus';
+      result.phosphorusSeed = {
+        originX: cx,
+        originY: cy,
+        fireDurationTurns: def.behavior.fireDurationTurns,
+      };
+      break;
+    }
+
+    case 'cluster_seed': {
+      result.clusterSeed = { area: def.behavior.area, mineCount: def.behavior.mineCount };
+      break;
+    }
+
+    case 'smoke': {
+      const tiles = shapeTiles(def.behavior.shape, cx, cy, map, closedDoorTiles);
+      const radius = def.behavior.shape.kind === 'circle' ? def.behavior.shape.radius : 0;
+      result.smokeSpawn = {
+        tiles,
+        durationTurns: def.behavior.durationTurns,
+        radius,
+      };
+      break;
+    }
+
+    case 'place_mine': {
+      result.mineToPlace = {
+        kind: def.behavior.mineKind,
+        lifetimeTurns: def.behavior.lifetimeTurns,
+        detectionRadius: def.behavior.detectionRadius,
+      };
+      break;
+    }
   }
 
   return result;

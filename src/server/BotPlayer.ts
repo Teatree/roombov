@@ -22,6 +22,14 @@ import { BALANCE } from '../shared/config/balance.ts';
 
 type BotState = 'explore' | 'fight' | 'escape';
 
+/** True when any smoke cloud covers the given tile. */
+function isInsideSmoke(state: MatchState, x: number, y: number): boolean {
+  for (const c of state.smokeClouds ?? []) {
+    if (c.tiles.some(t => t.x === x && t.y === y)) return true;
+  }
+  return false;
+}
+
 export class BotPlayer {
   readonly playerId: string;
 
@@ -122,10 +130,13 @@ export class BotPlayer {
       return;
     }
 
-    // Check for visible enemies
+    // Check for visible enemies. Bombermen inside a smoke cloud are hidden
+    // to bots — same rule as the player's fog override, just enforced
+    // server-side here since bots bypass the client renderer.
     const enemies = state.bombermen.filter(b =>
       b.playerId !== this.playerId && b.alive && !b.escaped &&
-      this.canSee(b.x, b.y, visible),
+      this.canSee(b.x, b.y, visible) &&
+      !isInsideSmoke(state, b.x, b.y),
     );
 
     if (enemies.length > 0) {
@@ -187,7 +198,7 @@ export class BotPlayer {
     if (!bestEscape) return this.exploreAction(me, state, map, new Set());
 
     const path = findPath(me.x, me.y, bestEscape.x, bestEscape.y, map);
-    return this.pathStep(me, path);
+    return this.pathStep(me, path, state);
   }
 
   private fightAction(
@@ -195,8 +206,28 @@ export class BotPlayer {
   ): PlayerAction {
     const cfg = BALANCE.bots;
 
-    // Ender pearl escape if injured
-    if (me.hp < BALANCE.match.bombermanMaxHp) {
+    // Target lookup (reused for multiple decisions below).
+    const targetBm = state.bombermen.find(b => b.playerId === this.targetEnemyId) ?? null;
+    const targetVisible = !!targetBm
+      && this.canSee(targetBm.x, targetBm.y, visible)
+      && !isInsideSmoke(state, targetBm.x, targetBm.y);
+
+    // Retreat with Fart Escape when hurt and the target has equal-or-more
+    // HP than us — same motivation as Ender Pearl but newer, so prefer
+    // Fart when available (leaves a smoke cloud so the target also loses
+    // vision of us).
+    const outgunned = !!targetBm && me.hp < targetBm.hp;
+    const activelyAttacked = targetVisible || me.bleedingTurns > 0
+      || state.bombs.some(bomb => bomb.ownerId !== me.playerId
+        && Math.max(Math.abs(bomb.x - me.x), Math.abs(bomb.y - me.y)) <= 5);
+    if (me.hp < BALANCE.match.bombermanMaxHp && (outgunned || activelyAttacked)) {
+      const fartSlot = this.findSlotWithType(me, 'fart_escape');
+      if (fartSlot >= 0) {
+        const escapeTarget = this.findSafeTile(me, state, map);
+        if (escapeTarget) {
+          return { kind: 'throw', slotIndex: fartSlot, x: escapeTarget.x, y: escapeTarget.y };
+        }
+      }
       const pearlSlot = this.findSlotWithType(me, 'ender_pearl');
       if (pearlSlot >= 0) {
         const escapeTarget = this.findSafeTile(me, state, map);
@@ -210,9 +241,9 @@ export class BotPlayer {
     const dangerAction = this.avoidBombs(me, state, map);
     if (dangerAction) return dangerAction;
 
-    // If target is visible, attack
-    const targetBm = state.bombermen.find(b => b.playerId === this.targetEnemyId);
-    if (targetBm && this.canSee(targetBm.x, targetBm.y, visible)) {
+    // If target is visible AND not inside a smoke cloud, attack. Smoked
+    // targets are invisible to bots (matches the player's fog override).
+    if (targetBm && targetVisible) {
       // Pick throw target: current pos (2/3) or predicted (1/3)
       let throwX = targetBm.x;
       let throwY = targetBm.y;
@@ -225,7 +256,7 @@ export class BotPlayer {
           throwY = py;
         }
       }
-      const slot = this.pickAttackSlot(me);
+      const slot = this.pickAttackSlot(me, targetBm);
       return { kind: 'throw', slotIndex: slot, x: throwX, y: throwY };
     }
 
@@ -237,7 +268,8 @@ export class BotPlayer {
         return { kind: 'throw', slotIndex: flareSlot, x: this.lastSeenEnemyPos.x, y: this.lastSeenEnemyPos.y };
       }
 
-      // Has real bombs? Throw into the dark for a few turns
+      // Has real bombs? Throw into the dark for a few turns. No target
+      // reference passed — flash isn't useful without visible confirmation.
       const attackSlot = this.pickAttackSlot(me);
       if (attackSlot > 0 && this.turnsSinceTargetSeen <= cfg.chaseTurns) {
         return { kind: 'throw', slotIndex: attackSlot, x: this.lastSeenEnemyPos.x, y: this.lastSeenEnemyPos.y };
@@ -245,7 +277,7 @@ export class BotPlayer {
 
       // Follow toward last known position
       const path = findPath(me.x, me.y, this.lastSeenEnemyPos.x, this.lastSeenEnemyPos.y, map);
-      if (path.length > 0) return this.pathStep(me, path);
+      if (path.length > 0) return this.pathStep(me, path, state);
     }
 
     return { kind: 'idle' };
@@ -326,13 +358,23 @@ export class BotPlayer {
   /** Pick move action from a path: two sequential 1-tile moves if rush, one otherwise. */
   private pathStep(me: BombermanState, path: Array<{ x: number; y: number }>, state?: MatchState): PlayerAction {
     if (path.length === 0) return { kind: 'idle' };
+    const isFire = (x: number, y: number): boolean =>
+      !!state && state.fireTiles.some(f => f.x === x && f.y === y);
     // Avoid stepping onto escape tiles before 50% of match
     if (state && this.shouldAvoidEscapes(state) && this.isEscapeTile(path[0].x, path[0].y, state)) {
+      return { kind: 'idle' };
+    }
+    // Avoid walking into a burning tile — bot would take damage.
+    if (isFire(path[0].x, path[0].y)) {
       return { kind: 'idle' };
     }
     if (me.rushActive && path.length >= 2) {
       // Don't rush onto an escape tile
       if (state && this.shouldAvoidEscapes(state) && this.isEscapeTile(path[1].x, path[1].y, state)) {
+        return { kind: 'move', x: path[0].x, y: path[0].y };
+      }
+      // Don't rush THROUGH fire either — stop short.
+      if (isFire(path[1].x, path[1].y)) {
         return { kind: 'move', x: path[0].x, y: path[0].y };
       }
       return { kind: 'move', x: path[0].x, y: path[0].y, rushX: path[1].x, rushY: path[1].y };
@@ -348,9 +390,21 @@ export class BotPlayer {
     return -1;
   }
 
-  private pickAttackSlot(me: BombermanState): number {
-    // Prefer contact bombs (instant), then delay, then anything, fallback rock
-    const prefs: BombType[] = ['contact', 'delay', 'delay_wide', 'delay_big', 'banana', 'molotov'];
+  private pickAttackSlot(me: BombermanState, target?: BombermanState): number {
+    // Stun-first finisher pattern: if we have a Flash and the target is
+    // NOT already stunned, open with Flash so we (and any teammate) get a
+    // free turn to line up a damage bomb. If the target IS already stunned,
+    // skip Flash — it'd be wasted — and pick a damage bomb to finish.
+    const targetStunned = target
+      ? (target.statusEffects ?? []).some(s => s.kind === 'stunned' && s.turnsRemaining > 0)
+      : false;
+    if (target && !targetStunned) {
+      const flashSlot = this.findSlotWithType(me, 'flash');
+      if (flashSlot >= 0) return flashSlot;
+    }
+    // Damage-bomb preference order. 'flash' excluded here — it's handled
+    // above as an opener only.
+    const prefs: BombType[] = ['contact', 'bomb', 'bomb_wide', 'delay_tricky', 'banana', 'molotov', 'big_huge'];
     for (const pref of prefs) {
       const slot = this.findSlotWithType(me, pref);
       if (slot >= 0) return slot;
@@ -368,8 +422,8 @@ export class BotPlayer {
       if (!shape) continue;
       const tiles = shapeTiles(shape, bomb.x, bomb.y, map);
       if (tiles.some(t => t.x === me.x && t.y === me.y)) {
-        // In danger! Move to a safe adjacent tile
-        return this.moveAway(me, bomb.x, bomb.y, map);
+        // In danger! Move to a safe adjacent tile (avoid fire too).
+        return this.moveAway(me, bomb.x, bomb.y, map, state);
       }
     }
     // Also check fire tiles
@@ -379,7 +433,7 @@ export class BotPlayer {
     return null;
   }
 
-  private moveAway(me: BombermanState, dangerX: number, dangerY: number, map: MapData): PlayerAction {
+  private moveAway(me: BombermanState, dangerX: number, dangerY: number, map: MapData, state?: MatchState): PlayerAction {
     // Try each adjacent tile, prefer the one furthest from danger
     const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]];
     let bestX = me.x, bestY = me.y, bestDist = 0;
@@ -388,6 +442,8 @@ export class BotPlayer {
       const ny = me.y + dy;
       if (nx < 0 || ny < 0 || nx >= map.width || ny >= map.height) continue;
       if (map.grid[ny]?.[nx] !== 0) continue;
+      // Don't dodge INTO fire — prefer any other walkable tile.
+      if (state && state.fireTiles.some(f => f.x === nx && f.y === ny)) continue;
       const dist = Math.max(Math.abs(nx - dangerX), Math.abs(ny - dangerY));
       if (dist > bestDist) { bestDist = dist; bestX = nx; bestY = ny; }
     }
@@ -462,6 +518,8 @@ export class BotPlayer {
       if (nx < 0 || ny < 0 || nx >= map.width || ny >= map.height) continue;
       if (map.grid[ny]?.[nx] !== 0) continue;
       if (avoidEscapes && this.isEscapeTile(nx, ny, state)) continue;
+      // Skip burning tiles — bot shouldn't walk into fire.
+      if (state.fireTiles.some(f => f.x === nx && f.y === ny)) continue;
       return { kind: 'move', x: nx, y: ny };
     }
     return { kind: 'idle' };

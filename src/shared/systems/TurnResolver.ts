@@ -21,21 +21,53 @@
  */
 
 import { BALANCE } from '../config/balance.ts';
-import { BOMB_CATALOG } from '../config/bombs.ts';
+import { BOMB_CATALOG, PHOSPHORUS_FIRE_OFFSETS } from '../config/bombs.ts';
 import type {
   DroppedBody, MatchState, PlayerAction,
 } from '../types/match.ts';
 import type { BombermanState, BombInventory, BombSlot } from '../types/bomberman.ts';
-import type { BombInstance, FireTile, LightTile, BombType } from '../types/bombs.ts';
+import type {
+  BombInstance, FireTile, LightTile, BombType,
+  SmokeCloud, Mine, PhosphorusPending, StatusEffect,
+} from '../types/bombs.ts';
 import type { MapData } from '../types/map.ts';
 import { TileType } from '../types/map.ts';
-import { resolveBombTrigger, type Tile } from './BombResolver.ts';
+import { resolveBombTrigger, shapeTiles, type Tile } from './BombResolver.ts';
 import { hasLineOfSight } from './LineOfSight.ts';
+import { findPath } from './Pathfinding.ts';
+import { createSeededRandom } from '../utils/seeded-random.ts';
 
 let bombIdCounter = 0;
 let bodyIdCounter = 0;
+let smokeIdCounter = 0;
+let mineIdCounter = 0;
+let phosphorusIdCounter = 0;
 function nextBombId(): string { return `b${++bombIdCounter}`; }
 function nextBodyId(): string { return `body${++bodyIdCounter}`; }
+function nextSmokeId(): string { return `smoke${++smokeIdCounter}`; }
+function nextMineId(): string { return `mine${++mineIdCounter}`; }
+function nextPhosphorusId(): string { return `phos${++phosphorusIdCounter}`; }
+
+/** True when the bomberman's current tile is inside any active smoke cloud. */
+function isInsideSmoke(state: MatchState, x: number, y: number): boolean {
+  for (const c of state.smokeClouds ?? []) {
+    if (c.tiles.some(t => t.x === x && t.y === y)) return true;
+  }
+  return false;
+}
+
+/** True if the bomberman has an active stunned status. */
+function isStunned(b: BombermanState): boolean {
+  return (b.statusEffects ?? []).some(s => s.kind === 'stunned' && s.turnsRemaining > 0);
+}
+
+/** Bomb types that do NOT break Out-of-Combat Rush when thrown. */
+const NON_RUSH_BREAKING_BOMBS = new Set<BombType>([
+  'flare',
+  'ender_pearl',
+  'motion_detector_flare',
+  'fart_escape',
+]);
 
 /**
  * Clone only the bits of state we'll mutate. The map itself is treated as
@@ -44,7 +76,12 @@ function nextBodyId(): string { return `body${++bodyIdCounter}`; }
 function cloneState(s: MatchState): MatchState {
   return {
     ...s,
-    bombermen: s.bombermen.map(b => ({ ...b, inventory: cloneInventory(b.inventory) })),
+    bombermen: s.bombermen.map(b => ({
+      ...b,
+      inventory: cloneInventory(b.inventory),
+      statusEffects: (b.statusEffects ?? []).map(e => ({ ...e })),
+      queuedPath: b.queuedPath ? b.queuedPath.map(t => ({ ...t })) : undefined,
+    })),
     chests: s.chests.map(c => ({ ...c, bombs: c.bombs.map(b => ({ ...b })) })),
     doors: (s.doors ?? []).map(d => ({ ...d, tiles: d.tiles.map(t => ({ ...t })) })),
     bodies: s.bodies.map(b => ({ ...b, bombs: b.bombs.map(bb => ({ ...bb })) })),
@@ -55,6 +92,9 @@ function cloneState(s: MatchState): MatchState {
     bloodTiles: s.bloodTiles.map(t => ({ ...t })),
     escapeTiles: s.escapeTiles.map(t => ({ ...t })),
     escapedPlayerIds: s.escapedPlayerIds ? [...s.escapedPlayerIds] : undefined,
+    smokeClouds: (s.smokeClouds ?? []).map(c => ({ ...c, tiles: c.tiles.map(t => ({ ...t })) })),
+    mines: (s.mines ?? []).map(m => ({ ...m })),
+    phosphorusPending: (s.phosphorusPending ?? []).map(p => ({ ...p })),
   };
 }
 
@@ -118,7 +158,13 @@ export type TurnEvent =
   | { kind: 'body_looted'; playerId: string; bodyId: string; coins: number }
   | { kind: 'teleport'; playerId: string; fromX: number; fromY: number; toX: number; toY: number }
   | { kind: 'door_opened'; doorId: number }
-  | { kind: 'rush_changed'; playerId: string; active: boolean };
+  | { kind: 'rush_changed'; playerId: string; active: boolean }
+  | { kind: 'smoke_spawned'; cloudId: string; x: number; y: number; radius: number; tiles: Tile[]; ownerId: string }
+  | { kind: 'smoke_expired'; cloudId: string }
+  | { kind: 'mine_placed'; mineId: string; x: number; y: number; mineKind: 'motion_detector' | 'cluster'; ownerId: string }
+  | { kind: 'mine_triggered'; mineId: string; x: number; y: number; mineKind: 'motion_detector' | 'cluster'; ownerId: string; triggeredBy: string | null; tiles: Tile[] }
+  | { kind: 'stunned'; playerId: string; turnsRemaining: number }
+  | { kind: 'stun_expired'; playerId: string };
 
 export function resolveTurn(
   prev: MatchState,
@@ -139,9 +185,60 @@ export function resolveTurn(
   // Only alive, non-escaped Bombermen can act
   const actors = state.bombermen.filter(b => b.alive && !b.escaped);
 
+  // Stun gating: build the effective action map. Stunned bombermen's actions
+  // are replaced with idle (no move, no throw). Status decrement happens at
+  // end of turn so the player sees a stun-locked turn here.
+  const effectiveActions = new Map<string, PlayerAction>();
+  for (const b of actors) {
+    const raw = actions.get(b.playerId) ?? { kind: 'idle' as const };
+    if (isStunned(b)) {
+      effectiveActions.set(b.playerId, { kind: 'idle' });
+    } else {
+      effectiveActions.set(b.playerId, raw);
+    }
+  }
+
+  // queuedPath consumption: if the player submitted `idle` and has a pending
+  // queued path, take the head as an implicit `move` action. If they
+  // submitted any other action (move/throw), drop the queue.
+  for (const b of actors) {
+    const act = effectiveActions.get(b.playerId) ?? { kind: 'idle' as const };
+    if (!b.queuedPath || b.queuedPath.length === 0) continue;
+    if (act.kind === 'idle') {
+      const head = b.queuedPath[0];
+      if (head) {
+        // Synthesize a move action. Use rush if active and there's a second step.
+        let rushTarget: { x: number; y: number } | undefined;
+        if (BALANCE.match.rush.enabled && b.rushActive && b.queuedPath.length >= 2) {
+          rushTarget = b.queuedPath[1];
+        }
+        const synth: PlayerAction = rushTarget
+          ? { kind: 'move', x: head.x, y: head.y, rushX: rushTarget.x, rushY: rushTarget.y }
+          : { kind: 'move', x: head.x, y: head.y };
+        effectiveActions.set(b.playerId, synth);
+      }
+    } else {
+      // Player overrode — clear queued path
+      b.queuedPath = undefined;
+    }
+  }
+
+  /**
+   * Every tile each bomberman STEPPED ONTO this turn (including intermediate
+   * rush / Fart Escape tiles, NOT including the starting tile). Mine
+   * walk-over detection consumes this so a rushing bomberman can't skip
+   * over a mine by using its tile as a mid-step.
+   */
+  const steppedTilesByPlayer = new Map<string, Array<{ x: number; y: number }>>();
+  const recordStep = (playerId: string, x: number, y: number): void => {
+    let arr = steppedTilesByPlayer.get(playerId);
+    if (!arr) { arr = []; steppedTilesByPlayer.set(playerId, arr); }
+    arr.push({ x, y });
+  };
+
   // --- 1. Movement (supports Out of Combat Rush: two sequential 1-tile moves per turn) ---
   for (const bomberman of actors) {
-    const action = actions.get(bomberman.playerId) ?? { kind: 'idle' };
+    const action = effectiveActions.get(bomberman.playerId) ?? { kind: 'idle' };
     if (action.kind !== 'move') continue;
 
     // First move: must be adjacent (Chebyshev 1)
@@ -151,6 +248,7 @@ export function resolveTurn(
       const fromY = bomberman.y;
       bomberman.x = action.x;
       bomberman.y = action.y;
+      recordStep(bomberman.playerId, action.x, action.y);
       events.push({ kind: 'moved', playerId: bomberman.playerId, fromX, fromY, toX: action.x, toY: action.y });
       if (bomberman.bleedingTurns > 0) {
         state.bloodTiles.push({ x: fromX, y: fromY });
@@ -165,6 +263,7 @@ export function resolveTurn(
           const from2Y = bomberman.y;
           bomberman.x = action.rushX;
           bomberman.y = action.rushY;
+          recordStep(bomberman.playerId, action.rushX, action.rushY);
           events.push({ kind: 'moved', playerId: bomberman.playerId, fromX: from2X, fromY: from2Y, toX: action.rushX, toY: action.rushY });
           if (bomberman.bleedingTurns > 0) {
             state.bloodTiles.push({ x: from2X, y: from2Y });
@@ -178,7 +277,7 @@ export function resolveTurn(
 
   // Emit idle events for actors that didn't move and didn't throw
   for (const bomberman of actors) {
-    const action = actions.get(bomberman.playerId);
+    const action = effectiveActions.get(bomberman.playerId);
     if (!action || action.kind === 'idle') {
       events.push({ kind: 'idle', playerId: bomberman.playerId, x: bomberman.x, y: bomberman.y });
     }
@@ -233,15 +332,28 @@ export function resolveTurn(
     const rushCfg = BALANCE.match.rush;
     for (const bomberman of actors) {
       if (!bomberman.alive || bomberman.escaped) continue;
-      const action = actions.get(bomberman.playerId) ?? { kind: 'idle' };
-      const threw = action.kind === 'throw';
+      const action = effectiveActions.get(bomberman.playerId) ?? { kind: 'idle' };
+      // Non-rush-breaking bomb types (Flare, Ender Pearl, Motion Detector
+      // Flare, Fart Escape) are thrown without cancelling rush.
+      let threw = action.kind === 'throw';
+      if (threw && action.kind === 'throw') {
+        // Determine the bomb type from the slot. Slot 0 = rock (always breaks).
+        if (action.slotIndex >= 1 && action.slotIndex <= 4) {
+          const slot = bomberman.inventory.slots[action.slotIndex - 1];
+          if (slot && NON_RUSH_BREAKING_BOMBS.has(slot.type)) threw = false;
+        }
+      }
+      // Smoke cloud exception: inside an active smoke cloud the bomberman
+      // does not trigger enemy-proximity rush-break.
+      const insideSmoke = isInsideSmoke(state, bomberman.x, bomberman.y);
       // Enemy proximity breaks rush only when the two Bombermen have mutual
       // line of sight. `hasLineOfSight` is symmetric on a wall grid — if A
       // can see B, B can see A — so one call covers "both must see each
       // other". This stops flare-discovered enemies (you see them, they
       // don't see you) from nuking your rush.
       const ts = map.tileSize;
-      const enemyNearby = actors.some(other => {
+      // Inside smoke → enemy proximity doesn't break rush (per design).
+      const enemyNearby = insideSmoke ? false : actors.some(other => {
         if (other.playerId === bomberman.playerId) return false;
         if (!other.alive || other.escaped) return false;
         if (chebyshevDistance(bomberman.x, bomberman.y, other.x, other.y) > rushCfg.proximityRadius) return false;
@@ -277,7 +389,7 @@ export function resolveTurn(
   // --- 3. Place thrown bombs ---
   // We filter damage output later so a bomb thrown this turn doesn't double-damage its owner on trigger
   for (const bomberman of actors) {
-    const action = actions.get(bomberman.playerId);
+    const action = effectiveActions.get(bomberman.playerId);
     if (!action || action.kind !== 'throw') continue;
     if (!bomberman.alive) continue; // died this turn from something? shouldn't happen pre-explosion
 
@@ -305,6 +417,124 @@ export function resolveTurn(
     if (action.x < 0 || action.y < 0 || action.x >= map.width || action.y >= map.height) continue;
 
     const def = BOMB_CATALOG[bombType];
+
+    // Fart Escape special flow:
+    //   1. Compute a path from bomberman's current tile toward target.
+    //   2. Walk up to `fartEscapeMoveTiles` along that path this turn.
+    //   3. Store the remainder in queuedPath so next turn the bomberman
+    //      continues toward the target unless the player overrides.
+    //   4. Spawn the smoke cloud at the bomberman's ORIGINAL pre-move tile.
+    //   5. Do NOT push a BombInstance — the fart escape has no fuse / landing
+    //      phase; it's entirely resolved here.
+    if (bombType === 'fart_escape') {
+      const originX = bomberman.x;
+      const originY = bomberman.y;
+      // Deploy smoke cloud first (at the origin tile) so visuals reflect
+      // "smoke appears where I was, then I move".
+      const smokeShape = def.behavior.kind === 'smoke' ? def.behavior.shape : { kind: 'circle' as const, radius: 3 };
+      const smokeDur = def.behavior.kind === 'smoke' ? def.behavior.durationTurns : 4;
+      const closedDoorTiles = new Set<string>();
+      for (const door of state.doors ?? []) {
+        if (door.opened) continue;
+        for (const t of door.tiles) closedDoorTiles.add(`${t.x},${t.y}`);
+      }
+      const smokeTiles = shapeTiles(smokeShape, originX, originY, map, closedDoorTiles);
+      const cloud: SmokeCloud = {
+        id: nextSmokeId(),
+        ownerId: bomberman.playerId,
+        x: originX,
+        y: originY,
+        tiles: smokeTiles.map(t => ({ x: t.x, y: t.y })),
+        turnsRemaining: smokeDur,
+        radius: smokeShape.kind === 'circle' ? smokeShape.radius : 3,
+      };
+      state.smokeClouds.push(cloud);
+      events.push({
+        kind: 'smoke_spawned',
+        cloudId: cloud.id,
+        x: originX,
+        y: originY,
+        radius: cloud.radius,
+        tiles: cloud.tiles.map(t => ({ x: t.x, y: t.y })),
+        ownerId: bomberman.playerId,
+      });
+
+      // Pathfind toward target; walk 2 tiles along it.
+      const fullPath = findPath(originX, originY, action.x, action.y, map);
+      const walkTiles = Math.min(BALANCE.bombs.fartEscapeMoveTiles, fullPath.length);
+      let curX = originX;
+      let curY = originY;
+      for (let i = 0; i < walkTiles; i++) {
+        const step = fullPath[i];
+        if (!isWalkable(map, step.x, step.y)) break;
+        events.push({
+          kind: 'moved',
+          playerId: bomberman.playerId,
+          fromX: curX,
+          fromY: curY,
+          toX: step.x,
+          toY: step.y,
+        });
+        curX = step.x;
+        curY = step.y;
+        recordStep(bomberman.playerId, step.x, step.y);
+      }
+      bomberman.x = curX;
+      bomberman.y = curY;
+
+      // Queue the remainder for next turn. Player can override by submitting
+      // a new move target; otherwise we auto-step along this path.
+      const remainder = fullPath.slice(walkTiles);
+      bomberman.queuedPath = remainder.length > 0 ? remainder.map(t => ({ x: t.x, y: t.y })) : undefined;
+
+      // Emit a throw event so the client sees the Fart Escape happened.
+      events.push({
+        kind: 'throw',
+        playerId: bomberman.playerId,
+        bombId: cloud.id,
+        type: 'fart_escape',
+        fromX: originX,
+        fromY: originY,
+        x: action.x,
+        y: action.y,
+      });
+      continue; // Skip pushing a BombInstance
+    }
+
+    // Motion Detector Flare special flow: arm as a dormant mine, no BombInstance.
+    if (bombType === 'motion_detector_flare') {
+      if (!isWalkable(map, action.x, action.y)) continue;
+      const mine: Mine = {
+        id: nextMineId(),
+        kind: 'motion_detector',
+        ownerId: bomberman.playerId,
+        x: action.x,
+        y: action.y,
+        lifetimeRemaining: BALANCE.bombs.motionDetectorLifetime,
+        detectionRadius: BALANCE.bombs.motionDetectorRadius,
+      };
+      state.mines.push(mine);
+      events.push({
+        kind: 'mine_placed',
+        mineId: mine.id,
+        x: mine.x,
+        y: mine.y,
+        mineKind: 'motion_detector',
+        ownerId: bomberman.playerId,
+      });
+      events.push({
+        kind: 'throw',
+        playerId: bomberman.playerId,
+        bombId: mine.id,
+        type: 'motion_detector_flare',
+        fromX: bomberman.x,
+        fromY: bomberman.y,
+        x: action.x,
+        y: action.y,
+      });
+      continue;
+    }
+
     const bomb: BombInstance = {
       id: nextBombId(),
       type: bombType,
@@ -343,6 +573,29 @@ export function resolveTurn(
   /** Tracks who last damaged each player (for kill attribution). */
   const lastDamagedBy = new Map<string, string>();
   const triggeredBombIds = new Set<string>();
+  /** Mines flagged to trigger this turn, with the triggerer id (null for bomb-hit). */
+  const minesToTrigger = new Map<string, string | null>();
+
+  // --- 3.5. Phosphorus pending: spawn deferred fire tiles from last turn. ---
+  // Consumes ALL pending entries and creates fire tiles. Standing-on-fire damage
+  // is applied later in step 6 by the existing mechanism.
+  if (state.phosphorusPending.length > 0) {
+    for (const pending of state.phosphorusPending) {
+      for (const off of PHOSPHORUS_FIRE_OFFSETS) {
+        const tx = pending.originX + off.dx;
+        const ty = pending.originY + off.dy;
+        if (!isWalkable(map, tx, ty)) continue;
+        state.fireTiles.push({
+          x: tx,
+          y: ty,
+          turnsRemaining: pending.fireDurationTurns + 1, // +1 so aging at end-of-turn leaves it for the intended duration
+          ownerId: pending.ownerId,
+          kind: 'phosphorus',
+        });
+      }
+    }
+    state.phosphorusPending = [];
+  }
 
   // A worklist so scatter spawns can trigger in the same tick (rare — banana
   // children fuse 1 so they resolve next turn, but Rock scatter would fire now)
@@ -428,7 +681,10 @@ export function resolveTurn(
       type: bomb.type,
       x: bomb.x,
       y: bomb.y,
-      tiles: trigger.damageTiles.length > 0 ? trigger.damageTiles : trigger.fireTiles.length > 0 ? trigger.fireTiles : trigger.lightTiles,
+      tiles: trigger.damageTiles.length > 0 ? trigger.damageTiles
+        : trigger.fireTiles.length > 0 ? trigger.fireTiles
+        : trigger.stunTiles.length > 0 ? trigger.stunTiles
+        : trigger.lightTiles,
     });
 
     // Damage Bombermen on damage tiles
@@ -445,13 +701,19 @@ export function resolveTurn(
       }
     }
 
-    // Spawn fire tiles
+    // Spawn fire tiles (molotov) or phosphorus-flavored fire
     for (const tile of trigger.fireTiles) {
-      state.fireTiles.push({ x: tile.x, y: tile.y, turnsRemaining: trigger.fireDuration, ownerId: bomb.ownerId });
+      state.fireTiles.push({
+        x: tile.x,
+        y: tile.y,
+        turnsRemaining: trigger.fireDuration,
+        ownerId: bomb.ownerId,
+        kind: trigger.fireKind ?? 'molotov',
+      });
     }
 
     // Flare: create an ActiveFlare record (lightTiles are derived from flares each turn)
-    if (trigger.lightTiles.length > 0 && trigger.lightDuration > 0) {
+    if (trigger.lightTiles.length > 0 && trigger.lightDuration > 0 && bomb.type === 'flare') {
       state.flares.push({
         id: bomb.id,
         x: bomb.x,
@@ -459,6 +721,126 @@ export function resolveTurn(
         initialRadius: 4, // flare's circle radius from bomb config
         turnsRemaining: trigger.lightDuration,
       });
+    }
+
+    // Phosphorus: impact turn reveal + queue deferred fire spawn for next turn
+    if (trigger.phosphorusSeed) {
+      // +1 on turnsRemaining so the flare survives the end-of-turn aging
+      // step and is still in state when the impact turn is broadcast.
+      state.flares.push({
+        id: bomb.id,
+        x: bomb.x,
+        y: bomb.y,
+        initialRadius: 5,
+        turnsRemaining: trigger.lightDuration + 1,
+        kind: 'phosphorus',
+      });
+      state.phosphorusPending.push({
+        id: nextPhosphorusId(),
+        ownerId: bomb.ownerId,
+        originX: trigger.phosphorusSeed.originX,
+        originY: trigger.phosphorusSeed.originY,
+        fireDurationTurns: trigger.phosphorusSeed.fireDurationTurns,
+      });
+    }
+
+    // Stun application (Flash). Applies to bombermen on stunTiles — which is
+    // SEPARATE from damageTiles (Flash deals no damage). Spawn with
+    // turnsRemaining = stunTurns + 1 so the status survives this turn's
+    // end-of-turn aging step and is still active when the stunned player's
+    // NEXT input phase runs.
+    if (trigger.stunTurns > 0) {
+      for (const tile of trigger.stunTiles) {
+        for (const b of state.bombermen) {
+          if (!b.alive || b.escaped) continue;
+          if (b.x !== tile.x || b.y !== tile.y) continue;
+          b.statusEffects = (b.statusEffects ?? []).filter(s => s.kind !== 'stunned');
+          b.statusEffects.push({ kind: 'stunned', turnsRemaining: trigger.stunTurns + 1, sourceId: bomb.ownerId });
+          events.push({ kind: 'stunned', playerId: b.playerId, turnsRemaining: trigger.stunTurns });
+        }
+      }
+    }
+
+    // Cluster seed → place N mines at random positions in the area. Use a
+    // seed derived from match + turn + owner for determinism.
+    if (trigger.clusterSeed) {
+      const { area, mineCount } = trigger.clusterSeed;
+      const seedBase = hashString(`${state.matchId}:${state.turnNumber}:${bomb.ownerId}:${bomb.id}`);
+      const rng = createSeededRandom(seedBase);
+      const halfW = Math.floor(area.w / 2);
+      const halfH = Math.floor(area.h / 2);
+      const occupied = new Set<string>();
+      for (const m of state.mines) occupied.add(`${m.x},${m.y}`);
+      for (let i = 0; i < mineCount; i++) {
+        const dx = Math.floor(rng() * area.w) - halfW;
+        const dy = Math.floor(rng() * area.h) - halfH;
+        const mx = bomb.x + dx;
+        const my = bomb.y + dy;
+        if (!isWalkable(map, mx, my)) continue; // drop — no reroll
+        const key = `${mx},${my}`;
+        if (occupied.has(key)) continue;
+        occupied.add(key);
+        // If the mine lands directly on a bomberman, trigger immediately.
+        const standOn = state.bombermen.find(b => b.alive && !b.escaped && b.x === mx && b.y === my);
+        if (standOn) {
+          // Immediate plus-r1 explosion at this tile.
+          const tiles = shapeTiles({ kind: 'plus', radius: 1 }, mx, my, map, buildClosedDoorTiles());
+          events.push({
+            kind: 'mine_triggered',
+            mineId: `cluster_imm_${i}`,
+            x: mx,
+            y: my,
+            mineKind: 'cluster',
+            ownerId: bomb.ownerId,
+            triggeredBy: standOn.playerId,
+            tiles,
+          });
+          for (const t of tiles) {
+            for (const b of state.bombermen) {
+              if (!b.alive || b.escaped) continue;
+              if (b.x !== t.x || b.y !== t.y) continue;
+              if (damagedThisTurn.has(b.playerId)) continue;
+              damagedThisTurn.add(b.playerId);
+              b.hp -= 1;
+              b.bleedingTurns = BALANCE.match.bleedingDurationTurns;
+              lastDamagedBy.set(b.playerId, bomb.ownerId);
+              events.push({ kind: 'damaged', playerId: b.playerId, hpRemaining: b.hp });
+            }
+          }
+          continue;
+        }
+        const newMine: Mine = {
+          id: nextMineId(),
+          kind: 'cluster',
+          ownerId: bomb.ownerId,
+          x: mx,
+          y: my,
+          lifetimeRemaining: 9999, // cluster mines do not auto-expire
+        };
+        state.mines.push(newMine);
+        events.push({
+          kind: 'mine_placed',
+          mineId: newMine.id,
+          x: newMine.x,
+          y: newMine.y,
+          mineKind: 'cluster',
+          ownerId: bomb.ownerId,
+        });
+      }
+    }
+
+    // Mines hit by this bomb's damage tiles:
+    //   - Cluster mines get PRIMED for next turn (shake, then chain).
+    //   - Motion detector mines trigger immediately.
+    if (trigger.damageTiles.length > 0) {
+      for (const mine of state.mines) {
+        if (!trigger.damageTiles.some(t => t.x === mine.x && t.y === mine.y)) continue;
+        if (mine.kind === 'cluster') {
+          if (mine.primedCountdown === undefined) mine.primedCountdown = 1;
+        } else {
+          minesToTrigger.set(mine.id, null);
+        }
+      }
     }
 
     // Scatter → spawn child bombs immediately; fuseTurns decides if they resolve now or next turn
@@ -480,6 +862,144 @@ export function resolveTurn(
 
   // Remove triggered bombs from live list
   state.bombs = state.bombs.filter(b => !triggeredBombIds.has(b.id));
+
+  // --- 5b. Mine tick + detection + walk-over ---
+  // Decrement lifetime; check motion detector proximity; flag expired or
+  // walked-on mines for triggering. Cluster mines only trigger on walk-over,
+  // direct bomb hits (handled above), or being landed on by the cluster seed
+  // itself (handled in cluster_seed branch).
+  const ts = map.tileSize;
+  for (const mine of state.mines) {
+    if (minesToTrigger.has(mine.id)) continue;
+    // Primed mines count down each turn (cluster shake-then-chain pattern).
+    if (mine.primedCountdown !== undefined) {
+      mine.primedCountdown -= 1;
+      if (mine.primedCountdown <= 0) {
+        minesToTrigger.set(mine.id, null);
+        continue;
+      }
+      // Still shaking — skip other detection paths this turn.
+      continue;
+    }
+    // Walk-over: any bomberman who STEPPED ONTO the mine tile this turn
+    // triggers it — including intermediate rush / Fart Escape tiles, not
+    // just the final position. Falls back to final position so a
+    // bomberman who ended on the mine via spawn / teleport still trips it.
+    // Cluster triggers for any bomberman (including owner per spec);
+    // motion detector only triggers on enemy.
+    let stepper: BombermanState | null = null;
+    for (const b of state.bombermen) {
+      if (!b.alive || b.escaped) continue;
+      const steps = steppedTilesByPlayer.get(b.playerId);
+      const stepped = steps?.some(s => s.x === mine.x && s.y === mine.y) ?? false;
+      const endsOn = b.x === mine.x && b.y === mine.y;
+      if (stepped || endsOn) { stepper = b; break; }
+    }
+    if (stepper) {
+      if (mine.kind === 'cluster') {
+        minesToTrigger.set(mine.id, stepper.playerId);
+        continue;
+      }
+      if (mine.kind === 'motion_detector' && stepper.playerId !== mine.ownerId) {
+        minesToTrigger.set(mine.id, stepper.playerId);
+        continue;
+      }
+    }
+    if (mine.kind === 'motion_detector') {
+      // Enemy within Chebyshev detection radius AND with line of sight.
+      const radius = mine.detectionRadius ?? BALANCE.bombs.motionDetectorRadius;
+      const detected = state.bombermen.find(b => {
+        if (!b.alive || b.escaped) return false;
+        if (b.playerId === mine.ownerId) return false;
+        if (chebyshevDistance(mine.x, mine.y, b.x, b.y) > radius) return false;
+        return hasLineOfSight(
+          mine.x * ts + ts / 2, mine.y * ts + ts / 2,
+          b.x * ts + ts / 2, b.y * ts + ts / 2,
+          map.grid, ts,
+        );
+      });
+      if (detected) {
+        minesToTrigger.set(mine.id, detected.playerId);
+        continue;
+      }
+    }
+    // Tick lifetime — trigger passively if expired.
+    mine.lifetimeRemaining -= 1;
+    if (mine.lifetimeRemaining <= 0) {
+      minesToTrigger.set(mine.id, null);
+    }
+  }
+
+  // Process triggered mines. Motion detector: spawn an orange flare reveal.
+  // Cluster: spawn a plus-r1 explosion that PRIMES (not triggers) adjacent
+  // mines — they shake for a turn and chain next turn.
+  const mineTriggerList: Array<{ mineId: string; by: string | null }> = [];
+  for (const [mineId, by] of minesToTrigger) mineTriggerList.push({ mineId, by });
+  for (const { mineId, by } of mineTriggerList) {
+    const mineIdx = state.mines.findIndex(m => m.id === mineId);
+    if (mineIdx < 0) continue;
+    const mine = state.mines[mineIdx];
+    state.mines.splice(mineIdx, 1);
+
+    // Cluster mine stepped on = instant combat. Break the stepper's Rush
+    // immediately so they can't sprint through a minefield at 2 tiles/turn.
+    // Only applies when a bomberman triggered it (by !== null); passive
+    // lifetime expiry or bomb-hit chains don't break rush for anyone.
+    if (mine.kind === 'cluster' && by) {
+      const stepper = state.bombermen.find(b => b.playerId === by);
+      if (stepper && stepper.rushActive) {
+        stepper.rushActive = false;
+        stepper.rushCooldown = 0;
+        events.push({ kind: 'rush_changed', playerId: stepper.playerId, active: false });
+      } else if (stepper) {
+        stepper.rushCooldown = 0;
+      }
+    }
+
+    let tiles: Tile[] = [];
+    if (mine.kind === 'motion_detector') {
+      // Fire a flare at this tile (orange variant).
+      state.flares.push({
+        id: mine.id,
+        x: mine.x,
+        y: mine.y,
+        initialRadius: 4,
+        turnsRemaining: 3,
+        kind: 'motion_detector',
+      });
+    } else if (mine.kind === 'cluster') {
+      tiles = shapeTiles({ kind: 'plus', radius: 1 }, mine.x, mine.y, map, buildClosedDoorTiles());
+      for (const t of tiles) {
+        for (const b of state.bombermen) {
+          if (!b.alive || b.escaped) continue;
+          if (b.x !== t.x || b.y !== t.y) continue;
+          if (damagedThisTurn.has(b.playerId)) continue;
+          damagedThisTurn.add(b.playerId);
+          b.hp -= 1;
+          b.bleedingTurns = BALANCE.match.bleedingDurationTurns;
+          lastDamagedBy.set(b.playerId, mine.ownerId);
+          events.push({ kind: 'damaged', playerId: b.playerId, hpRemaining: b.hp });
+        }
+        // Prime any adjacent cluster mine (direct hit on its tile) — don't
+        // trigger this turn; let it shake for a turn then chain.
+        const chained = state.mines.find(m => m.x === t.x && m.y === t.y);
+        if (chained && chained.kind === 'cluster' && chained.primedCountdown === undefined) {
+          chained.primedCountdown = 1;
+        }
+      }
+    }
+
+    events.push({
+      kind: 'mine_triggered',
+      mineId: mine.id,
+      x: mine.x,
+      y: mine.y,
+      mineKind: mine.kind,
+      ownerId: mine.ownerId,
+      triggeredBy: by,
+      tiles,
+    });
+  }
 
   // --- 6. Fire-tile standing damage (Bombermen on existing fire tiles) ---
   for (const fire of state.fireTiles) {
@@ -514,10 +1034,40 @@ export function resolveTurn(
         const tx = flare.x + dx;
         const ty = flare.y + dy;
         if (tx >= 0 && ty >= 0 && tx < map.width && ty < map.height) {
-          state.lightTiles.push({ x: tx, y: ty, turnsRemaining: flare.turnsRemaining });
+          state.lightTiles.push({ x: tx, y: ty, turnsRemaining: flare.turnsRemaining, kind: flare.kind });
         }
       }
     }
+  }
+
+  // --- 7b. Age smoke clouds ---
+  const expiredCloudIds: string[] = [];
+  state.smokeClouds = state.smokeClouds
+    .map(c => ({ ...c, turnsRemaining: c.turnsRemaining - 1 }))
+    .filter(c => {
+      if (c.turnsRemaining <= 0) {
+        expiredCloudIds.push(c.id);
+        return false;
+      }
+      return true;
+    });
+  for (const id of expiredCloudIds) events.push({ kind: 'smoke_expired', cloudId: id });
+
+  // --- 7c. Age status effects (Stunned, etc.) ---
+  for (const b of state.bombermen) {
+    if (!b.statusEffects || b.statusEffects.length === 0) continue;
+    const before = b.statusEffects.length;
+    b.statusEffects = b.statusEffects
+      .map(s => ({ ...s, turnsRemaining: s.turnsRemaining - 1 }))
+      .filter(s => {
+        if (s.turnsRemaining <= 0) {
+          if (s.kind === 'stunned') events.push({ kind: 'stun_expired', playerId: b.playerId });
+          return false;
+        }
+        return true;
+      });
+    // Guard unused warning
+    void before;
   }
 
   // --- 8. Age bleeding ---
@@ -559,7 +1109,7 @@ export function resolveTurn(
   // turns and resets otherwise; escape fires at count 1.
   for (const b of state.bombermen) {
     if (!b.alive || b.escaped) continue;
-    const action = actions.get(b.playerId) ?? { kind: 'idle' };
+    const action = effectiveActions.get(b.playerId) ?? { kind: 'idle' };
     const onHatch = state.escapeTiles.some(t => t.x === b.x && t.y === b.y);
     if (onHatch && action.kind === 'idle') {
       b.onHatchIdleTurns += 1;
@@ -646,4 +1196,13 @@ function tryStashBomb(inventory: BombInventory, type: BombType, count: number): 
   }
 
   return count - remaining;
+}
+
+function hashString(s: string): number {
+  let h = 0x811c9dc5 | 0;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
 }

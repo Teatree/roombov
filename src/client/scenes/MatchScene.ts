@@ -14,7 +14,7 @@ import type { BombermanState } from '@shared/types/bomberman.ts';
 import type { BombType } from '@shared/types/bombs.ts';
 import { BOMB_CATALOG } from '@shared/config/bombs.ts';
 import { BALANCE } from '@shared/config/balance.ts';
-import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
+import { preloadBombIcons, bombIconFrame, bombNeedsLabel, bombShortLabel } from '../systems/BombIcons.ts';
 
 /**
  * Click targeting mode.
@@ -130,6 +130,17 @@ export class MatchScene extends Phaser.Scene {
   private slotCountTexts: Phaser.GameObjects.Text[] = [];
   private slotHighlights: Phaser.GameObjects.Graphics[] = [];
   private slotIcons: Phaser.GameObjects.Image[] = [];
+  /** Semi-transparent gray overlay covering the bomb tray + STUNNED banner
+   *  shown while the local bomberman has the stunned status effect. */
+  private stunHudOverlay: Phaser.GameObjects.Graphics | null = null;
+  private stunHudLabel: Phaser.GameObjects.Text | null = null;
+  /**
+   * Per-slot placeholder label text. For new bomb types (no dedicated icon art
+   * yet) we draw the bomb's short name over the reused legacy icon so players
+   * can tell them apart. Empty string + invisible when the slot holds a bomb
+   * whose real icon is already in the sheet.
+   */
+  private slotNameTexts: Phaser.GameObjects.Text[] = [];
   private errorText!: Phaser.GameObjects.Text;
 
   // Loot panel — appears above the bomb tray when standing on loot
@@ -629,6 +640,15 @@ export class MatchScene extends Phaser.Scene {
       for (const t of prevLightTiles) pushUnique(t);
       for (const t of state.lightTiles) pushUnique(t);
       this.fogRenderer.setExternalReveals(unionTiles);
+      // Suppress LoS when the local bomberman is inside any smoke cloud —
+      // per design, the smoked player only sees their own tile plus the
+      // seen-dim map they already discovered. Also hoists bomb graphics
+      // above the fog so the smoked player can still see bombs clearly.
+      const meInSmoke = !!me && (state.smokeClouds ?? []).some(c =>
+        c.tiles.some(t => t.x === me.x && t.y === me.y),
+      );
+      this.fogRenderer.setLosSuppressed(meInSmoke);
+      this.bombRenderer?.setSmokeMode(meInSmoke);
       if (me) this.fogRenderer.update(me.x, me.y);
 
       const transitionMs = BALANCE.match.transitionPhaseSeconds * 1000;
@@ -636,14 +656,23 @@ export class MatchScene extends Phaser.Scene {
         if (!this.fogRenderer || this.state !== state) return;
         this.fogRenderer.setExternalReveals(state.lightTiles);
         const myNow = this.state.bombermen.find(b => b.playerId === this.myPlayerId);
-        if (myNow) this.fogRenderer.update(myNow.x, myNow.y);
+        if (myNow) {
+          const meInSmokeNow = (state.smokeClouds ?? []).some(c =>
+            c.tiles.some(t => t.x === myNow.x && t.y === myNow.y),
+          );
+          this.fogRenderer.setLosSuppressed(meInSmokeNow);
+          this.bombRenderer?.setSmokeMode(meInSmokeNow);
+          this.fogRenderer.update(myNow.x, myNow.y);
+        }
       });
     }
 
     // Keep bomb/fire/light visuals in sync with the state
     this.bombRenderer?.syncBombs(state.bombs);
-    this.bombRenderer?.syncFire(state.fireTiles);
+    this.bombRenderer?.syncFire(state.fireTiles, state.turnNumber);
     this.bombRenderer?.syncFlares(state.flares);
+    this.bombRenderer?.syncSmokeClouds(state.smokeClouds ?? []);
+    this.bombRenderer?.syncMines(state.mines ?? []);
 
     // Decal decay pass — recompute alpha for every existing decal and blood
     // splat based on the current turn number. See BALANCE.decalDecay.
@@ -858,6 +887,18 @@ export class MatchScene extends Phaser.Scene {
     // Burst lasts ~70% of a transition — with a 50% start, it ends at ~120%
     // of the transition, which is the intended linger.
     const burstDurationMs = Math.round(transitionMs * 0.7);
+    // Pre-collect cluster mine positions from this turn's mine_placed
+    // events so we can animate bombs flying out of the cluster cylinder
+    // toward each mine landing site.
+    const clusterMinesByOwner = new Map<string, Array<{ x: number; y: number }>>();
+    for (const ev of events) {
+      if (ev.kind !== 'mine_placed') continue;
+      if (ev.mineKind !== 'cluster') continue;
+      const ownerId = ev.ownerId as string;
+      if (!clusterMinesByOwner.has(ownerId)) clusterMinesByOwner.set(ownerId, []);
+      clusterMinesByOwner.get(ownerId)!.push({ x: ev.x as number, y: ev.y as number });
+    }
+
     for (const ev of events) {
       if (ev.kind !== 'bomb_triggered') continue;
       const type = ev.type as BombType;
@@ -867,7 +908,48 @@ export class MatchScene extends Phaser.Scene {
       const bombId = ev.bombId as string;
       const arcDelay = arcDurationByBombId.get(bombId) ?? 0;
       const startDelay = Math.max(arcDelay, explosionStartMs);
+      if (type === 'cluster_bomb') {
+        // Route cluster impact through the dedicated cylinder+scatter
+        // animation. Look up the mine positions placed this turn by the
+        // throwing player. The throw event carried ownerId via playerId.
+        const throwEv = events.find(e => e.kind === 'throw' && e.bombId === bombId);
+        const ownerId = (throwEv?.playerId as string | undefined) ?? '';
+        const mines = clusterMinesByOwner.get(ownerId) ?? [];
+        this.bombRenderer.spawnClusterCylinder(centerX, centerY, mines, startDelay);
+        continue;
+      }
       this.bombRenderer.spawnExplosion(type, centerX, centerY, tiles, startDelay, burstDurationMs, this.state?.turnNumber ?? 0);
+    }
+
+    // Mine triggers render as explosions too. Cluster mines get a plus-r1
+    // fire boom + scorch decal (same as a contact bomb). Motion detector
+    // mines are handled via flare spawn server-side (flame appears via
+    // syncFlares), but we also draw a small flash + whitish decal at the
+    // trigger tile so the player sees the mine "popped".
+    for (const ev of events) {
+      if (ev.kind !== 'mine_triggered') continue;
+      const mineKind = ev.mineKind as 'motion_detector' | 'cluster';
+      const tiles = (ev.tiles as Array<{ x: number; y: number }>) ?? [];
+      const centerX = ev.x as number;
+      const centerY = ev.y as number;
+      if (mineKind === 'cluster') {
+        // Reuse contact bomb's explosion + decal path.
+        this.bombRenderer.spawnExplosion(
+          'contact', centerX, centerY, tiles,
+          explosionStartMs, burstDurationMs, this.state?.turnNumber ?? 0,
+        );
+      } else {
+        // Motion detector: single flash + whitish decal at mine tile.
+        this.bombRenderer.spawnExplosion(
+          'flare', centerX, centerY, [{ x: centerX, y: centerY }],
+          explosionStartMs, burstDurationMs, this.state?.turnNumber ?? 0,
+        );
+        // Small "flare cartridge fires upward" particle effect — orange
+        // streak shoots up from the mine tile to sell the trigger.
+        this.time.delayedCall(explosionStartMs, () => {
+          this.bombRenderer?.spawnMotionDetectorLaunch(centerX, centerY);
+        });
+      }
     }
 
     // Teleport pass: Ender Pearl teleports the thrower at the halfway point
@@ -1443,6 +1525,9 @@ export class MatchScene extends Phaser.Scene {
     // Dead players can't interact with anything
     const me = this.myBomberman();
     if (!me || !me.alive) return;
+    // Stun gate: ignore clicks while stunned — the server would reject them
+    // anyway. HUD renders a lock icon to make the state visible.
+    if ((me.statusEffects ?? []).some(s => s.kind === 'stunned' && s.turnsRemaining > 0)) return;
 
     // Loot panel intercepts first (it sits above the bomb tray).
     const lootSlot = this.hitTestLootPanel(pointer.x, pointer.y);
@@ -1579,6 +1664,27 @@ export class MatchScene extends Phaser.Scene {
     trayBg.fillRoundedRect(trayX - 10, trayY - 10, trayWidth + 20, SLOT_SIZE + 20, 6);
     this.hud(trayBg);
 
+    // Stun HUD overlay — drawn on top of the tray + all slots, hidden by
+    // default. renderHud toggles visibility based on the local bomberman's
+    // status effects. Depth > slot depths (1001–1003) so it fully obscures
+    // interactive elements behind it.
+    const stunOverlay = this.add.graphics().setDepth(1050).setVisible(false);
+    stunOverlay.fillStyle(0x223355, 0.7);
+    stunOverlay.fillRoundedRect(trayX - 10, trayY - 10, trayWidth + 20, SLOT_SIZE + 20, 6);
+    stunOverlay.lineStyle(3, 0x88ccff, 0.9);
+    stunOverlay.strokeRoundedRect(trayX - 10, trayY - 10, trayWidth + 20, SLOT_SIZE + 20, 6);
+    this.stunHudOverlay = this.hud(stunOverlay);
+
+    const stunLabel = this.add.text(
+      trayX + trayWidth / 2, trayY + SLOT_SIZE / 2,
+      'STUNNED',
+      {
+        fontSize: '24px', color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
+        stroke: '#000022', strokeThickness: 5,
+      },
+    ).setOrigin(0.5).setDepth(1051).setVisible(false);
+    this.stunHudLabel = this.hud(stunLabel);
+
     for (let i = 0; i < SLOT_COUNT; i++) {
       const sx = trayX + i * (SLOT_SIZE + SLOT_GAP);
 
@@ -1601,6 +1707,16 @@ export class MatchScene extends Phaser.Scene {
         .setDepth(1001)
         .setVisible(false);
       this.slotIcons.push(this.hud(icon));
+
+      // Placeholder name overlay for bombs without dedicated icons.
+      const nameTxt = this.add.text(
+        sx + SLOT_SIZE / 2, trayY + SLOT_SIZE / 2, '',
+        {
+          fontSize: '12px', color: '#ffffff', fontFamily: 'monospace',
+          fontStyle: 'bold', stroke: '#000000', strokeThickness: 3,
+        },
+      ).setOrigin(0.5).setDepth(1002).setVisible(false);
+      this.slotNameTexts.push(this.hud(nameTxt));
 
       const countTxt = this.add.text(sx + SLOT_SIZE / 2, trayY + SLOT_SIZE - 4, '', {
         fontSize: '14px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
@@ -1651,6 +1767,14 @@ export class MatchScene extends Phaser.Scene {
       this.hpText.setColor('#666');
       this.hideLootPanel();
     }
+
+    // Stun HUD lock: grayed overlay + STUNNED banner over the bomb tray
+    // when the local bomberman has an active stunned status effect.
+    const stunned = !!me && me.alive && (me.statusEffects ?? []).some(
+      s => s.kind === 'stunned' && s.turnsRemaining > 0,
+    );
+    this.stunHudOverlay?.setVisible(stunned);
+    this.stunHudLabel?.setVisible(stunned);
   }
 
   private renderBombSlots(me: BombermanState): void {
@@ -1680,6 +1804,16 @@ export class MatchScene extends Phaser.Scene {
           icon.setVisible(false);
         }
       }
+      // Placeholder label for bombs with no dedicated icon art.
+      const nameTxt = this.slotNameTexts[i];
+      if (nameTxt) {
+        if (bombType && bombNeedsLabel(bombType)) {
+          nameTxt.setText(bombShortLabel(bombType));
+          nameTxt.setVisible(true);
+        } else {
+          nameTxt.setVisible(false);
+        }
+      }
 
       // Key badge always shows the number; dim it when slot is empty
       this.slotLabelTexts[i].setAlpha(bombType ? 1 : 0.3);
@@ -1702,6 +1836,9 @@ export class MatchScene extends Phaser.Scene {
     if (!this.state) return;
     const me = this.myBomberman();
     if (!me || !me.alive || me.escaped) return;
+    // Stun gate: server will reject any action from a stunned bomberman,
+    // so just ignore clicks client-side for clean UX (no feedback needed).
+    if ((me.statusEffects ?? []).some(s => s.kind === 'stunned' && s.turnsRemaining > 0)) return;
 
     // Loot swap shortcut: clicking an inventory slot while a loot swap is
     // pending triggers the swap instead of entering aim mode.
@@ -1836,6 +1973,13 @@ export class MatchScene extends Phaser.Scene {
         sx + lootSlotSize / 2, slotY + 22, 'bomb_icons', bombIconFrame(loot.type),
       ).setDisplaySize(28, 28).setDepth(1012));
       this.lootPanelObjects.push(lootIcon);
+      if (bombNeedsLabel(loot.type)) {
+        const lootLabel = this.hud(this.add.text(
+          sx + lootSlotSize / 2, slotY + 22, bombShortLabel(loot.type),
+          { fontSize: '10px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold', stroke: '#000000', strokeThickness: 3 },
+        ).setOrigin(0.5).setDepth(1013));
+        this.lootPanelObjects.push(lootLabel);
+      }
 
       const countText = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + 42, `x${loot.count}`, {
         fontSize: '12px', color: isPending ? '#ffcc44' : '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',

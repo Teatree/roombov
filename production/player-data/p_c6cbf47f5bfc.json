@@ -1,0 +1,46 @@
+{
+  "id": "p_c6cbf47f5bfc",
+  "createdAt": 1776553554056,
+  "updatedAt": 1776553652864,
+  "coins": 239,
+  "ownedBombermen": [
+    {
+      "id": "owned_p_c6cbf47f5bfc_1776553558789_vdwe",
+      "name": "Zephyr",
+      "tier": "paid_expensive",
+      "colors": {
+        "shirt": 11917122,
+        "pants": 7481482,
+        "hair": 6108338
+      },
+      "tint": 10842073,
+      "character": "char6",
+      "inventory": {
+        "slots": [
+          {
+            "type": "phosphorus",
+            "count": 5
+          },
+          {
+            "type": "motion_detector_flare",
+            "count": 5
+          },
+          {
+            "type": "flash",
+            "count": 3
+          },
+          {
+            "type": "fart_escape",
+            "count": 4
+          }
+        ]
+      },
+      "purchasedAt": 1776553558789,
+      "sourceTemplateId": "cycle_1776553528639_4_paid_expensive"
+    }
+  ],
+  "equippedBombermanId": "owned_p_c6cbf47f5bfc_1776553558789_vdwe",
+  "bombStockpile": {
+    "delay_tricky": 2
+  }
+}

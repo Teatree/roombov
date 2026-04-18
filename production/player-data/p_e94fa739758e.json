@@ -1,0 +1,48 @@
+{
+  "id": "p_e94fa739758e",
+  "createdAt": 1776552673048,
+  "updatedAt": 1776553188317,
+  "coins": 545,
+  "ownedBombermen": [
+    {
+      "id": "owned_p_e94fa739758e_1776552675043_kxx7",
+      "name": "Duffy",
+      "tier": "free",
+      "colors": {
+        "shirt": 4380515,
+        "pants": 9065512,
+        "hair": 3424946
+      },
+      "tint": 15446435,
+      "character": "char5",
+      "inventory": {
+        "slots": [
+          {
+            "type": "flash",
+            "count": 5
+          },
+          {
+            "type": "phosphorus",
+            "count": 3
+          },
+          {
+            "type": "fart_escape",
+            "count": 5
+          },
+          {
+            "type": "motion_detector_flare",
+            "count": 3
+          }
+        ]
+      },
+      "purchasedAt": 1776552675043,
+      "sourceTemplateId": "cycle_1776552640546_1_free"
+    }
+  ],
+  "equippedBombermanId": "owned_p_e94fa739758e_1776552675043_kxx7",
+  "bombStockpile": {
+    "bomb": 4,
+    "flare": 1,
+    "fart_escape": 1
+  }
+}

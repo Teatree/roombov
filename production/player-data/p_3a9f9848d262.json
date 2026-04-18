@@ -1,0 +1,14 @@
+{
+  "id": "p_3a9f9848d262",
+  "createdAt": 1776555258709,
+  "updatedAt": 1776555350181,
+  "coins": 488,
+  "ownedBombermen": [],
+  "equippedBombermanId": null,
+  "bombStockpile": {
+    "banana": 1,
+    "delay_tricky": 4,
+    "flare": 5,
+    "big_huge": 2
+  }
+}

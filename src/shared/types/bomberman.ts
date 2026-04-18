@@ -9,7 +9,7 @@
  * (position, hp, live inventory) by the match room.
  */
 
-import type { BombType } from './bombs.ts';
+import type { BombType, StatusEffect } from './bombs.ts';
 
 /** Tier drives price range + starting bomb count + rarity of premium bombs. */
 export type BombermanTier = 'free' | 'paid' | 'paid_expensive';
@@ -140,4 +140,12 @@ export interface BombermanState {
    * Resets to 0 whenever the bomberman moves, throws, or steps off.
    */
   onHatchIdleTurns: number;
+  /** Active status effects (Stunned from Flash, etc.). Empty by default. */
+  statusEffects: StatusEffect[];
+  /**
+   * Queued movement waypoints set by Fart Escape. If the player submits no
+   * new move next turn, the server consumes one waypoint; if they submit a
+   * new move target this is cleared. Optional/undefined when no queue.
+   */
+  queuedPath?: Array<{ x: number; y: number }>;
 }
