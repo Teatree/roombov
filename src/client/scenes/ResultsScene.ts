@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { NetworkManager } from '../NetworkManager.ts';
 
 export interface MatchResultsData {
   outcome: 'escaped' | 'died' | 'lost';
@@ -156,8 +157,18 @@ export class ResultsScene extends Phaser.Scene {
 
     playBtn.on('pointerover', () => playBtn.setColor('#88ccff'));
     playBtn.on('pointerout', () => playBtn.setColor('#44aaff'));
-    playBtn.on('pointerdown', () => this.scene.start('LobbyScene'));
+    playBtn.on('pointerdown', () => this.backToLobby());
 
-    this.input.keyboard?.on('keydown-ESC', () => this.scene.start('LobbyScene'));
+    this.input.keyboard?.on('keydown-ESC', () => this.backToLobby());
+  }
+
+  /**
+   * Release the server-side session binding before leaving the scene. Without
+   * this, the server still treats us as "in a match" until the room-wide
+   * finalize fires, which silently rejects the next `join_match` attempt.
+   */
+  private backToLobby(): void {
+    NetworkManager.getSocket().emit('leave_match');
+    this.scene.start('LobbyScene');
   }
 }

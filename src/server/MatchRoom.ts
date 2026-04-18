@@ -17,6 +17,7 @@ import type { ClientToServerEvents, ServerToClientEvents } from '../shared/types
 import type { MatchConfig, MatchState, PlayerAction, Chest, DroppedBody } from '../shared/types/match.ts';
 import type { LootBombMsg } from '../shared/types/messages.ts';
 import type { BombermanState } from '../shared/types/bomberman.ts';
+import { CHARACTER_VARIANTS } from '../shared/types/bomberman.ts';
 import type { MapData } from '../shared/types/map.ts';
 import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import { BALANCE } from '../shared/config/balance.ts';
@@ -153,6 +154,7 @@ export class MatchRoom {
             tier,
             colors: { shirt: tint, pants: tint, hair: tint },
             tint,
+            character: CHARACTER_VARIANTS[Math.floor(rng() * CHARACTER_VARIANTS.length)],
             inventory: { slots },
             purchasedAt: Date.now(),
             sourceTemplateId: 'bot',
@@ -193,6 +195,7 @@ export class MatchRoom {
         bombermanId: equipped?.id ?? 'none',
         colors: equipped?.colors ?? { shirt: 0x888888, pants: 0x444444, hair: 0x222222 },
         tint: equipped?.tint ?? 0xffffff,
+        character: equipped?.character ?? 'char1',
         x: spawn.x,
         y: spawn.y,
         hp: BALANCE.match.bombermanMaxHp,
@@ -205,6 +208,8 @@ export class MatchRoom {
         escaped: false,
         rushCooldown: 0,
         rushActive: false,
+        teleportedThisTurn: false,
+        onHatchIdleTurns: 0,
       };
     });
 

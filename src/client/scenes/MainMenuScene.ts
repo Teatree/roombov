@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { NetworkManager } from '../NetworkManager.ts';
-import { ProfileStore } from '../ClientState.ts';
+import { ProfileStore, UiAnimLock } from '../ClientState.ts';
 import { ActivityIndicator } from '../systems/ActivityIndicator.ts';
 import { ensureBombermanAnims, createShopBombermanSprite, preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
 
@@ -139,8 +139,12 @@ export class MainMenuScene extends Phaser.Scene {
       return;
     }
 
-    // Walking-down animation tinted with the equipped Bomberman's color
-    const preview = createShopBombermanSprite(this, 0, 0, equipped.tint, 1);
+    // Equipped Bomberman preview. Character variant is persistent on the
+    // owned Bomberman; the UI animation (idle/idle3/walk) is stable-until-match
+    // via UiAnimLock — refreshes only after playing a match with this one.
+    const preview = createShopBombermanSprite(
+      this, 0, 0, equipped.tint, equipped.character, UiAnimLock.get(equipped.id), 1,
+    );
     this.equippedContainer.add(preview);
 
     const label = this.add.text(0, 70, `${equipped.name ?? equipped.tier.replace('_', ' ')}`, {

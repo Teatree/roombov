@@ -36,10 +36,15 @@ export const BALANCE = {
     rush: {
       /** Master toggle for the rush system. */
       enabled: true,
-      /** Chebyshev distance to an enemy Bomberman that breaks rush. */
-      proximityRadius: 6,
-      /** Chebyshev distance to a placed bomb that breaks rush. */
-      bombProximityRadius: 6,
+      /**
+       * Chebyshev distance to an enemy Bomberman that breaks rush.
+       * IMPORTANT: also gated on mutual line-of-sight in TurnResolver —
+       * an enemy at 8 tiles with a wall between you does NOT break rush.
+       */
+      proximityRadius: 8,
+      /** Chebyshev distance to a placed bomb that breaks rush. Not LoS-gated —
+       *  bombs are loud, you feel them through walls and fog. */
+      bombProximityRadius: 8,
       /** Consecutive peaceful turns needed to activate rush. */
       cooldownTurns: 3,
     },
@@ -49,6 +54,17 @@ export const BALANCE = {
     startingCoins: 500,
     /** Hard cap on how many Bombermen a player can own at once. */
     ownedBombermenCap: 5,
+  },
+  // DECAL DECAY — scorch marks, ender pearl decals, and blood splats fade
+  // with age measured in turns from the turn they spawned:
+  //   age <= fullTurns              → 100% opacity
+  //   fullTurns < age < fullTurns + fadeTurns → linearly fades 100% → minOpacity
+  //   age >= fullTurns + fadeTurns  → stays at minOpacity forever
+  // Default: full for 5 turns, then fades to 50% over the next 20 turns.
+  decalDecay: {
+    fullTurns: 5,
+    fadeTurns: 20,
+    minOpacity: 0.5,
   },
   bots: {
     /** Max bots that can be added to a single match. */

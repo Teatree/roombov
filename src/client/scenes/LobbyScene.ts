@@ -102,7 +102,9 @@ export class LobbyScene extends Phaser.Scene {
     });
 
     socket.on('match_start', () => {
-      this.scene.start('MatchScene');
+      // Pass our matchId so MatchScene can ignore any `match_state` broadcasts
+      // coming from a previous match whose socket.io room cleanup raced us.
+      this.scene.start('MatchScene', { matchId: this.joinedMatchId });
     });
 
     // Warn if no Bomberman is equipped

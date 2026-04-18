@@ -1,24 +1,59 @@
 {
   "id": "p_3a9ad8b22613",
   "createdAt": 1775946762703,
-  "updatedAt": 1776380918367,
-  "coins": 1978,
+  "updatedAt": 1776538763607,
+  "coins": 3033,
   "ownedBombermen": [
     {
-      "id": "owned_p_3a9ad8b22613_1776202972053_g7gn",
-      "name": "Nolan",
+      "id": "owned_p_3a9ad8b22613_1776527247522_9x15",
+      "name": "Kelly",
       "tier": "free",
       "colors": {
-        "shirt": 4380623,
-        "pants": 6826122,
-        "hair": 3453500
+        "shirt": 11917122,
+        "pants": 4270218,
+        "hair": 3443378
       },
-      "tint": 13797361,
+      "tint": 10743959,
+      "character": "char2",
       "inventory": {
         "slots": [
           {
-            "type": "delay_wide",
+            "type": "delay",
+            "count": 2
+          },
+          {
+            "type": "ender_pearl",
+            "count": 5
+          },
+          {
+            "type": "delay_tricky",
             "count": 3
+          },
+          {
+            "type": "flare",
+            "count": 2
+          }
+        ]
+      },
+      "purchasedAt": 1776527247522,
+      "sourceTemplateId": "cycle_1776527234994_0_free"
+    },
+    {
+      "id": "owned_p_3a9ad8b22613_1776538586720_293h",
+      "name": "Casey",
+      "tier": "free",
+      "colors": {
+        "shirt": 14134594,
+        "pants": 9054289,
+        "hair": 11678859
+      },
+      "tint": 15236505,
+      "character": "char5",
+      "inventory": {
+        "slots": [
+          {
+            "type": "delay_tricky",
+            "count": 5
           },
           {
             "type": "flare",
@@ -26,18 +61,18 @@
           },
           {
             "type": "delay",
-            "count": 3
+            "count": 4
           },
           {
-            "type": "ender_pearl",
-            "count": 2
+            "type": "delay_big",
+            "count": 5
           }
         ]
       },
-      "purchasedAt": 1776202972053,
-      "sourceTemplateId": "cycle_1776202971181_1_free"
+      "purchasedAt": 1776538586720,
+      "sourceTemplateId": "cycle_1776538560400_1_free"
     }
   ],
-  "equippedBombermanId": "owned_p_3a9ad8b22613_1776202972053_g7gn",
+  "equippedBombermanId": "owned_p_3a9ad8b22613_1776538586720_293h",
   "bombStockpile": {}
 }

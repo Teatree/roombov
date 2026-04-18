@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import type { BombermanState } from '@shared/types/bomberman.ts';
+import type { BombermanState, CharacterVariant } from '@shared/types/bomberman.ts';
 import type { MatchState } from '@shared/types/match.ts';
 import { BALANCE } from '@shared/config/balance.ts';
 
@@ -27,15 +27,32 @@ import { BALANCE } from '@shared/config/balance.ts';
  *   - tick(time) every frame from update()
  */
 
-export type Facing = 'down' | 'left' | 'right' | 'up';
-type AnimState = 'idle' | 'walk' | 'hurt' | 'death' | 'throw';
+export type Facing =
+  | 'right' | 'down-right' | 'down' | 'down-left'
+  | 'left' | 'up-left' | 'up' | 'up-right';
+type AnimState = 'idle' | 'walk' | 'run' | 'hurt' | 'death' | 'throw';
 
-/** Frame rate for the death animation — must match the anim registration in MatchScene. */
+/** Frame rate for the death animation — must match the anim registration in BombermanAnimations. */
 const DEATH_FPS = 8;
-const DEATH_FRAMES = 7;
-/** Frame rate for the hurt animation. */
-const HURT_FPS = 12;
-const HURT_FRAMES = 5;
+const DEATH_FRAMES = 8;
+
+/**
+ * Per-tile sprite anchor. Origin (0.5, 0.75) + a +7px push puts the feet at
+ * the tile floor. Frames are 128×128 (2× the prior 64×64 sheets), so scale
+ * is 0.5 to keep the on-screen size the same as before.
+ */
+const SPRITE_ORIGIN_X = 0.5;
+const SPRITE_ORIGIN_Y = 0.75;
+const SPRITE_Y_OFFSET_PX = 7;
+const SPRITE_SCALE = 0.5;
+
+/**
+ * Alpha applied to corpse sprites that sit in seen-dim fog (RTS-fog
+ * remembered but not in current LOS). Living enemies aren't drawn at all
+ * outside LOS, so this only affects corpses. Raised from 0.45 so bodies
+ * stay clearly readable even when the area is dimmed.
+ */
+const CORPSE_SEEN_DIM_ALPHA = 0.75;
 
 export function deathAnimationDurationMs(): number {
   return Math.round((DEATH_FRAMES / DEATH_FPS) * 1000);
@@ -68,6 +85,10 @@ interface BombermanSpriteEntry {
   preThrowFacing: Facing;
   /** Wall-clock time at which this escaped Bomberman should be destroyed. 0 means not pending. */
   escapeDestroyAt: number;
+  /** Mirrors BombermanState.rushActive — drives walk vs run anim selection. */
+  rushActive: boolean;
+  /** Which char1/char2/char3 sprite sheet this Bomberman uses. */
+  character: CharacterVariant;
 }
 
 export class BombermanSpriteSystem {
@@ -138,6 +159,7 @@ export class BombermanSpriteSystem {
         this.entries.set(b.playerId, entry);
       }
       entry.hp = b.hp;
+      entry.rushActive = b.rushActive ?? false;
       this.drawHpPips(entry);
       if (b.playerId === myPlayerId && entry.aimShadow) {
         entry.aimShadow.setVisible(aimActive && b.alive);
@@ -158,7 +180,7 @@ export class BombermanSpriteSystem {
         visible = isEnemyVisibleNow(b.x, b.y);
       }
       entry.sprite.setVisible(visible);
-      entry.sprite.setAlpha(dimmed ? 0.45 : 1);
+      entry.sprite.setAlpha(dimmed ? CORPSE_SEEN_DIM_ALPHA : 1);
       entry.hpPips.setVisible(visible && !dimmed);
     }
     // Destroy entries for players no longer in state OR that escaped.
@@ -196,8 +218,8 @@ export class BombermanSpriteSystem {
     entry.lerpStartMs = this.scene.time.now;
     entry.lerpEndMs = this.scene.time.now + Math.max(1, durationMs);
 
-    entry.facing = directionFromDelta(toX - fromX, toY - fromY, entry.facing);
-    this.setAnim(entry, 'walk');
+    entry.facing = directionFromDelta8(toX - fromX, toY - fromY, entry.facing);
+    this.setAnim(entry, entry.rushActive ? 'run' : 'walk');
     this.applyVisualPosition(entry);
   }
 
@@ -209,12 +231,14 @@ export class BombermanSpriteSystem {
     const entry = this.entries.get(playerId);
     if (!entry || entry.animState === 'death') return;
     // Remember what to resume after hurt finishes
-    entry.resumeAfter = entry.animState === 'walk' ? 'walk' : 'idle';
+    entry.resumeAfter = entry.animState === 'walk' || entry.animState === 'run' ? entry.animState : 'idle';
     this.setAnim(entry, 'hurt');
     entry.sprite.once('animationcomplete', () => {
       if (entry.animState !== 'hurt') return; // another state took over
       const stillLerping = this.scene.time.now < entry.lerpEndMs;
-      this.setAnim(entry, stillLerping ? 'walk' : 'idle');
+      // Rush may have ended while hurt played — re-evaluate live.
+      if (stillLerping) this.setAnim(entry, entry.rushActive ? 'run' : 'walk');
+      else this.setAnim(entry, 'idle');
     });
   }
 
@@ -230,16 +254,16 @@ export class BombermanSpriteSystem {
     if (!entry || entry.animState === 'death') return;
 
     entry.preThrowFacing = entry.facing;
-    entry.facing = directionFromDelta(toX - fromX, toY - fromY, entry.facing);
-    entry.resumeAfter = entry.animState === 'walk' ? 'walk' : 'idle';
+    entry.facing = directionFromDelta8(toX - fromX, toY - fromY, entry.facing);
+    entry.resumeAfter = entry.animState === 'walk' || entry.animState === 'run' ? entry.animState : 'idle';
     entry.animState = 'throw';
-    entry.sprite.play({ key: `bomber_throw_${entry.facing}`, duration: Math.max(100, durationMs) });
+    entry.sprite.play({ key: `bomber_throw_${entry.character}_${entry.facing}`, duration: Math.max(100, durationMs) });
     entry.sprite.once('animationcomplete', () => {
       if (entry.animState !== 'throw') return; // hurt/death took over
       const stillLerping = this.scene.time.now < entry.lerpEndMs;
       if (stillLerping) {
         entry.facing = entry.preThrowFacing;
-        this.setAnim(entry, 'walk');
+        this.setAnim(entry, entry.rushActive ? 'run' : 'walk');
       } else {
         this.setAnim(entry, 'idle');
       }
@@ -297,11 +321,11 @@ export class BombermanSpriteSystem {
         entry.visualX = Phaser.Math.Linear(entry.lerpFromPx, entry.lerpToPx, t);
         entry.visualY = Phaser.Math.Linear(entry.lerpFromPy, entry.lerpToPy, t);
       } else if (entry.lerpEndMs > 0) {
-        // Lerp just finished — snap to target and transition walk → idle
+        // Lerp just finished — snap to target and transition walk/run → idle
         entry.visualX = entry.lerpToPx;
         entry.visualY = entry.lerpToPy;
         entry.lerpEndMs = 0;
-        if (entry.animState === 'walk') this.setAnim(entry, 'idle');
+        if (entry.animState === 'walk' || entry.animState === 'run') this.setAnim(entry, 'idle');
       }
       this.applyVisualPosition(entry);
       // Escape: destroy only after the walk lerp has finished AND the grace
@@ -337,13 +361,12 @@ export class BombermanSpriteSystem {
     const cx = b.x * ts + ts / 2;
     const cy = b.y * ts + ts / 2;
 
-    const sprite = this.scene.add.sprite(cx, cy, 'bomber_idle');
-    // Floor reference point: local (32, 40) in a 64x64 frame → origin (0.5, 0.625)
-    sprite.setOrigin(0.5, 0.625);
-    // Native scale per plan — the sprite visually overflows the tile on purpose
-    sprite.setScale(1);
+    const character: CharacterVariant = b.character ?? 'char1';
+    const sprite = this.scene.add.sprite(cx, cy, `bomber_idle_${character}`);
+    sprite.setOrigin(SPRITE_ORIGIN_X, SPRITE_ORIGIN_Y);
+    sprite.setScale(SPRITE_SCALE);
     sprite.setTint(b.tint);
-    sprite.play('bomber_idle_down');
+    sprite.play(`bomber_idle_${character}_down`);
     this.layer.add(sprite);
 
     // HP pips above the sprite's head
@@ -381,6 +404,8 @@ export class BombermanSpriteSystem {
       resumeAfter: 'idle',
       preThrowFacing: 'down',
       escapeDestroyAt: 0,
+      rushActive: b.rushActive ?? false,
+      character,
     };
     this.drawHpPips(entry);
     this.applyVisualPosition(entry);
@@ -395,20 +420,25 @@ export class BombermanSpriteSystem {
 
   /**
    * Swap to a new animation state. Picks the correct directional variant
-   * based on `entry.facing`. Safe to call with the same state — guarded to
-   * avoid restarting animations on every tick.
+   * based on `entry.facing`. Skips the play() call only when both the state
+   * AND the current anim key already match — so a direction change inside
+   * the same state (e.g. diagonal flip during a rush) still re-plays.
    */
   private setAnim(entry: BombermanSpriteEntry, state: AnimState): void {
-    if (entry.animState === state && entry.animState !== 'hurt' && entry.animState !== 'death' && entry.animState !== 'throw') return;
+    const key = `bomber_${state}_${entry.character}_${entry.facing}`;
+    const currentKey = entry.sprite.anims.currentAnim?.key;
+    if (entry.animState === state && currentKey === key) return;
     entry.animState = state;
-    const key = `bomber_${state}_${entry.facing}`;
     entry.sprite.play(key);
   }
 
   /** Write the current visualX/visualY to all overlay graphics and the sprite. */
   private applyVisualPosition(entry: BombermanSpriteEntry): void {
     const { visualX, visualY } = entry;
-    entry.sprite.setPosition(visualX, visualY);
+    // Sprite gets the tuned vertical push so the feet land on the tile floor.
+    // HP pips and aim shadow are positioned off the tile center, not the sprite, so they
+    // stay consistent regardless of sprite art.
+    entry.sprite.setPosition(visualX, visualY + SPRITE_Y_OFFSET_PX);
 
     // HP bar — only visible for the local player.
     const ts = this.tileSize;
@@ -468,11 +498,20 @@ export class BombermanSpriteSystem {
   }
 }
 
-/** Compute facing from a movement delta. Vertical axis wins on diagonals. */
-function directionFromDelta(dx: number, dy: number, fallback: Facing): Facing {
-  if (dy > 0) return 'down';
-  if (dy < 0) return 'up';
-  if (dx > 0) return 'right';
-  if (dx < 0) return 'left';
-  return fallback;
+/**
+ * Compute 8-way facing from a movement delta. y+ is south (Phaser screen
+ * convention). Returns `fallback` when dx=dy=0.
+ */
+function directionFromDelta8(dx: number, dy: number, fallback: Facing): Facing {
+  if (dx === 0 && dy === 0) return fallback;
+  const sx = Math.sign(dx);
+  const sy = Math.sign(dy);
+  if (sx ===  1 && sy ===  0) return 'right';
+  if (sx ===  1 && sy ===  1) return 'down-right';
+  if (sx ===  0 && sy ===  1) return 'down';
+  if (sx === -1 && sy ===  1) return 'down-left';
+  if (sx === -1 && sy ===  0) return 'left';
+  if (sx === -1 && sy === -1) return 'up-left';
+  if (sx ===  0 && sy === -1) return 'up';
+  /* sx === 1 && sy === -1 */ return 'up-right';
 }

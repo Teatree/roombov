@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { NetworkManager } from '../NetworkManager.ts';
-import { ProfileStore } from '../ClientState.ts';
+import { ProfileStore, UiAnimLock } from '../ClientState.ts';
 import { ActivityIndicator } from '../systems/ActivityIndicator.ts';
 import { ensureBombermanAnims, createShopBombermanSprite, preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
 import { BombermanSelector } from '../systems/BombermanSelector.ts';
@@ -244,8 +244,12 @@ export class BombsShopScene extends Phaser.Scene {
         fontSize: '12px', color: '#666', fontFamily: 'monospace', align: 'center',
       }).setOrigin(0.5));
     } else {
-      // Walking-down preview for the equipped Bomberman in the bombs shop
-      const preview = createShopBombermanSprite(this, col3X + colWidth / 2, topY + 80, equipped.tint, 1);
+      // Equipped Bomberman preview. Character variant is persistent on the
+      // owned Bomberman; animation is stable-until-match via UiAnimLock.
+      const preview = createShopBombermanSprite(
+        this, col3X + colWidth / 2, topY + 80,
+        equipped.tint, equipped.character, UiAnimLock.get(equipped.id), 1,
+      );
       eqCol.add(preview);
 
       // Slot rows: 4 custom slots + 1 fixed Rock slot

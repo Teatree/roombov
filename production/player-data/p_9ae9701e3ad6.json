@@ -35,7 +35,8 @@
         ]
       },
       "purchasedAt": 1776035776956,
-      "sourceTemplateId": "cycle_1776035705642_1_free"
+      "sourceTemplateId": "cycle_1776035705642_1_free",
+      "character": "char1"
     }
   ],
   "equippedBombermanId": "owned_p_9ae9701e3ad6_1776035776956_bpcc",

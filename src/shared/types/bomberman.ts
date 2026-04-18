@@ -14,6 +14,19 @@ import type { BombType } from './bombs.ts';
 /** Tier drives price range + starting bomb count + rarity of premium bombs. */
 export type BombermanTier = 'free' | 'paid' | 'paid_expensive';
 
+/**
+ * Sprite-sheet variant a Bomberman is rendered with. Each character has its
+ * own set of per-direction animation frames under
+ * `public/sprites/char{N}_*.png`. Picked randomly per Bomberman at roll
+ * time and preserved for the lifetime of the owned Bomberman — same as tint.
+ */
+export type CharacterVariant =
+  | 'char1' | 'char2' | 'char3' | 'char4' | 'char5' | 'char6' | 'char7';
+
+export const CHARACTER_VARIANTS: readonly CharacterVariant[] = [
+  'char1', 'char2', 'char3', 'char4', 'char5', 'char6', 'char7',
+];
+
 /** Cosmetic random palette generated per Bomberman in the shop cycle. */
 export interface CosmeticColors {
   /** RGB hex numbers — Phaser uses 24-bit ints, not strings. */
@@ -59,6 +72,8 @@ export interface BombermanTemplate {
    * gray dungeon map. Shop cards still use `colors` for procedural drawing.
    */
   tint: number;
+  /** Sprite-sheet variant — randomized from CHARACTER_VARIANTS at roll time. */
+  character: CharacterVariant;
   /** Starting bomb inventory generated at cycle time from tier weights. */
   inventory: BombInventory;
 }
@@ -70,6 +85,9 @@ export interface OwnedBomberman {
   tier: BombermanTier;
   colors: CosmeticColors;
   tint: number;
+  /** Sprite-sheet variant inherited from the source template. Stable for the
+   *  life of this owned Bomberman. */
+  character: CharacterVariant;
   /** Live inventory — mutated by the Bombs Shop equip flow. */
   inventory: BombInventory;
   /** Unix ms when the player bought this Bomberman. */
@@ -89,6 +107,8 @@ export interface BombermanState {
   bombermanId: string;
   colors: CosmeticColors;
   tint: number;
+  /** Sprite-sheet variant copied from the equipped OwnedBomberman. */
+  character: CharacterVariant;
   /** Tile coordinates. */
   x: number;
   y: number;
@@ -106,4 +126,18 @@ export interface BombermanState {
   rushCooldown: number;
   /** True when Out of Combat Rush is active (2 tiles/turn movement). */
   rushActive: boolean;
+  /**
+   * Set for one turn when an Ender Pearl teleport lands this bomberman on a
+   * new tile. Blocks the escape-tile check so teleporting onto an escape
+   * hatch does NOT extract on the same turn — the player must still be on
+   * the hatch at the start of the following turn to escape.
+   */
+  teleportedThisTurn: boolean;
+  /**
+   * Count of consecutive turns the bomberman has ended on an escape hatch
+   * tile with `idle` as their chosen action (no move, no throw). Escape
+   * fires when this reaches 1 — i.e. one full idle turn on the hatch.
+   * Resets to 0 whenever the bomberman moves, throws, or steps off.
+   */
+  onHatchIdleTurns: number;
 }

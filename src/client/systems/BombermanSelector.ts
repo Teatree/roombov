@@ -9,8 +9,8 @@
 
 import Phaser from 'phaser';
 import { NetworkManager } from '../NetworkManager.ts';
-import { ProfileStore } from '../ClientState.ts';
-import { createShopBombermanSprite } from './BombermanAnimations.ts';
+import { ProfileStore, UiAnimLock } from '../ClientState.ts';
+import { createShopBombermanSprite, pickRandomUiAnimation } from './BombermanAnimations.ts';
 import { bombIconFrame } from './BombIcons.ts';
 import type { OwnedBomberman } from '@shared/types/bomberman.ts';
 
@@ -83,8 +83,10 @@ export class BombermanSelector {
     bg.strokeRoundedRect(-SELECTOR_CARD_W / 2, -SELECTOR_CARD_H / 2, SELECTOR_CARD_W, SELECTOR_CARD_H, 6);
     container.add(bg);
 
-    // Animated walk sprite
-    const sprite = createShopBombermanSprite(this.scene, 0, -40, owned.tint, 0.6);
+    // Animated preview sprite. The equipped entry keeps its anim stable
+    // (UiAnimLock); other roster entries re-roll a random animation per open.
+    const anim = isEquipped ? UiAnimLock.get(owned.id) : pickRandomUiAnimation();
+    const sprite = createShopBombermanSprite(this.scene, 0, -40, owned.tint, owned.character, anim, 0.6);
     container.add(sprite);
 
     // Name

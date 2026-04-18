@@ -1,106 +1,158 @@
 import Phaser from 'phaser';
+import type { CharacterVariant } from '@shared/types/bomberman.ts';
+import { CHARACTER_VARIANTS } from '@shared/types/bomberman.ts';
 
 /**
  * Shared helpers for loading and registering the animated Bomberman
- * spritesheets. Any scene that displays a Bomberman (shop cards, main menu
- * equipped preview, match scene) calls these.
+ * spritesheets. One variant per entry in `CHARACTER_VARIANTS`, each
+ * exposing seven states:
  *
- * Phaser textures and animations are game-global, so once a scene has
- * loaded the sheets and registered the anim keys, every subsequent scene
- * can just `this.add.sprite(x, y, 'bomber_walk').play('bomber_walk_down')`.
- * Call both helpers as a safety net — they're idempotent.
+ *   idle   — loop (in-match + UI)
+ *   walk   — loop (in-match + UI)
+ *   run    — loop (in-match, rush only)
+ *   hurt   — one-shot (in-match)
+ *   death  — one-shot (in-match)
+ *   throw  — one-shot (in-match, duration overridden per-play)
+ *   idle3  — loop (UI visualization only)
+ *
+ * Sheets are 1024×1024, 8 rows × 8 columns → 128×128 frames, 8 frames per
+ * direction. Row order is clockwise from East: 0=right, 1=down-right,
+ * 2=down, 3=down-left, 4=left, 5=up-left, 6=up, 7=up-right.
+ *
+ * Texture keys follow `bomber_{state}_{char}` (e.g. `bomber_idle_char1`).
+ * Animation keys follow `bomber_{state}_{char}_{facing}` —
+ * `BombermanSpriteSystem` picks the right one from a BombermanState.
  */
 
-/** Call from a scene's `preload()` to queue the 4 Bomberman spritesheets. */
+/** 8-way facings, in row-index order. */
+const FACINGS = [
+  'right', 'down-right', 'down', 'down-left',
+  'left', 'up-left', 'up', 'up-right',
+] as const;
+
+const FRAMES_PER_DIR = 8;
+const FRAME_SIZE = 128;
+
+/** FPS per state. Throw is overridden per-play by the bomb arc duration. */
+const IDLE_FPS = 10;
+const WALK_FPS = 10;
+const RUN_FPS = 14;
+const HURT_FPS = 12;
+const DEATH_FPS = 8;
+const THROW_FPS = 12;
+const IDLE3_FPS = 10;
+
+/**
+ * Per-state sheet filename (relative to `public/sprites/`) for a given
+ * character. Example: `bomber_idle_char1` → `char1_Idle.png`.
+ */
+const STATE_TO_FILENAME: Record<string, string> = {
+  idle: 'Idle',
+  walk: 'Walk',
+  run: 'Run',
+  hurt: 'TakeDamage',
+  death: 'Die',
+  throw: 'Attack2',
+  idle3: 'Idle3',
+};
+
+/** Call from a scene's `preload()` to queue all 21 Bomberman spritesheets. */
 export function preloadBombermanSpritesheets(scene: Phaser.Scene): void {
-  if (!scene.textures.exists('bomber_idle')) {
-    scene.load.spritesheet('bomber_idle', 'sprites/Unarmed_Idle_with_shadow.png', {
-      frameWidth: 64, frameHeight: 64,
-    });
+  for (const char of CHARACTER_VARIANTS) {
+    for (const [state, filename] of Object.entries(STATE_TO_FILENAME)) {
+      const key = `bomber_${state}_${char}`;
+      if (scene.textures.exists(key)) continue;
+      scene.load.spritesheet(key, `sprites/${char}_${filename}.png`, {
+        frameWidth: FRAME_SIZE, frameHeight: FRAME_SIZE,
+      });
+    }
   }
-  if (!scene.textures.exists('bomber_walk')) {
-    scene.load.spritesheet('bomber_walk', 'sprites/Unarmed_Walk_with_shadow.png', {
-      frameWidth: 64, frameHeight: 64,
-    });
-  }
-  if (!scene.textures.exists('bomber_hurt')) {
-    scene.load.spritesheet('bomber_hurt', 'sprites/Unarmed_Hurt_with_shadow.png', {
-      frameWidth: 64, frameHeight: 64,
-    });
-  }
-  if (!scene.textures.exists('bomber_death')) {
-    scene.load.spritesheet('bomber_death', 'sprites/Unarmed_Death_with_shadow.png', {
-      frameWidth: 64, frameHeight: 64,
-    });
-  }
-  if (!scene.textures.exists('bomber_throw')) {
-    scene.load.spritesheet('bomber_throw', 'sprites/Unarmed_Walk_Attack_with_shadow.png', {
-      frameWidth: 64, frameHeight: 64,
+}
+
+function registerSet(
+  scene: Phaser.Scene,
+  texture: string,
+  animStem: string,
+  frameRate: number,
+  loop: boolean,
+): void {
+  for (let row = 0; row < FACINGS.length; row++) {
+    const facing = FACINGS[row];
+    const start = row * FRAMES_PER_DIR;
+    const end = start + FRAMES_PER_DIR - 1;
+    const key = `${animStem}_${facing}`;
+    if (scene.anims.exists(key)) continue;
+    scene.anims.create({
+      key,
+      frames: scene.anims.generateFrameNumbers(texture, { start, end }),
+      frameRate,
+      repeat: loop ? -1 : 0,
     });
   }
 }
 
 /**
- * Register the 16 Bomberman animation keys (4 states × 4 directions).
- * Call from `create()` in any scene that uses the sprites. Idempotent —
- * subsequent calls no-op because the anim cache is game-global.
+ * Register all 168 Bomberman animation keys (7 states × 8 directions × 3
+ * variants). Call from `create()` in any scene that uses the sprites.
+ * Idempotent — subsequent calls no-op because the anim cache is game-global.
  */
 export function ensureBombermanAnims(scene: Phaser.Scene): void {
-  if (scene.anims.exists('bomber_idle_down')) return;
+  if (scene.anims.exists('bomber_idle_char1_down')) return;
 
-  // Idle: 12 frames per direction, except 'up' which has only 4.
-  // Row order in every sheet: 0=down, 1=left, 2=right, 3=up.
-  scene.anims.create({ key: 'bomber_idle_down',  frames: scene.anims.generateFrameNumbers('bomber_idle',  { start: 0,  end: 11 }), frameRate: 6,  repeat: -1 });
-  scene.anims.create({ key: 'bomber_idle_left',  frames: scene.anims.generateFrameNumbers('bomber_idle',  { start: 12, end: 23 }), frameRate: 6,  repeat: -1 });
-  scene.anims.create({ key: 'bomber_idle_right', frames: scene.anims.generateFrameNumbers('bomber_idle',  { start: 24, end: 35 }), frameRate: 6,  repeat: -1 });
-  scene.anims.create({ key: 'bomber_idle_up',    frames: scene.anims.generateFrameNumbers('bomber_idle',  { start: 36, end: 39 }), frameRate: 4,  repeat: -1 });
-
-  // Walk: 6 frames per direction.
-  scene.anims.create({ key: 'bomber_walk_down',  frames: scene.anims.generateFrameNumbers('bomber_walk',  { start: 0,  end: 5  }), frameRate: 10, repeat: -1 });
-  scene.anims.create({ key: 'bomber_walk_left',  frames: scene.anims.generateFrameNumbers('bomber_walk',  { start: 6,  end: 11 }), frameRate: 10, repeat: -1 });
-  scene.anims.create({ key: 'bomber_walk_right', frames: scene.anims.generateFrameNumbers('bomber_walk',  { start: 12, end: 17 }), frameRate: 10, repeat: -1 });
-  scene.anims.create({ key: 'bomber_walk_up',    frames: scene.anims.generateFrameNumbers('bomber_walk',  { start: 18, end: 23 }), frameRate: 10, repeat: -1 });
-
-  // Hurt: 5 frames per direction.
-  scene.anims.create({ key: 'bomber_hurt_down',  frames: scene.anims.generateFrameNumbers('bomber_hurt',  { start: 0,  end: 4  }), frameRate: 12, repeat: 0  });
-  scene.anims.create({ key: 'bomber_hurt_left',  frames: scene.anims.generateFrameNumbers('bomber_hurt',  { start: 5,  end: 9  }), frameRate: 12, repeat: 0  });
-  scene.anims.create({ key: 'bomber_hurt_right', frames: scene.anims.generateFrameNumbers('bomber_hurt',  { start: 10, end: 14 }), frameRate: 12, repeat: 0  });
-  scene.anims.create({ key: 'bomber_hurt_up',    frames: scene.anims.generateFrameNumbers('bomber_hurt',  { start: 15, end: 19 }), frameRate: 12, repeat: 0  });
-
-  // Death: 7 frames per direction.
-  scene.anims.create({ key: 'bomber_death_down',  frames: scene.anims.generateFrameNumbers('bomber_death', { start: 0,  end: 6  }), frameRate: 8, repeat: 0 });
-  scene.anims.create({ key: 'bomber_death_left',  frames: scene.anims.generateFrameNumbers('bomber_death', { start: 7,  end: 13 }), frameRate: 8, repeat: 0 });
-  scene.anims.create({ key: 'bomber_death_right', frames: scene.anims.generateFrameNumbers('bomber_death', { start: 14, end: 20 }), frameRate: 8, repeat: 0 });
-  scene.anims.create({ key: 'bomber_death_up',    frames: scene.anims.generateFrameNumbers('bomber_death', { start: 21, end: 27 }), frameRate: 8, repeat: 0 });
-
-  // Throw (repurposed walk_attack sheet): 6 frames per direction. The registered
-  // frameRate is only a default — BombermanSpriteSystem overrides with an explicit
-  // `duration` per play so the 6 frames align with the bomb's arc flight time.
-  scene.anims.create({ key: 'bomber_throw_down',  frames: scene.anims.generateFrameNumbers('bomber_throw', { start: 0,  end: 5  }), frameRate: 12, repeat: 0 });
-  scene.anims.create({ key: 'bomber_throw_left',  frames: scene.anims.generateFrameNumbers('bomber_throw', { start: 6,  end: 11 }), frameRate: 12, repeat: 0 });
-  scene.anims.create({ key: 'bomber_throw_right', frames: scene.anims.generateFrameNumbers('bomber_throw', { start: 12, end: 17 }), frameRate: 12, repeat: 0 });
-  scene.anims.create({ key: 'bomber_throw_up',    frames: scene.anims.generateFrameNumbers('bomber_throw', { start: 18, end: 23 }), frameRate: 12, repeat: 0 });
+  for (const char of CHARACTER_VARIANTS) {
+    registerSet(scene, `bomber_idle_${char}`,  `bomber_idle_${char}`,  IDLE_FPS,  true);
+    registerSet(scene, `bomber_walk_${char}`,  `bomber_walk_${char}`,  WALK_FPS,  true);
+    registerSet(scene, `bomber_run_${char}`,   `bomber_run_${char}`,   RUN_FPS,   true);
+    registerSet(scene, `bomber_hurt_${char}`,  `bomber_hurt_${char}`,  HURT_FPS,  false);
+    registerSet(scene, `bomber_death_${char}`, `bomber_death_${char}`, DEATH_FPS, false);
+    registerSet(scene, `bomber_throw_${char}`, `bomber_throw_${char}`, THROW_FPS, false);
+    registerSet(scene, `bomber_idle3_${char}`, `bomber_idle3_${char}`, IDLE3_FPS, true);
+  }
 }
 
 /**
- * Convenience: create a walking-down Bomberman sprite at a fixed on-screen
- * position, tinted with the given color. Used by shop cards and menu
- * previews. The origin is 0.5/0.5 so the sprite is visually centered at
- * the given coords (unlike in-match sprites which use 0.5/0.625 so the
- * feet anchor to the tile).
+ * UI animation pool — these are the three looping anims that may be shown
+ * behind a Bomberman card / menu preview. Callers pick one at random per
+ * render and pass it to `createShopBombermanSprite`.
+ */
+export type UiAnimation = 'idle' | 'idle3' | 'walk';
+export const UI_ANIMATIONS: readonly UiAnimation[] = ['idle', 'idle3', 'walk'];
+
+export function pickRandomUiAnimation(): UiAnimation {
+  return UI_ANIMATIONS[Math.floor(Math.random() * UI_ANIMATIONS.length)];
+}
+
+export function pickRandomCharacter(): CharacterVariant {
+  return CHARACTER_VARIANTS[Math.floor(Math.random() * CHARACTER_VARIANTS.length)];
+}
+
+/**
+ * Convenience: create a Bomberman preview sprite at a fixed on-screen
+ * position, tinted + variant-selected, playing the given UI animation
+ * facing south. Used by shop cards, menu previews, selector entries.
+ *
+ * The origin is 0.5/0.5 so the sprite is visually centered at (x, y) —
+ * unlike in-match sprites which anchor the feet to the tile.
+ *
+ * Frame size is 128×128 (2× the old 64×64 sheets), so the visual scale
+ * multiplier (1.5) is half what it used to be (3). Net on-screen size
+ * stays consistent with what the UI had before.
  */
 export function createShopBombermanSprite(
   scene: Phaser.Scene,
   x: number,
   y: number,
   tint: number,
+  character: CharacterVariant,
+  animation: UiAnimation = 'walk',
   scale = 1,
 ): Phaser.GameObjects.Sprite {
-  const sprite = scene.add.sprite(x, y, 'bomber_walk');
+  const texture = `bomber_${animation}_${character}`;
+  const sprite = scene.add.sprite(x, y, texture);
   sprite.setOrigin(0.5, 0.5);
-  sprite.setScale(scale * 3);
+  sprite.setScale(scale * 1.5);
   sprite.setTint(tint);
-  sprite.play('bomber_walk_down');
+  sprite.play(`bomber_${animation}_${character}_down`);
   sprite.anims.timeScale = 0.5;
   return sprite;
 }

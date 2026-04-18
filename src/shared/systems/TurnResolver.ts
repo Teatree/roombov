@@ -30,6 +30,7 @@ import type { BombInstance, FireTile, LightTile, BombType } from '../types/bombs
 import type { MapData } from '../types/map.ts';
 import { TileType } from '../types/map.ts';
 import { resolveBombTrigger, type Tile } from './BombResolver.ts';
+import { hasLineOfSight } from './LineOfSight.ts';
 
 let bombIdCounter = 0;
 let bodyIdCounter = 0;
@@ -127,6 +128,14 @@ export function resolveTurn(
   const state = cloneState(prev);
   const events: TurnEvent[] = [];
 
+  // Per-turn flags reset before any step runs. `teleportedThisTurn` is set in
+  // step 5 when an Ender Pearl lands its thrower somewhere new; the step 2
+  // escape check honors it so teleporting onto an escape hatch does NOT
+  // extract same-turn — the player must stay on the hatch into the next turn.
+  for (const b of state.bombermen) {
+    b.teleportedThisTurn = false;
+  }
+
   // Only alive, non-escaped Bombermen can act
   const actors = state.bombermen.filter(b => b.alive && !b.escaped);
 
@@ -201,11 +210,9 @@ export function resolveTurn(
       }
     }
 
-    // Escape tile
-    const onEscape = state.escapeTiles.some(t => t.x === bomberman.x && t.y === bomberman.y);
-    if (onEscape) {
-      bomberman.escaped = true;
-    }
+    // Escape evaluation deferred to step 9.5 (after teleport in step 5).
+    // See the onHatchIdleTurns logic below — escape now requires one full
+    // turn of the bomberman standing idle on the hatch tile.
   }
 
   // Door proximity: open doors when any alive Bomberman is within Chebyshev 1
@@ -228,10 +235,22 @@ export function resolveTurn(
       if (!bomberman.alive || bomberman.escaped) continue;
       const action = actions.get(bomberman.playerId) ?? { kind: 'idle' };
       const threw = action.kind === 'throw';
-      const enemyNearby = actors.some(other =>
-        other.playerId !== bomberman.playerId && other.alive && !other.escaped &&
-        chebyshevDistance(bomberman.x, bomberman.y, other.x, other.y) <= rushCfg.proximityRadius,
-      );
+      // Enemy proximity breaks rush only when the two Bombermen have mutual
+      // line of sight. `hasLineOfSight` is symmetric on a wall grid — if A
+      // can see B, B can see A — so one call covers "both must see each
+      // other". This stops flare-discovered enemies (you see them, they
+      // don't see you) from nuking your rush.
+      const ts = map.tileSize;
+      const enemyNearby = actors.some(other => {
+        if (other.playerId === bomberman.playerId) return false;
+        if (!other.alive || other.escaped) return false;
+        if (chebyshevDistance(bomberman.x, bomberman.y, other.x, other.y) > rushCfg.proximityRadius) return false;
+        return hasLineOfSight(
+          bomberman.x * ts + ts / 2, bomberman.y * ts + ts / 2,
+          other.x * ts + ts / 2, other.y * ts + ts / 2,
+          map.grid, ts,
+        );
+      });
       // Bomb landed nearby (any bomb not owned by this player)
       const bombNearby = state.bombs.some(bomb =>
         bomb.ownerId !== bomberman.playerId &&
@@ -371,6 +390,9 @@ export function resolveTurn(
         const fromY = thrower.y;
         thrower.x = destX;
         thrower.y = destY;
+        // Block escape-on-same-turn for the teleport destination. Cleared at
+        // the start of the next resolveTurn call.
+        thrower.teleportedThisTurn = true;
         events.push({ kind: 'teleport', playerId: thrower.playerId, fromX, fromY, toX: destX, toY: destY });
       }
       events.push({ kind: 'bomb_triggered', bombId: bomb.id, type: bomb.type, x: destX, y: destY, tiles: [] });
@@ -525,6 +547,27 @@ export function resolveTurn(
       });
       b.coins = 0;
       b.inventory = { slots: [null, null, null, null] };
+    }
+  }
+
+  // --- 9.5. Escape-hatch evaluation ---
+  // Run after all position changes (movement in step 1, teleport in step 5)
+  // and after death handling in step 9, so a bomberman killed on the hatch
+  // doesn't escape post-mortem. Escape requires one full turn of idle-on-
+  // hatch — a player walking through the tile or throwing from it does not
+  // extract. `onHatchIdleTurns` increments on consecutive idle-on-hatch
+  // turns and resets otherwise; escape fires at count 1.
+  for (const b of state.bombermen) {
+    if (!b.alive || b.escaped) continue;
+    const action = actions.get(b.playerId) ?? { kind: 'idle' };
+    const onHatch = state.escapeTiles.some(t => t.x === b.x && t.y === b.y);
+    if (onHatch && action.kind === 'idle') {
+      b.onHatchIdleTurns += 1;
+      if (b.onHatchIdleTurns >= 1) {
+        b.escaped = true;
+      }
+    } else {
+      b.onHatchIdleTurns = 0;
     }
   }
 

@@ -9,6 +9,7 @@
 
 import type { PlayerProfile } from '@shared/types/player-profile.ts';
 import type { BombermanShopCycleMsg } from '@shared/types/messages.ts';
+import { pickRandomUiAnimation, type UiAnimation } from './systems/BombermanAnimations.ts';
 
 type Listener = () => void;
 
@@ -31,3 +32,27 @@ class Store<T> {
 
 export const ProfileStore = new Store<PlayerProfile>();
 export const BombermanShopStore = new Store<BombermanShopCycleMsg>();
+
+/**
+ * Per-owned-Bomberman UI animation lock. The preview animation (idle/idle3
+ * /walk) for an OwnedBomberman stays stable across renders once picked, and
+ * only changes after the player takes that Bomberman into a match — call
+ * `UiAnimLock.clear(ownedId)` when entering a match to reset.
+ *
+ * Shop templates and non-equipped roster entries skip this store and just
+ * `pickRandomUiAnimation()` fresh on every render — "different every time
+ * Player opens the Bomberman shop."
+ */
+class UiAnimLockStore {
+  private map = new Map<string, UiAnimation>();
+  get(ownedId: string): UiAnimation {
+    let v = this.map.get(ownedId);
+    if (!v) {
+      v = pickRandomUiAnimation();
+      this.map.set(ownedId, v);
+    }
+    return v;
+  }
+  clear(ownedId: string): void { this.map.delete(ownedId); }
+}
+export const UiAnimLock = new UiAnimLockStore();

@@ -6,6 +6,20 @@ import { BALANCE } from '@shared/config/balance.ts';
 import { bombIconFrame } from './BombIcons.ts';
 
 /**
+ * Decal decay — see BALANCE.decalDecay in `src/shared/config/balance.ts`.
+ * Returns the opacity multiplier for a decal of a given age (turns since
+ * stamp). Full opacity for the first `fullTurns` turns, then linearly
+ * decays to `minOpacity` over the next `fadeTurns`.
+ */
+export function decalDecayAlpha(age: number): number {
+  const cfg = BALANCE.decalDecay;
+  if (age <= cfg.fullTurns) return 1.0;
+  if (age >= cfg.fullTurns + cfg.fadeTurns) return cfg.minOpacity;
+  const t = (age - cfg.fullTurns) / cfg.fadeTurns;
+  return 1.0 + (cfg.minOpacity - 1.0) * t;
+}
+
+/**
  * Persistent bomb / effect renderer.
  *
  * Maintains a keyed map of visuals so bombs don't get recreated every state
@@ -189,6 +203,7 @@ export class BombRenderer {
     tiles: Tile[],
     startDelayMs: number,
     durationMs: number,
+    spawnTurn: number,
   ): void {
     const dur = Math.max(100, durationMs);
     const startAnim = (): void => {
@@ -219,7 +234,7 @@ export class BombRenderer {
       if (type === 'flare') return;
       if (type === 'banana') return; // banana itself doesn't scorch; its children do
       if (type === 'ender_pearl') return; // teleport decal handled separately
-      for (const tile of tiles) this.stampDecal(type, tile);
+      for (const tile of tiles) this.stampDecal(type, tile, spawnTurn);
     };
 
     if (startDelayMs > 0) {
@@ -267,7 +282,7 @@ export class BombRenderer {
    * decal already exists on this tile, skip. The decal lives in scorchDecalLayer
    * and is RTS-fog gated via updateDecalVisibility.
    */
-  private stampDecal(type: BombType, tile: Tile): void {
+  private stampDecal(type: BombType, tile: Tile, spawnTurn: number): void {
     const key = `${tile.x},${tile.y}`;
     if (this.decals.has(key)) return;
 
@@ -275,6 +290,10 @@ export class BombRenderer {
     const cx = tile.x * ts + ts / 2;
     const cy = tile.y * ts + ts / 2;
     const g = this.scene.add.graphics();
+    // Tag for decal decay — applyDecalDecay multiplies baseAlpha by the age
+    // curve every turn. See BALANCE.decalDecay in balance.ts.
+    g.setData('spawnTurn', spawnTurn);
+    g.setData('baseAlpha', 0.8);
     this.scorchDecalLayer.add(g);
 
     switch (type) {
@@ -734,13 +753,16 @@ export class BombRenderer {
   }
 
   /** Stamp a greenish-blue Ender Pearl decal on a tile. */
-  stampTeleportDecal(tileX: number, tileY: number): void {
+  stampTeleportDecal(tileX: number, tileY: number, spawnTurn: number): void {
     const key = `${tileX},${tileY}`;
     if (this.decals.has(key)) return;
     const ts = this.tileSize;
     const cx = tileX * ts + ts / 2;
     const cy = tileY * ts + ts / 2;
     const g = this.scene.add.graphics();
+    // Tag for decal decay — see BALANCE.decalDecay.
+    g.setData('spawnTurn', spawnTurn);
+    g.setData('baseAlpha', 1.0);
     this.pearlDecalLayer.add(g);
     // Teal outer ring
     g.fillStyle(0x115544, 0.6);
@@ -752,6 +774,22 @@ export class BombRenderer {
     g.fillStyle(0x33aa88, 0.5);
     g.fillCircle(cx, cy, ts * 0.08);
     this.decals.set(key, g);
+  }
+
+  /**
+   * Apply the decal-decay alpha curve to every scorch and pearl decal. Call
+   * on each turn boundary (match_state update) — see BALANCE.decalDecay.
+   * Blood decals are managed by MatchScene and have their own decay pass.
+   */
+  applyDecalDecay(currentTurn: number): void {
+    for (const g of this.decals.values()) {
+      const spawnTurn = g.getData('spawnTurn') as number | undefined;
+      const baseAlpha = g.getData('baseAlpha') as number | undefined;
+      if (spawnTurn === undefined || baseAlpha === undefined) continue;
+      const age = Math.max(0, currentTurn - spawnTurn);
+      if (age <= BALANCE.decalDecay.fullTurns) continue; // still full — avoid clobbering the scorch fade-in tween
+      g.setAlpha(baseAlpha * decalDecayAlpha(age));
+    }
   }
 
   /**

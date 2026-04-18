@@ -1,10 +1,9 @@
 import Phaser from 'phaser';
 import { NetworkManager } from '../NetworkManager.ts';
-import { ProfileStore } from '../ClientState.ts';
+import { ProfileStore, UiAnimLock } from '../ClientState.ts';
 import { MapRenderer, preloadTiledMap } from '../systems/MapRenderer.ts';
-import { CameraController } from '../systems/CameraController.ts';
 import { FogRenderer } from '../systems/FogRenderer.ts';
-import { BombRenderer } from '../systems/BombRenderer.ts';
+import { BombRenderer, decalDecayAlpha } from '../systems/BombRenderer.ts';
 import { BombermanSpriteSystem, deathAnimationDurationMs } from '../systems/BombermanSpriteSystem.ts';
 import { ensureBombermanAnims, preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
 import { loadMapById } from '@shared/maps/map-loader.ts';
@@ -47,7 +46,6 @@ export class MatchScene extends Phaser.Scene {
   private mapRenderer: MapRenderer | null = null;
   private fogRenderer: FogRenderer | null = null;
   private bombRenderer: BombRenderer | null = null;
-  private cameraController: CameraController | null = null;
   private state: MatchState | null = null;
   private myPlayerId: string | null = null;
   private inputMode: InputMode = { kind: 'idle' };
@@ -55,7 +53,30 @@ export class MatchScene extends Phaser.Scene {
    *  until the player actually clicks a tile to throw at. */
   private selectedSlot: number | null = null;
   private lastPhase: string | null = null;
+  /** Set on the first middle/right mouse click of a match. Once true, the
+   *  per-frame `centerOn` in update() stops running so the player can pan
+   *  freely. Resets to false in create() for each new match. */
+  private cameraManualOverride = false;
+  private cameraDragging = false;
+  /** Suppresses the browser right-click menu so right-drag pan works. Stored
+   *  as a field so shutdown() can remove the listener by reference. */
+  private preventContext = (e: Event): void => { e.preventDefault(); };
+  private cameraDragStartX = 0;
+  private cameraDragStartY = 0;
+  private cameraScrollStartX = 0;
+  private cameraScrollStartY = 0;
+  /** Authoritative matchId this scene is bound to (from LobbyScene). Any
+   *  `match_state` broadcast with a different matchId is ignored — guards
+   *  against stale socket.io room subscriptions from a previous match. */
+  private myMatchId: string | null = null;
   private myDeathAt: number | null = null;
+  /** Wall-clock time at which the local player's escape event fired.
+   *  Set when the `escaped` TurnEvent arrives for this player. Used to
+   *  (a) avoid double-transitioning when `match_end` eventually arrives and
+   *  (b) drive the delayed jump to the Results screen without waiting for
+   *  the room-wide `match_end` broadcast, which only fires once everyone
+   *  else is also out. */
+  private myEscapeAt: number | null = null;
   private myKills = 0;
   private myKillerName: string | null = null;
   private tiledInfo: ReturnType<typeof preloadTiledMap> = null;
@@ -131,6 +152,11 @@ export class MatchScene extends Phaser.Scene {
     sprite: Phaser.GameObjects.Sprite;
     state: 'closed' | 'opening' | 'open' | 'closing';
     permanentlyOpened: boolean;
+    /** Whether the chest tile was in LoS on the previous updateChests tick.
+     *  Used so opening / closing animations skip their wind-up on the frame
+     *  we regain LoS — you just see the chest in whatever state it should
+     *  be in, same rule as doors. */
+    wasVisible: boolean;
   }> = [];
 
   // Door animated sprites
@@ -143,8 +169,9 @@ export class MatchScene extends Phaser.Scene {
     opened: boolean;
   }> = [];
 
-  // Blood trail decals (persistent, one per tile, tracked separately from explosion decals)
-  private bloodDecals = new Set<string>();
+  // Blood trail decals (persistent, one per tile, tracked separately from
+  // explosion decals). Map so we can iterate for the per-turn decal-decay pass.
+  private bloodDecals = new Map<string, Phaser.GameObjects.Graphics>();
 
   /**
    * RTS-style fog: tracks which entities/decals the player has "discovered"
@@ -177,19 +204,33 @@ export class MatchScene extends Phaser.Scene {
     preloadBombermanSpritesheets(this);
   }
 
+  init(data: { matchId?: string | null } | undefined): void {
+    this.myMatchId = data?.matchId ?? null;
+  }
+
   create(): void {
     this.events.once('shutdown', this.shutdown, this);
     const profile = ProfileStore.get();
     this.myPlayerId = profile?.id ?? null;
-    console.log(`[MatchScene] create(): myPlayerId = ${this.myPlayerId}`);
+    console.log(`[MatchScene] create(): myPlayerId = ${this.myPlayerId}, matchId = ${this.myMatchId}`);
+
+    // "The selected Bomberman's UI animation cycles, but only after you play a
+    // match with him." Clearing the lock now means the next post-match UI
+    // render (menu, shops, selector) picks a fresh random idle/idle3/walk.
+    if (profile?.equippedBombermanId) {
+      UiAnimLock.clear(profile.equippedBombermanId);
+    }
 
     this.inputMode = { kind: 'idle' };
     this.lastPhase = null;
+    this.cameraManualOverride = false;
+    this.cameraDragging = false;
     this.myDeathAt = null;
+    this.myEscapeAt = null;
     this.myKills = 0;
     this.myKillerName = null;
     this.escapeSprites = [];
-    this.bloodDecals = new Set();
+    this.bloodDecals = new Map();
     this.knownEntities = new Set();
     if (!this.anims.exists('hatch_closed')) {
       this.anims.create({
@@ -249,6 +290,11 @@ export class MatchScene extends Phaser.Scene {
     // Bomberman animations (idempotent — first scene to call this wins).
     ensureBombermanAnims(this);
 
+    // Paint the viewport black behind everything. Anything outside the map
+    // rect (including camera pan padding and spots the fog doesn't cover)
+    // renders as solid black instead of the game's default dark-blue canvas.
+    this.cameras.main.setBackgroundColor('#000000');
+
     // Explicit depth stack — see class-level comment for the full spec.
     // Decals are split into 3 containers so blood > pearl > scorch ordering is enforced.
     this.scorchDecalLayer = this.add.container(0, 0).setDepth(20);
@@ -295,8 +341,8 @@ export class MatchScene extends Phaser.Scene {
     socket.on('match_state', (msg) => this.onMatchState(msg.state));
     socket.on('turn_result', (msg) => this.onTurnResult(msg.events));
     socket.on('match_end', (msg) => {
-      // If we already transitioned (e.g. client-side death→results), ignore.
-      if (this.myDeathAt !== null) return;
+      // If we already transitioned client-side (death or local escape), ignore.
+      if (this.myDeathAt !== null || this.myEscapeAt !== null) return;
       // Delay so the player can see the Bomberman reaching the escape hatch
       // before the results screen appears. The walk animation takes 70% of
       // the transition phase; wait for the full transition to complete.
@@ -304,9 +350,51 @@ export class MatchScene extends Phaser.Scene {
       this.time.delayedCall(delay, () => this.transitionToResults(msg));
     });
 
-    // Only left-click triggers game actions. Middle/right are reserved for camera pan.
+    // Left-click = game actions. Middle/right = manual camera pan: first
+    // press also flips `cameraManualOverride` on, which disables the
+    // per-frame auto-centering in update() for the rest of the match.
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (pointer.leftButtonDown()) this.onClick(pointer);
+      if (pointer.leftButtonDown()) {
+        this.onClick(pointer);
+        return;
+      }
+      if (pointer.middleButtonDown() || pointer.rightButtonDown()) {
+        // First manual pan of the match — drop the camera bounds. With tight
+        // bounds set to the map rect, Phaser clamps scrollX/scrollY to zero
+        // whenever the map is smaller than the viewport at the current zoom
+        // (so panning only worked on whichever axis the map actually overflowed).
+        // Removing bounds gives free pan in both axes — outside the map you
+        // just see the black backdrop, which is expected in manual mode.
+        if (!this.cameraManualOverride) {
+          this.cameras.main.removeBounds();
+        }
+        this.cameraManualOverride = true;
+        this.cameraDragging = true;
+        this.cameraDragStartX = pointer.x;
+        this.cameraDragStartY = pointer.y;
+        this.cameraScrollStartX = this.cameras.main.scrollX;
+        this.cameraScrollStartY = this.cameras.main.scrollY;
+      }
+    });
+
+    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      if (!this.cameraDragging) return;
+      const dx = pointer.x - this.cameraDragStartX;
+      const dy = pointer.y - this.cameraDragStartY;
+      const zoom = this.cameras.main.zoom;
+      this.cameras.main.scrollX = this.cameraScrollStartX - dx / zoom;
+      this.cameras.main.scrollY = this.cameraScrollStartY - dy / zoom;
+    });
+
+    this.input.on('pointerup', () => { this.cameraDragging = false; });
+
+    // Suppress the browser context menu so right-drag works cleanly.
+    this.game.canvas.addEventListener('contextmenu', this.preventContext);
+
+    // Scroll-wheel zoom — clamped 0.5×–4×.
+    this.input.on('wheel', (_p: Phaser.Input.Pointer, _objs: unknown[], _dx: number, dy: number) => {
+      const next = Phaser.Math.Clamp(this.cameras.main.zoom * (dy > 0 ? 0.9 : 1.1), 0.5, 4);
+      this.cameras.main.setZoom(next);
     });
 
     // Keyboard shortcuts 1-5 for the bomb slots
@@ -327,6 +415,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   shutdown(): void {
+    this.game.canvas.removeEventListener('contextmenu', this.preventContext);
     const socket = NetworkManager.getSocket();
     socket.off('match_state');
     socket.off('match_end');
@@ -362,13 +451,39 @@ export class MatchScene extends Phaser.Scene {
     this.bombermanSpriteSystem?.tick(time);
 
     if (!this.state) return;
+
+    // Camera follow: snap to the local player's tile center every frame.
+    // Skips if the player has escaped (sprite is gone) so the last framing
+    // holds through the 500ms delay before the Results transition. Also
+    // skips once the player has manually panned (middle/right click) —
+    // from that point on they're in control until the match ends.
+    if (this.mapData && !this.cameraManualOverride) {
+      const me = this.state.bombermen.find(b => b.playerId === this.myPlayerId);
+      if (me && !me.escaped) {
+        const ts = this.mapData.tileSize;
+        this.cameras.main.centerOn(me.x * ts + ts / 2, me.y * ts + ts / 2);
+      }
+    }
+
     const ms = Math.max(0, this.state.phaseEndsAt - Date.now());
     this.timerText.setText(`${(ms / 1000).toFixed(1)}s`);
   }
 
   private async onMatchState(state: MatchState): Promise<void> {
+    // Defense-in-depth against stale socket.io room subscriptions. If the
+    // server forgets to unsubscribe us from a previous match, its state
+    // broadcasts would otherwise land here and fight with the real match.
+    if (this.myMatchId && state.matchId !== this.myMatchId) {
+      console.warn(`[MatchScene] ignoring stale match_state from ${state.matchId} (bound to ${this.myMatchId})`);
+      return;
+    }
     const firstFrame = this.state === null;
     const phaseBecameInput = state.phase === 'input' && this.lastPhase !== 'input';
+    // Snapshot the outgoing flare light set before swapping state — the fog
+    // update below unions it with the incoming set so tiles that ARE losing
+    // illumination this turn stay lit through the transition animations
+    // (explosions, decals, blood) and only dim after those have played out.
+    const prevLightTiles = this.state?.lightTiles ?? [];
     this.state = state;
 
     try {
@@ -421,6 +536,7 @@ export class MatchScene extends Phaser.Scene {
               id: chest.id, x: chest.x, y: chest.y, tier: chest.tier,
               sprite, state: opened ? 'open' : 'closed',
               permanentlyOpened: opened,
+              wasVisible: false,
             });
           }
         }
@@ -475,7 +591,12 @@ export class MatchScene extends Phaser.Scene {
         const startX = spawnMe ? spawnMe.x * ts + ts / 2 : bounds.width / 2;
         const startY = spawnMe ? spawnMe.y * ts + ts / 2 : bounds.height / 2;
         console.log(`[MatchScene] camera init: spawn=(${spawnMe?.x},${spawnMe?.y}) startPx=(${startX},${startY}) bounds=(${bounds.width},${bounds.height})`);
-        this.cameraController = new CameraController(this, bounds.width, bounds.height, startX, startY);
+        // Tight bounds (no padding), fixed zoom, snap to spawn. Per-frame
+        // follow happens in update() — see cameraFollowPlayer().
+        const cam = this.cameras.main;
+        cam.setBounds(0, 0, bounds.width, bounds.height);
+        cam.setZoom(2.5);
+        cam.centerOn(startX, startY);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -489,22 +610,45 @@ export class MatchScene extends Phaser.Scene {
 
     const me = this.myBomberman();
 
-    // Smooth camera follow — update target to player's current tile center
-    if (me && me.alive && this.cameraController && this.mapData) {
-      const ts = this.mapData.tileSize;
-      this.cameraController.setTarget(me.x * ts + ts / 2, me.y * ts + ts / 2);
-    }
-
-    // Feed flare light tiles into fog as external reveals (visible for everyone)
+    // Feed flare light tiles into fog as external reveals (visible for everyone).
+    // Two-phase update:
+    //   1. Push the UNION of previous + new lightTiles immediately. Tiles
+    //      being added (a flare just landed) light up right away; tiles
+    //      being removed (a flare shrank or expired) stay lit through the
+    //      transition so the turn's explosions/decals/blood don't render
+    //      on a dimmed fog.
+    //   2. At the end of the transition phase, collapse to just the new
+    //      set — the tiles that actually lost illumination now darken.
     if (this.fogRenderer) {
-      this.fogRenderer.setExternalReveals(state.lightTiles);
+      const unionKeys = new Set<string>();
+      const unionTiles: Array<{ x: number; y: number }> = [];
+      const pushUnique = (t: { x: number; y: number }): void => {
+        const k = `${t.x},${t.y}`;
+        if (!unionKeys.has(k)) { unionKeys.add(k); unionTiles.push({ x: t.x, y: t.y }); }
+      };
+      for (const t of prevLightTiles) pushUnique(t);
+      for (const t of state.lightTiles) pushUnique(t);
+      this.fogRenderer.setExternalReveals(unionTiles);
       if (me) this.fogRenderer.update(me.x, me.y);
+
+      const transitionMs = BALANCE.match.transitionPhaseSeconds * 1000;
+      this.time.delayedCall(transitionMs, () => {
+        if (!this.fogRenderer || this.state !== state) return;
+        this.fogRenderer.setExternalReveals(state.lightTiles);
+        const myNow = this.state.bombermen.find(b => b.playerId === this.myPlayerId);
+        if (myNow) this.fogRenderer.update(myNow.x, myNow.y);
+      });
     }
 
     // Keep bomb/fire/light visuals in sync with the state
     this.bombRenderer?.syncBombs(state.bombs);
     this.bombRenderer?.syncFire(state.fireTiles);
     this.bombRenderer?.syncFlares(state.flares);
+
+    // Decal decay pass — recompute alpha for every existing decal and blood
+    // splat based on the current turn number. See BALANCE.decalDecay.
+    this.bombRenderer?.applyDecalDecay(state.turnNumber);
+    this.applyBloodDecalDecay(state.turnNumber);
 
     // Sync persistent Bomberman sprites (creates/destroys + updates HP/aim)
     this.bombermanSpriteSystem?.syncFromState(
@@ -597,7 +741,10 @@ export class MatchScene extends Phaser.Scene {
 
   private transitionToResults(msg?: { endReason: string; escapedPlayerIds: string[]; coinsEarned: Record<string, number> }): void {
     const me = this.state?.bombermen.find(b => b.playerId === this.myPlayerId);
-    const escaped = msg?.escapedPlayerIds?.includes(this.myPlayerId ?? '') ?? false;
+    // Prefer the authoritative escape list from match_end when available;
+    // fall back to the per-player flag on state for the client-side-exit
+    // path (local escape triggers Results before match_end arrives).
+    const escaped = msg?.escapedPlayerIds?.includes(this.myPlayerId ?? '') ?? (me?.escaped ?? false);
     const alive = me?.alive ?? false;
     const endReason = msg?.endReason ?? (alive ? 'all_escaped' : 'all_dead');
 
@@ -720,7 +867,7 @@ export class MatchScene extends Phaser.Scene {
       const bombId = ev.bombId as string;
       const arcDelay = arcDurationByBombId.get(bombId) ?? 0;
       const startDelay = Math.max(arcDelay, explosionStartMs);
-      this.bombRenderer.spawnExplosion(type, centerX, centerY, tiles, startDelay, burstDurationMs);
+      this.bombRenderer.spawnExplosion(type, centerX, centerY, tiles, startDelay, burstDurationMs, this.state?.turnNumber ?? 0);
     }
 
     // Teleport pass: Ender Pearl teleports the thrower at the halfway point
@@ -743,13 +890,19 @@ export class MatchScene extends Phaser.Scene {
         this.bombRenderer?.spawnTeleportPuff(toX, toY, puffDuration, false);  // TO: below fog (hidden)
       });
       // Stamp decals after the puff finishes (at the end of the transition)
+      const teleportSpawnTurn = this.state?.turnNumber ?? 0;
       this.time.delayedCall(explosionStartMs + puffDuration, () => {
-        this.bombRenderer?.stampTeleportDecal(fromX, fromY);
-        this.bombRenderer?.stampTeleportDecal(toX, toY);
+        this.bombRenderer?.stampTeleportDecal(fromX, fromY, teleportSpawnTurn);
+        this.bombRenderer?.stampTeleportDecal(toX, toY, teleportSpawnTurn);
       });
     }
 
-    // Door-opened events: trigger opening animation on matching door sprites
+    // Door-opened events: trigger opening animation on matching door sprites.
+    // Gate the animation on current LoS — if ANY of the door's tiles is in
+    // the local player's LoS at event time we play it; otherwise snap
+    // straight to `open` so the animation doesn't leak through seen-dim
+    // fog and reveal enemy positions. Next time the player gets LoS they
+    // just see an already-open door.
     for (const ev of events) {
       if (ev.kind !== 'door_opened') continue;
       const doorId = ev.doorId as number;
@@ -758,12 +911,18 @@ export class MatchScene extends Phaser.Scene {
         ds.opened = true;
         if (ds.state === 'closed') {
           const prefix = ds.orientation === 'horizontal' ? 'h' : 'v';
-          ds.state = 'opening';
-          ds.sprite.play(`door_${prefix}_opening`);
-          ds.sprite.once('animationcomplete', () => {
+          const inLoS = ds.tiles.some(t => this.fogRenderer?.isVisible(t.x, t.y));
+          if (inLoS) {
+            ds.state = 'opening';
+            ds.sprite.play(`door_${prefix}_opening`);
+            ds.sprite.once('animationcomplete', () => {
+              ds.state = 'open';
+              ds.sprite.play(`door_${prefix}_open`);
+            });
+          } else {
             ds.state = 'open';
             ds.sprite.play(`door_${prefix}_open`);
-          });
+          }
         }
       }
     }
@@ -801,6 +960,23 @@ export class MatchScene extends Phaser.Scene {
           });
         }
       });
+    }
+
+    // Local escape — jump to Results without waiting for match_end.
+    // The server only broadcasts match_end once ALL players are dead or
+    // escaped; in a multi-player match we need to exit the scene on our own
+    // escape. Mirrors the death-exit pattern above (delayed call so the
+    // walk-to-hatch animation finishes before the transition).
+    for (const ev of events) {
+      if (ev.kind !== 'escaped') continue;
+      if ((ev.playerId as string) !== this.myPlayerId) continue;
+      if (this.myEscapeAt !== null || this.myDeathAt !== null) break;
+      this.myEscapeAt = Date.now();
+      this.inputMode = { kind: 'idle' };
+      this.lootPendingSwap = null;
+      const escapeDelay = BALANCE.match.transitionPhaseSeconds * 1000 + 500;
+      this.time.delayedCall(escapeDelay, () => this.transitionToResults());
+      break;
     }
 
     // Rush changed indicators
@@ -880,6 +1056,22 @@ export class MatchScene extends Phaser.Scene {
     return this.state?.bombermen.find(b => b.playerId === this.myPlayerId) ?? null;
   }
 
+  /**
+   * Apply the decal-decay alpha curve to every blood decal. Call on each
+   * turn boundary; pairs with BombRenderer.applyDecalDecay which handles
+   * scorch + pearl decals. See BALANCE.decalDecay in balance.ts.
+   */
+  private applyBloodDecalDecay(currentTurn: number): void {
+    for (const g of this.bloodDecals.values()) {
+      const spawnTurn = g.getData('spawnTurn') as number | undefined;
+      const baseAlpha = g.getData('baseAlpha') as number | undefined;
+      if (spawnTurn === undefined || baseAlpha === undefined) continue;
+      const age = Math.max(0, currentTurn - spawnTurn);
+      if (age <= BALANCE.decalDecay.fullTurns) continue;
+      g.setAlpha(baseAlpha * decalDecayAlpha(age));
+    }
+  }
+
   private rebuildEntities(): void {
     this.entitiesLayer.removeAll(true);
     if (!this.state || !this.mapData) return;
@@ -935,7 +1127,6 @@ export class MatchScene extends Phaser.Scene {
       const key = `blood_${bt.x},${bt.y}`;
       if (this.bloodDecals.has(key)) continue;
       if (!rtsVisible(key, bt.x, bt.y)) continue;
-      this.bloodDecals.add(key);
       const g = this.add.graphics();
       const cx = bt.x * ts + ts / 2;
       const cy = bt.y * ts + ts / 2;
@@ -947,7 +1138,11 @@ export class MatchScene extends Phaser.Scene {
       g.fillCircle(cx + (Math.random() - 0.5) * ts * 0.35, cy + (Math.random() - 0.5) * ts * 0.35, ts * 0.12);
       g.fillStyle(0x440505, 0.5);
       g.fillCircle(cx + (Math.random() - 0.5) * ts * 0.2, cy + (Math.random() - 0.5) * ts * 0.2, ts * 0.08);
+      // Tag for decal decay — see BALANCE.decalDecay in balance.ts.
+      g.setData('spawnTurn', this.state.turnNumber);
+      g.setData('baseAlpha', 1.0);
       this.bloodDecalLayer.add(g);
+      this.bloodDecals.set(key, g);
     }
 
     // Explosion decals: only visible if tile is currently in LOS (RTS fog)
@@ -1024,7 +1219,7 @@ export class MatchScene extends Phaser.Scene {
 
       // RTS fog: chest only visible if tile is in LOS or was previously discovered
       const entityId = `chest_${cs.id}`;
-      const vis = this.fogRenderer?.isVisible(cs.x, cs.y);
+      const vis = this.fogRenderer?.isVisible(cs.x, cs.y) ?? false;
       if (vis) {
         this.knownEntities.add(entityId);
         cs.sprite.setVisible(true);
@@ -1039,11 +1234,21 @@ export class MatchScene extends Phaser.Scene {
           cs.state = 'closed';
           cs.sprite.play(`${key}_closed`);
         }
+        cs.wasVisible = false;
         continue;
       } else {
         cs.sprite.setVisible(false);
+        cs.wasVisible = false;
         continue;
       }
+
+      // Doors rule applied to chests too: if the player is gaining LoS on
+      // this tile THIS frame, skip any wind-up animation. The chest just
+      // snaps to whatever state matches the world (server-opened or a
+      // bomberman currently adjacent). Prevents enemies walking adjacent
+      // in the dim from "revealing themselves" via a chest anim the moment
+      // the player reveals the tile.
+      const justRevealed = !cs.wasVisible;
 
       // Sync server opened state → permanent
       const serverChest = this.state.chests.find(c => c.id === cs.id);
@@ -1057,11 +1262,12 @@ export class MatchScene extends Phaser.Scene {
 
       // Permanently opened chests skip proximity logic
       if (cs.permanentlyOpened) {
-        if (cs.state === 'opening') continue; // let anim finish → becomes 'open'
+        if (cs.state === 'opening') { cs.wasVisible = vis; continue; }
         if (cs.state !== 'open') {
           cs.state = 'open';
           cs.sprite.play(`${key}_open`);
         }
+        cs.wasVisible = vis;
         continue;
       }
 
@@ -1072,20 +1278,32 @@ export class MatchScene extends Phaser.Scene {
       );
 
       if (nearby && cs.state === 'closed') {
-        cs.state = 'opening';
-        cs.sprite.play(`${key}_opening`);
-        cs.sprite.once('animationcomplete', () => {
+        if (justRevealed) {
           cs.state = 'open';
           cs.sprite.play(`${key}_open`);
-        });
+        } else {
+          cs.state = 'opening';
+          cs.sprite.play(`${key}_opening`);
+          cs.sprite.once('animationcomplete', () => {
+            cs.state = 'open';
+            cs.sprite.play(`${key}_open`);
+          });
+        }
       } else if (!nearby && cs.state === 'open') {
-        cs.state = 'closing';
-        cs.sprite.play(`${key}_closing`);
-        cs.sprite.once('animationcomplete', () => {
+        if (justRevealed) {
           cs.state = 'closed';
           cs.sprite.play(`${key}_closed`);
-        });
+        } else {
+          cs.state = 'closing';
+          cs.sprite.play(`${key}_closing`);
+          cs.sprite.once('animationcomplete', () => {
+            cs.state = 'closed';
+            cs.sprite.play(`${key}_closed`);
+          });
+        }
       }
+
+      cs.wasVisible = vis;
     }
   }
 

@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { NetworkManager } from '../NetworkManager.ts';
 import { BombermanShopStore, ProfileStore } from '../ClientState.ts';
 import { ActivityIndicator } from '../systems/ActivityIndicator.ts';
-import { ensureBombermanAnims, createShopBombermanSprite, preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
+import { ensureBombermanAnims, createShopBombermanSprite, preloadBombermanSpritesheets, pickRandomUiAnimation } from '../systems/BombermanAnimations.ts';
 import type { BombermanTemplate } from '@shared/types/bomberman.ts';
 import { BOMB_CATALOG } from '@shared/config/bombs.ts';
 import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
@@ -181,9 +181,12 @@ export class BombermanShopScene extends Phaser.Scene {
       fontSize: '14px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5));
 
-    // Character — animated sprite playing walk-down cycle, tinted with the
-    // template's vivid tint. Scale tuned to fit the 180x320 card.
-    const charSprite = createShopBombermanSprite(this, 0, -30, template.tint, 1.1);
+    // Character — animated sprite tinted with the template's vivid tint.
+    // Character variant = the template's persistent char1/char2/char3.
+    // Animation is a fresh random pick per card render ("different every
+    // time Player opens the Bomberman shop"). Scale 1.1 fits the 180x320 card.
+    const anim = pickRandomUiAnimation();
+    const charSprite = createShopBombermanSprite(this, 0, -30, template.tint, template.character, anim, 1.1);
     container.add(charSprite);
 
     // Bomb loadout summary with icons

@@ -21,9 +21,11 @@ import type {
   BombermanTier,
   BombInventory,
   BombSlot,
+  CharacterVariant,
   CosmeticColors,
   OwnedBomberman,
 } from '../shared/types/bomberman.ts';
+import { CHARACTER_VARIANTS } from '../shared/types/bomberman.ts';
 import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import {
   SHOP_CYCLE_COMPOSITION,
@@ -138,6 +140,9 @@ export class BombermanShopService {
 
     const name = rollBombermanName(tier, rng);
 
+    // Sprite-sheet variant — same random lifecycle as tint.
+    const character: CharacterVariant = CHARACTER_VARIANTS[Math.floor(rng() * CHARACTER_VARIANTS.length)];
+
     return {
       id: `${idPrefix}_${tier}`,
       name,
@@ -145,6 +150,7 @@ export class BombermanShopService {
       price,
       colors,
       tint,
+      character,
       inventory,
     };
   }
@@ -181,6 +187,7 @@ export class BombermanShopService {
       tier: template.tier,
       colors: { ...template.colors },
       tint: template.tint,
+      character: template.character,
       inventory: cloneInventory(template.inventory),
       purchasedAt: Date.now(),
       sourceTemplateId: templateId,

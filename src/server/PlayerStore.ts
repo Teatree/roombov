@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { randomBytes } from 'crypto';
 import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import { createEmptyProfile } from '../shared/types/player-profile.ts';
+import { CHARACTER_VARIANTS } from '../shared/types/bomberman.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, '../../production/player-data');
@@ -137,6 +138,12 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
       const pool = tierNames[b.tier ?? 'free'] ?? tierNames.free;
       const idx = ((b.id ?? '').length + (b.tier ?? '').length) % pool.length;
       b = { ...b, name: pool[idx] };
+    }
+    // Character variant backfill — picked deterministically from id hash so
+    // the same owned Bomberman shows the same variant across reloads.
+    if (!('character' in b) || !b.character) {
+      const h2 = (b.id ?? '').split('').reduce((acc, ch) => ((acc * 17 + ch.charCodeAt(0)) >>> 0), 0);
+      b = { ...b, character: CHARACTER_VARIANTS[h2 % CHARACTER_VARIANTS.length] };
     }
     if (typeof b.tint === 'number') return b;
     const hash = (b.id ?? '').split('').reduce((acc, ch) => ((acc * 31 + ch.charCodeAt(0)) >>> 0), 0);

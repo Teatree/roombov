@@ -97,11 +97,16 @@ export class GameServer {
     const map = await loadMapForMatch(config.mapId);
     const room = new MatchRoom(config, map, participants, this.io, this.playerStore, () => {
       this.matchRooms.delete(config.id);
-      // Clear joinedMatchId for all participants so they can join a new match
+      // Clear session binding AND unsubscribe each participant's socket from
+      // the match's socket.io room. Without the .leave() call, a player who
+      // later joins a different match keeps receiving broadcasts from this
+      // one (flickering state, stale camera targets, etc.).
       for (const p of participants) {
         if (!p.socketId) continue; // skip bots
         const sess = this.sessions.get(p.socketId);
         if (sess) sess.joinedMatchId = null;
+        const sock = this.io.sockets.sockets.get(p.socketId);
+        if (sock) sock.leave(config.id);
       }
     });
     this.matchRooms.set(config.id, room);
@@ -228,7 +233,14 @@ export class GameServer {
   private onJoinMatch(socket: TypedSocket, msg: JoinMatchMsg): void {
     const session = this.getSession(socket);
     if (!session) return;
-    if (session.joinedMatchId) return; // already joined something
+    // Stale-session cleanup: if we still think this socket is in a match but
+    // that match no longer exists (died/escaped players whose client missed
+    // the leave_match emit, or races with match finalize), drop the binding
+    // and allow the join to proceed. Prevents the "Join does nothing" bug.
+    if (session.joinedMatchId && !this.matchRooms.has(session.joinedMatchId)) {
+      session.joinedMatchId = null;
+    }
+    if (session.joinedMatchId) return; // actively in a running match
 
     const profile = this.playerStore.get(session.playerId);
     if (!profile) return;
@@ -247,8 +259,12 @@ export class GameServer {
   private onLeaveMatch(socket: TypedSocket): void {
     const session = this.getSession(socket);
     if (!session?.joinedMatchId) return;
-    this.matchScheduler.leaveMatch(session.joinedMatchId);
+    const leavingId = session.joinedMatchId;
+    this.matchScheduler.leaveMatch(leavingId);
     session.joinedMatchId = null;
+    // Unsubscribe from the old match's socket.io room so we stop receiving
+    // its `match_state`/`turn_result` broadcasts while playing a new match.
+    socket.leave(leavingId);
     this.io.emit('match_listings', { listings: this.matchScheduler.getListings() });
   }
 
