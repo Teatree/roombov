@@ -90,6 +90,12 @@ export class BotPlayer {
     const fromPx = me.x * ts + ts / 2;
     const fromPy = me.y * ts + ts / 2;
     const r = BALANCE.match.losRadius;
+    // Closed doors block the bot's sight just like walls.
+    const closedDoors = new Set<string>();
+    for (const d of state.doors ?? []) {
+      if (d.opened) continue;
+      for (const t of d.tiles) closedDoors.add(`${t.x},${t.y}`);
+    }
 
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
@@ -99,7 +105,7 @@ export class BotPlayer {
         if (Math.max(Math.abs(dx), Math.abs(dy)) > r) continue;
         const toPx = tx * ts + ts / 2;
         const toPy = ty * ts + ts / 2;
-        if (hasLineOfSight(fromPx, fromPy, toPx, toPy, map.grid, ts)) {
+        if (hasLineOfSight(fromPx, fromPy, toPx, toPy, map.grid, ts, closedDoors)) {
           visible.add(`${tx},${ty}`);
         }
       }

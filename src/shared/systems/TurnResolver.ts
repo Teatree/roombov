@@ -164,7 +164,20 @@ export type TurnEvent =
   | { kind: 'mine_placed'; mineId: string; x: number; y: number; mineKind: 'motion_detector' | 'cluster'; ownerId: string }
   | { kind: 'mine_triggered'; mineId: string; x: number; y: number; mineKind: 'motion_detector' | 'cluster'; ownerId: string; triggeredBy: string | null; tiles: Tile[] }
   | { kind: 'stunned'; playerId: string; turnsRemaining: number }
-  | { kind: 'stun_expired'; playerId: string };
+  | { kind: 'stun_expired'; playerId: string }
+  | { kind: 'melee_trap_changed'; playerId: string; active: boolean }
+  /**
+   * A melee counter-attack fired by a Melee-Trap-Mode bomberman.
+   *   attackerId = the trap-mode defender throwing the strike
+   *   victimId   = the bomberman who walked into range (or the other
+   *                trap-mode bomberman in the mutual case)
+   *   killed     = true when the victim's HP hit 0 (drives Die anim)
+   *   intermediate — optional tile where the strike visually lands when
+   *                  the victim was merely *passing through* on a rush;
+   *                  when set, the Attack3 animation is timed to the
+   *                  attacker's walk midpoint rather than walk end.
+   */
+  | { kind: 'melee_attack'; attackerId: string; victimId: string; killed: boolean; intermediate?: { x: number; y: number } };
 
 export function resolveTurn(
   prev: MatchState,
@@ -198,6 +211,28 @@ export function resolveTurn(
     }
   }
 
+  // Melee Trap exit check: trap-mode bombermen drop out BEFORE their
+  // action processes when any of these hold:
+  //   - action is move or throw (player actively did something)
+  //   - bomberman is Stunned (flash cancels the trap for its duration)
+  //   - bomberman is inside an active smoke cloud (can't set a trap from
+  //     inside a smoke cloud — parallel to how smoke blinds LOS)
+  // Kept in a set so later steps (entry check, mutual melee) can ignore
+  // exiters cleanly.
+  const exitedTrapThisTurn = new Set<string>();
+  for (const b of actors) {
+    if (!b.meleeTrapMode) continue;
+    const act = effectiveActions.get(b.playerId) ?? { kind: 'idle' as const };
+    const actedOut = act.kind === 'move' || act.kind === 'throw';
+    const stunned = isStunned(b);
+    const smoked = isInsideSmoke(state, b.x, b.y);
+    if (actedOut || stunned || smoked) {
+      b.meleeTrapMode = false;
+      exitedTrapThisTurn.add(b.playerId);
+      events.push({ kind: 'melee_trap_changed', playerId: b.playerId, active: false });
+    }
+  }
+
   // queuedPath consumption: if the player submitted `idle` and has a pending
   // queued path, take the head as an implicit `move` action. If they
   // submitted any other action (move/throw), drop the queue.
@@ -220,6 +255,61 @@ export function resolveTurn(
     } else {
       // Player overrode — clear queued path
       b.queuedPath = undefined;
+    }
+  }
+
+  // --- Mutual Melee (start of turn, before movement) ---
+  // All bombermen still in trap mode form a graph where edges exist
+  // between pairs within Chebyshev 1 AND mutual line-of-sight. Each
+  // trap-mode bomberman picks a single target from their LOS-visible
+  // neighbor set (first-encountered, else stable tie-break) and unleashes
+  // a simultaneous Attack3. Both sides deal 1 damage so mutual stand-offs
+  // resolve quickly. (Smoked / stunned defenders already dropped trap
+  // mode in the exit check above, so they never reach this filter.)
+  const trapModeBombermen = actors.filter(b => b.meleeTrapMode);
+  const meleeDamagedThisTurn = new Set<string>();
+  // Closed-door tiles for LOS — reused by step-in melee below. Bombs
+  // opening doors during this step-5 resolution is irrelevant here; we
+  // evaluate LOS before/around movement, not during bomb bursts.
+  const meleeClosedDoors = new Set<string>();
+  for (const d of state.doors ?? []) {
+    if (d.opened) continue;
+    for (const t of d.tiles) meleeClosedDoors.add(`${t.x},${t.y}`);
+  }
+  const mts = map.tileSize;
+  const canSeeTile = (fromX: number, fromY: number, toX: number, toY: number): boolean => {
+    return hasLineOfSight(
+      fromX * mts + mts / 2, fromY * mts + mts / 2,
+      toX * mts + mts / 2, toY * mts + mts / 2,
+      map.grid, mts, meleeClosedDoors,
+    );
+  };
+  if (trapModeBombermen.length >= 2) {
+    const pickTarget = (self: BombermanState): BombermanState | null => {
+      const candidates = trapModeBombermen.filter(o => o.playerId !== self.playerId &&
+        chebyshevDistance(self.x, self.y, o.x, o.y) <= 1 &&
+        canSeeTile(self.x, self.y, o.x, o.y));
+      if (candidates.length === 0) return null;
+      // "First in range" — we have no temporal ordering info, so pick a
+      // deterministic one via a stable tie-break (lowest playerId wins).
+      // This avoids unreliable randomness while keeping behavior consistent.
+      candidates.sort((a, b) => a.playerId.localeCompare(b.playerId));
+      return candidates[0];
+    };
+    for (const attacker of trapModeBombermen) {
+      const target = pickTarget(attacker);
+      if (!target) continue;
+      if (meleeDamagedThisTurn.has(target.playerId)) continue;
+      meleeDamagedThisTurn.add(target.playerId);
+      target.hp -= 1;
+      target.bleedingTurns = BALANCE.match.bleedingDurationTurns;
+      const killed = target.hp <= 0;
+      events.push({
+        kind: 'melee_attack',
+        attackerId: attacker.playerId,
+        victimId: target.playerId,
+        killed,
+      });
     }
   }
 
@@ -280,6 +370,54 @@ export function resolveTurn(
     const action = effectiveActions.get(bomberman.playerId);
     if (!action || action.kind === 'idle') {
       events.push({ kind: 'idle', playerId: bomberman.playerId, x: bomberman.x, y: bomberman.y });
+    }
+  }
+
+  // --- Step-in Melee ---
+  // Any bomberman who stepped ONTO a tile (including intermediate rush
+  // tiles) within Chebyshev-1 of a trap-mode defender AND in the
+  // defender's line-of-sight gets hit. The first qualifying step wins
+  // — subsequent steps by the same attacker are ignored (damage cap to
+  // 1 per turn). When a mid-step triggered it, we report the intermediate
+  // tile so the client can time the attacker's Attack3 to the walk's
+  // halfway point. Smoked / stunned defenders already dropped trap mode
+  // in the exit check so the `meleeTrapMode` filter implicitly excludes
+  // them.
+  for (const [attackerId, steps] of steppedTilesByPlayer) {
+    if (meleeDamagedThisTurn.has(attackerId)) continue;
+    const attacker = state.bombermen.find(b => b.playerId === attackerId);
+    if (!attacker || !attacker.alive || attacker.escaped) continue;
+    let triggered = false;
+    for (let i = 0; i < steps.length && !triggered; i++) {
+      const step = steps[i];
+      for (const defender of state.bombermen) {
+        if (defender.playerId === attackerId) continue;
+        if (!defender.alive || defender.escaped) continue;
+        if (!defender.meleeTrapMode) continue;
+        if (chebyshevDistance(defender.x, defender.y, step.x, step.y) > 1) continue;
+        // Defender must also have LOS to the specific tile the attacker
+        // stepped on — this is the key rule the user asked for so that
+        // "having LOS should count even for cases when the Bomberman is
+        // running 2 tiles at a time" works correctly. We check each
+        // individual step tile (including intermediate rush tiles)
+        // against the defender's position.
+        if (!canSeeTile(defender.x, defender.y, step.x, step.y)) continue;
+        // Trigger attack.
+        meleeDamagedThisTurn.add(attackerId);
+        attacker.hp -= 1;
+        attacker.bleedingTurns = BALANCE.match.bleedingDurationTurns;
+        const finalStep = steps[steps.length - 1];
+        const isFinal = step.x === finalStep.x && step.y === finalStep.y;
+        events.push({
+          kind: 'melee_attack',
+          attackerId: defender.playerId,
+          victimId: attackerId,
+          killed: attacker.hp <= 0,
+          intermediate: isFinal ? undefined : { x: step.x, y: step.y },
+        });
+        triggered = true;
+        break;
+      }
     }
   }
 
@@ -352,6 +490,12 @@ export function resolveTurn(
       // other". This stops flare-discovered enemies (you see them, they
       // don't see you) from nuking your rush.
       const ts = map.tileSize;
+      // Closed doors block LoS. Re-compute per-turn (cheap; few doors).
+      const closedDoorsForLos = new Set<string>();
+      for (const d of state.doors ?? []) {
+        if (d.opened) continue;
+        for (const t of d.tiles) closedDoorsForLos.add(`${t.x},${t.y}`);
+      }
       // Inside smoke → enemy proximity doesn't break rush (per design).
       const enemyNearby = insideSmoke ? false : actors.some(other => {
         if (other.playerId === bomberman.playerId) return false;
@@ -360,7 +504,7 @@ export function resolveTurn(
         return hasLineOfSight(
           bomberman.x * ts + ts / 2, bomberman.y * ts + ts / 2,
           other.x * ts + ts / 2, other.y * ts + ts / 2,
-          map.grid, ts,
+          map.grid, ts, closedDoorsForLos,
         );
       });
       // Bomb landed nearby (any bomb not owned by this player)
@@ -907,7 +1051,9 @@ export function resolveTurn(
     }
     if (mine.kind === 'motion_detector') {
       // Enemy within Chebyshev detection radius AND with line of sight.
+      // Closed doors block the sensor beam the same as walls.
       const radius = mine.detectionRadius ?? BALANCE.bombs.motionDetectorRadius;
+      const closedDoorsForMine = buildClosedDoorTiles();
       const detected = state.bombermen.find(b => {
         if (!b.alive || b.escaped) return false;
         if (b.playerId === mine.ownerId) return false;
@@ -915,7 +1061,7 @@ export function resolveTurn(
         return hasLineOfSight(
           mine.x * ts + ts / 2, mine.y * ts + ts / 2,
           b.x * ts + ts / 2, b.y * ts + ts / 2,
-          map.grid, ts,
+          map.grid, ts, closedDoorsForMine,
         );
       });
       if (detected) {
@@ -1081,6 +1227,12 @@ export function resolveTurn(
   for (const b of state.bombermen) {
     if (b.alive && b.hp <= 0 && !b.escaped) {
       b.alive = false;
+      // A dying bomberman can't also be in Melee Trap Mode — drop the
+      // flag so clients stop rendering their crouch+sword indicator.
+      if (b.meleeTrapMode) {
+        b.meleeTrapMode = false;
+        events.push({ kind: 'melee_trap_changed', playerId: b.playerId, active: false });
+      }
       events.push({ kind: 'died', playerId: b.playerId, x: b.x, y: b.y, killerId: lastDamagedBy.get(b.playerId) ?? null });
       // Drop a body with current coins + inventory
       const bombs: { type: BombType; count: number }[] = [];
@@ -1097,6 +1249,28 @@ export function resolveTurn(
       });
       b.coins = 0;
       b.inventory = { slots: [null, null, null, null] };
+    }
+  }
+
+  // --- 9.25. Melee Trap entry ---
+  // Any alive bomberman whose effective action this turn was idle AND
+  // who didn't just exit trap mode this turn enters Melee Trap Mode.
+  // Stunned bombermen and bombermen standing inside smoke cannot enter
+  // — a stun turn doesn't count toward the "skip a turn" requirement,
+  // and smoke can't be used as a hiding spot for laying a trap. They'll
+  // need to idle another clean turn (out of stun / out of smoke) to arm.
+  // The trap-mode bomberman crouches and will counter-attack anyone who
+  // walks into their Chebyshev-1 range next turn.
+  for (const b of state.bombermen) {
+    if (!b.alive || b.escaped) continue;
+    if (b.meleeTrapMode) continue; // already in — stay
+    if (exitedTrapThisTurn.has(b.playerId)) continue; // just exited, can't re-enter same turn
+    if (isStunned(b)) continue;
+    if (isInsideSmoke(state, b.x, b.y)) continue;
+    const act = effectiveActions.get(b.playerId) ?? { kind: 'idle' as const };
+    if (act.kind === 'idle') {
+      b.meleeTrapMode = true;
+      events.push({ kind: 'melee_trap_changed', playerId: b.playerId, active: true });
     }
   }
 

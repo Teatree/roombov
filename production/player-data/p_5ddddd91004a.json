@@ -1,0 +1,44 @@
+{
+  "id": "p_5ddddd91004a",
+  "createdAt": 1776594955372,
+  "updatedAt": 1776595399415,
+  "coins": 512,
+  "ownedBombermen": [
+    {
+      "id": "owned_p_5ddddd91004a_1776594958250_nyp7",
+      "name": "Connolly",
+      "tier": "free",
+      "colors": {
+        "shirt": 14131778,
+        "pants": 5409320,
+        "hair": 11678792
+      },
+      "tint": 10653416,
+      "character": "char7",
+      "inventory": {
+        "slots": [
+          {
+            "type": "flare",
+            "count": 5
+          },
+          {
+            "type": "bomb",
+            "count": 3
+          },
+          {
+            "type": "delay_tricky",
+            "count": 2
+          },
+          {
+            "type": "motion_detector_flare",
+            "count": 2
+          }
+        ]
+      },
+      "purchasedAt": 1776594958250,
+      "sourceTemplateId": "cycle_1776594940811_1_free"
+    }
+  ],
+  "equippedBombermanId": "owned_p_5ddddd91004a_1776594958250_nyp7",
+  "bombStockpile": {}
+}

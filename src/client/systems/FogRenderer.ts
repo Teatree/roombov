@@ -23,6 +23,8 @@ export class FogRenderer {
   private state: Map<string, Stage> = new Map();
   /** Extra tiles force-revealed this turn (e.g. by Flare). Cleared each update. */
   private externalReveals = new Set<string>();
+  /** Tiles of currently-closed doors. LOS treats these as blockers. */
+  private closedDoorTiles = new Set<string>();
   /**
    * When true, LoS computation is suppressed — the player sees no newly-
    * visible tiles this update. Everything falls back to 'seen-dim' (if
@@ -46,6 +48,18 @@ export class FogRenderer {
     this.externalReveals.clear();
     for (const t of tiles) {
       this.externalReveals.add(`${t.x},${t.y}`);
+    }
+  }
+
+  /**
+   * Update the set of tiles occupied by closed doors. LOS rays treat
+   * these tiles as walls — call on every match_state with the current
+   * (still-closed) door footprints. Open doors should be omitted.
+   */
+  setClosedDoorTiles(tiles: Array<{ x: number; y: number }>): void {
+    this.closedDoorTiles.clear();
+    for (const t of tiles) {
+      this.closedDoorTiles.add(`${t.x},${t.y}`);
     }
   }
 
@@ -86,7 +100,7 @@ export class FogRenderer {
 
           const toPx = tx * ts + ts / 2;
           const toPy = ty * ts + ts / 2;
-          if (hasLineOfSight(fromPx, fromPy, toPx, toPy, this.mapData.grid, ts)) {
+          if (hasLineOfSight(fromPx, fromPy, toPx, toPy, this.mapData.grid, ts, this.closedDoorTiles)) {
             this.state.set(`${tx},${ty}`, 'visible');
           }
         }

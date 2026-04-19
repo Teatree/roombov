@@ -28,7 +28,7 @@ export const BALANCE = {
     /** Minimum tile distance between spawning Bombermen (falls back if impossible). */
     minSpawnDistance: 5,
     bombermanMaxHp: 2,
-    bleedingDurationTurns: 5,
+    bleedingDurationTurns: 10,
     bombSlotStackLimit: 5,
     /** Tile radius for per-player line-of-sight fog of war. */
     losRadius: 5,

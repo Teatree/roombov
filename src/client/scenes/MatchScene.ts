@@ -5,6 +5,7 @@ import { MapRenderer, preloadTiledMap } from '../systems/MapRenderer.ts';
 import { FogRenderer } from '../systems/FogRenderer.ts';
 import { BombRenderer, decalDecayAlpha } from '../systems/BombRenderer.ts';
 import { BombermanSpriteSystem, deathAnimationDurationMs } from '../systems/BombermanSpriteSystem.ts';
+const SWORD_FADE_MS = BombermanSpriteSystem.SWORD_FADE_MS;
 import { ensureBombermanAnims, preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
 import { loadMapById } from '@shared/maps/map-loader.ts';
 import { findPath, type PathTile } from '@shared/systems/Pathfinding.ts';
@@ -134,6 +135,9 @@ export class MatchScene extends Phaser.Scene {
    *  shown while the local bomberman has the stunned status effect. */
   private stunHudOverlay: Phaser.GameObjects.Graphics | null = null;
   private stunHudLabel: Phaser.GameObjects.Text | null = null;
+  /** Small sword icon shown on the left of the bomb tray while the local
+   *  bomberman is in Melee Trap Mode. Disappears instantly on exit. */
+  private meleeHudIcon: Phaser.GameObjects.Image | null = null;
   /**
    * Per-slot placeholder label text. For new bomb types (no dedicated icon art
    * yet) we draw the bomb's short name over the reused legacy icon so players
@@ -208,6 +212,8 @@ export class MatchScene extends Phaser.Scene {
     this.load.spritesheet('chest_2', 'sprites/chest_2.png', { frameWidth: 16, frameHeight: 32 });
     // Doors: loaded as a plain image, frames added manually in create()
     this.load.image('double_doors', 'sprites/double_doors.png');
+    // Sword icon — Melee Trap Mode indicator (HUD + above-head overlay).
+    this.load.image('sword_icon', 'sprites/sword_icon.png');
     // Bomb icons (safety fallback — normally loaded by BootScene)
     preloadBombIcons(this);
     // Bomberman sheets are normally loaded by BootScene, but this is a
@@ -478,6 +484,15 @@ export class MatchScene extends Phaser.Scene {
 
     const ms = Math.max(0, this.state.phaseEndsAt - Date.now());
     this.timerText.setText(`${(ms / 1000).toFixed(1)}s`);
+
+    // Keep the HUD HP number in sync with the sprite system's delayed
+    // HP — tick() swaps displayedHp once the post-damage delay ends, and
+    // the text here follows along without waiting for a match_state.
+    const me = this.state.bombermen.find(b => b.playerId === this.myPlayerId);
+    if (me && me.alive) {
+      const displayedHp = this.bombermanSpriteSystem?.getDisplayedHp(me.playerId) ?? me.hp;
+      this.hpText.setText(`HP ${displayedHp}/${BALANCE.match.bombermanMaxHp}`);
+    }
   }
 
   private async onMatchState(state: MatchState): Promise<void> {
@@ -640,6 +655,13 @@ export class MatchScene extends Phaser.Scene {
       for (const t of prevLightTiles) pushUnique(t);
       for (const t of state.lightTiles) pushUnique(t);
       this.fogRenderer.setExternalReveals(unionTiles);
+      // Closed-door tiles block LOS the same as walls.
+      const closedDoorTiles: Array<{ x: number; y: number }> = [];
+      for (const d of state.doors ?? []) {
+        if (d.opened) continue;
+        for (const t of d.tiles) closedDoorTiles.push({ x: t.x, y: t.y });
+      }
+      this.fogRenderer.setClosedDoorTiles(closedDoorTiles);
       // Suppress LoS when the local bomberman is inside any smoke cloud —
       // per design, the smoked player only sees their own tile plus the
       // seen-dim map they already discovered. Also hoists bomb graphics
@@ -817,6 +839,15 @@ export class MatchScene extends Phaser.Scene {
     // Group moved events by player — rush moves produce 2 events for one player.
     // Chain them over the first 50% of the transition so walks finish before
     // explosions kick in at the halfway mark.
+    // Bombermen who exited Melee Trap this turn: their walk/throw visuals
+    // are held back by the sword-fade duration so the fade-out plays
+    // cleanly before the sprite starts moving (per the spec).
+    const meleeExiters = new Set<string>();
+    for (const ev of events) {
+      if (ev.kind === 'melee_trap_changed' && ev.active === false) {
+        meleeExiters.add(ev.playerId as string);
+      }
+    }
     const moveDurationMs = BALANCE.match.transitionPhaseSeconds * 1000 * 0.5;
     const movesByPlayer = new Map<string, Array<{ fromX: number; fromY: number; toX: number; toY: number }>>();
     for (const ev of events) {
@@ -829,10 +860,11 @@ export class MatchScene extends Phaser.Scene {
       });
     }
     for (const [playerId, moves] of movesByPlayer) {
+      const exitHold = meleeExiters.has(playerId) ? SWORD_FADE_MS : 0;
       const perMoveDuration = moveDurationMs / moves.length;
       for (let i = 0; i < moves.length; i++) {
         const m = moves[i];
-        const delay = i * perMoveDuration;
+        const delay = exitHold + i * perMoveDuration;
         if (delay > 0) {
           this.time.delayedCall(delay, () => {
             this.bombermanSpriteSystem?.applyMoveEvent(playerId, m.fromX, m.fromY, m.toX, m.toY, perMoveDuration);
@@ -843,10 +875,49 @@ export class MatchScene extends Phaser.Scene {
       }
     }
 
-    // Hurt animations on damage events
+    // Collect every player id that will have its TakeDamage / Die anim
+    // driven this turn so we only play it ONCE per victim. Bomb damage
+    // + melee damage landing on the same bomberman in the same turn
+    // should drop HP by 2 but only play the hurt animation once (design
+    // spec). Melee wins precedence — it has its own timed Attack3 → hurt
+    // sequence that we don't want to step on.
+    const hurtQueued = new Set<string>();
+
+    // Melee Trap counter-attacks first.
+    for (const ev of events) {
+      if (ev.kind !== 'melee_attack') continue;
+      const attackerId = ev.attackerId as string;
+      const victimId = ev.victimId as string;
+      const killed = ev.killed as boolean;
+      const intermediate = ev.intermediate as { x: number; y: number } | undefined;
+      if (hurtQueued.has(victimId)) continue; // victim already queued
+      hurtQueued.add(victimId);
+      if (intermediate) {
+        // Trigger Attack3 at the walk midpoint so it looks like the strike
+        // intercepts the rushing victim. Walk takes half the transition;
+        // halfway through walk == 25% of transition.
+        const delay = Math.round((BALANCE.match.transitionPhaseSeconds * 1000) * 0.25);
+        this.time.delayedCall(delay, () => {
+          this.bombermanSpriteSystem?.applyMeleeAttack(attackerId, victimId, killed);
+        });
+      } else {
+        // Walk-end or mutual trigger — fire Attack3 after the walk lerp
+        // completes (50% of transition) for step-in, or immediately for
+        // mutual melee (victim isn't moving).
+        const delay = Math.round((BALANCE.match.transitionPhaseSeconds * 1000) * 0.5);
+        this.time.delayedCall(delay, () => {
+          this.bombermanSpriteSystem?.applyMeleeAttack(attackerId, victimId, killed);
+        });
+      }
+    }
+
+    // Hurt animations on damage events — skipped for any victim already
+    // queued (melee victim, or a previous damage event in the same turn).
     for (const ev of events) {
       if (ev.kind !== 'damaged') continue;
       const playerId = ev.playerId as string;
+      if (hurtQueued.has(playerId)) continue;
+      hurtQueued.add(playerId);
       this.bombermanSpriteSystem?.applyHurtEvent(playerId);
     }
 
@@ -867,9 +938,21 @@ export class MatchScene extends Phaser.Scene {
       const throwerVisible = playerId === this.myPlayerId
         || this.fogRenderer?.isVisible(fromX, fromY);
       if (throwerVisible) {
-        const { duration } = this.bombRenderer.spawnThrowArc(type, fromX, fromY, toX, toY);
-        arcDurationByBombId.set(bombId, duration);
-        this.bombermanSpriteSystem?.applyThrowEvent(playerId, fromX, fromY, toX, toY, duration);
+        const exitHold = meleeExiters.has(playerId) ? SWORD_FADE_MS : 0;
+        if (exitHold > 0) {
+          // Delay the throw arc + throw animation so the melee-trap sword
+          // fade clearly plays before the bomberman unwinds into the throw.
+          const duration = (BALANCE.match.transitionPhaseSeconds * 1000) / 2;
+          arcDurationByBombId.set(bombId, duration + exitHold);
+          this.time.delayedCall(exitHold, () => {
+            this.bombRenderer?.spawnThrowArc(type, fromX, fromY, toX, toY);
+            this.bombermanSpriteSystem?.applyThrowEvent(playerId, fromX, fromY, toX, toY, duration);
+          });
+        } else {
+          const { duration } = this.bombRenderer.spawnThrowArc(type, fromX, fromY, toX, toY);
+          arcDurationByBombId.set(bombId, duration);
+          this.bombermanSpriteSystem?.applyThrowEvent(playerId, fromX, fromY, toX, toY, duration);
+        }
       } else {
         // Still need the arc duration for explosion scheduling
         const duration = (BALANCE.match.transitionPhaseSeconds * 1000) / 2;
@@ -1009,6 +1092,15 @@ export class MatchScene extends Phaser.Scene {
       }
     }
 
+    // Melee-killed victims: collect their IDs so we skip the generic death
+    // animation replay below (applyMeleeAttack already triggered the death
+    // anim at the Attack3 connect point). We still run the death-side-
+    // effects (blood splash, kill tracking, results transition).
+    const meleeKilled = new Set<string>();
+    for (const ev of events) {
+      if (ev.kind === 'melee_attack' && ev.killed) meleeKilled.add(ev.victimId as string);
+    }
+
     // Third pass: deaths — delayed so the explosion/bomb effect plays out first.
     // The death animation starts after the explosion visual completes (near
     // the end of the transition), not at the start of the turn.
@@ -1030,8 +1122,11 @@ export class MatchScene extends Phaser.Scene {
         this.myKillerName = (killerBm as any)?.name ?? killerId;
       }
 
+      const isMeleeKill = meleeKilled.has(playerId);
       this.time.delayedCall(deathDelay, () => {
-        const deathMs = this.bombermanSpriteSystem?.applyDeathEvent(playerId, x, y) ?? deathAnimationDurationMs();
+        const deathMs = isMeleeKill
+          ? deathAnimationDurationMs()
+          : (this.bombermanSpriteSystem?.applyDeathEvent(playerId, x, y) ?? deathAnimationDurationMs());
         this.bombRenderer?.emitBloodSplash(x, y);
         if (playerId === this.myPlayerId) {
           this.myDeathAt = Date.now();
@@ -1685,6 +1780,12 @@ export class MatchScene extends Phaser.Scene {
     ).setOrigin(0.5).setDepth(1051).setVisible(false);
     this.stunHudLabel = this.hud(stunLabel);
 
+    // Melee Trap Mode indicator — small sword icon to the left of the tray.
+    const meleeIcon = this.add.image(
+      trayX - 18, trayY + SLOT_SIZE / 2, 'sword_icon',
+    ).setOrigin(1, 0.5).setDepth(1002).setVisible(false).setDisplaySize(32, 32);
+    this.meleeHudIcon = this.hud(meleeIcon);
+
     for (let i = 0; i < SLOT_COUNT; i++) {
       const sx = trayX + i * (SLOT_SIZE + SLOT_GAP);
 
@@ -1757,7 +1858,11 @@ export class MatchScene extends Phaser.Scene {
     this.turnText.setColor(turnsLeft <= BALANCE.match.turnsLeftWarning ? '#ff6644' : '#aaaaaa');
 
     if (me && me.alive) {
-      this.hpText.setText(`HP ${me.hp}/${BALANCE.match.bombermanMaxHp}`);
+      // Use the sprite system's *displayed* HP so the number tracks the
+      // pip bar's delayed post-animation update instead of dropping
+      // instantly at the start of the transition.
+      const displayedHp = this.bombermanSpriteSystem?.getDisplayedHp(me.playerId) ?? me.hp;
+      this.hpText.setText(`HP ${displayedHp}/${BALANCE.match.bombermanMaxHp}`);
       this.hpText.setColor('#ff6666');
       this.coinsText.setText(`${me.coins}¢`);
       this.renderBombSlots(me);
@@ -1775,6 +1880,11 @@ export class MatchScene extends Phaser.Scene {
     );
     this.stunHudOverlay?.setVisible(stunned);
     this.stunHudLabel?.setVisible(stunned);
+
+    // Melee Trap Mode HUD sword icon: shown to the left of the tray
+    // while the local bomberman is trapped and crouching.
+    const meleeTrap = !!me && me.alive && !!me.meleeTrapMode;
+    this.meleeHudIcon?.setVisible(meleeTrap);
   }
 
   private renderBombSlots(me: BombermanState): void {

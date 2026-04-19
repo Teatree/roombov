@@ -1,45 +1,10 @@
 {
   "id": "p_3a9ad8b22613",
   "createdAt": 1775946762703,
-  "updatedAt": 1776555557709,
-  "coins": 420,
-  "ownedBombermen": [
-    {
-      "id": "owned_p_3a9ad8b22613_1776555503308_zxhb",
-      "name": "Moriarty",
-      "tier": "free",
-      "colors": {
-        "shirt": 4374487,
-        "pants": 6064680,
-        "hair": 8926386
-      },
-      "tint": 9750753,
-      "character": "char7",
-      "inventory": {
-        "slots": [
-          {
-            "type": "flare",
-            "count": 4
-          },
-          {
-            "type": "ender_pearl",
-            "count": 4
-          },
-          {
-            "type": "cluster_bomb",
-            "count": 3
-          },
-          {
-            "type": "flash",
-            "count": 5
-          }
-        ]
-      },
-      "purchasedAt": 1776555503308,
-      "sourceTemplateId": "cycle_1776555494884_1_free"
-    }
-  ],
-  "equippedBombermanId": "owned_p_3a9ad8b22613_1776555503308_zxhb",
+  "updatedAt": 1776633600291,
+  "coins": 461,
+  "ownedBombermen": [],
+  "equippedBombermanId": null,
   "bombStockpile": {
     "flare": 10,
     "delay_tricky": 8,

@@ -143,6 +143,13 @@ export interface BombermanState {
   /** Active status effects (Stunned from Flash, etc.). Empty by default. */
   statusEffects: StatusEffect[];
   /**
+   * Melee Trap Mode — when active, the bomberman crouches in place and
+   * will counter-attack any bomberman who walks into Chebyshev-1 range.
+   * Entered by skipping a turn (idle). Exited by moving or throwing.
+   * Taking damage does NOT exit this mode.
+   */
+  meleeTrapMode: boolean;
+  /**
    * Queued movement waypoints set by Fart Escape. If the player submits no
    * new move next turn, the server consumes one waypoint; if they submit a
    * new move target this is cleared. Optional/undefined when no queue.

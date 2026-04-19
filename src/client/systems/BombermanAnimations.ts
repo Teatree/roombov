@@ -41,6 +41,8 @@ const HURT_FPS = 12;
 const DEATH_FPS = 8;
 const THROW_FPS = 12;
 const IDLE3_FPS = 10;
+const ATTACK3_FPS = 14;
+const CROUCH_FPS = 6;
 
 /**
  * Per-state sheet filename (relative to `public/sprites/`) for a given
@@ -54,6 +56,8 @@ const STATE_TO_FILENAME: Record<string, string> = {
   death: 'Die',
   throw: 'Attack2',
   idle3: 'Idle3',
+  attack3: 'Attack3',
+  crouch: 'CrouchIdle',
 };
 
 /** Call from a scene's `preload()` to queue all 21 Bomberman spritesheets. */
@@ -100,13 +104,15 @@ export function ensureBombermanAnims(scene: Phaser.Scene): void {
   if (scene.anims.exists('bomber_idle_char1_down')) return;
 
   for (const char of CHARACTER_VARIANTS) {
-    registerSet(scene, `bomber_idle_${char}`,  `bomber_idle_${char}`,  IDLE_FPS,  true);
-    registerSet(scene, `bomber_walk_${char}`,  `bomber_walk_${char}`,  WALK_FPS,  true);
-    registerSet(scene, `bomber_run_${char}`,   `bomber_run_${char}`,   RUN_FPS,   true);
-    registerSet(scene, `bomber_hurt_${char}`,  `bomber_hurt_${char}`,  HURT_FPS,  false);
-    registerSet(scene, `bomber_death_${char}`, `bomber_death_${char}`, DEATH_FPS, false);
-    registerSet(scene, `bomber_throw_${char}`, `bomber_throw_${char}`, THROW_FPS, false);
-    registerSet(scene, `bomber_idle3_${char}`, `bomber_idle3_${char}`, IDLE3_FPS, true);
+    registerSet(scene, `bomber_idle_${char}`,    `bomber_idle_${char}`,    IDLE_FPS,    true);
+    registerSet(scene, `bomber_walk_${char}`,    `bomber_walk_${char}`,    WALK_FPS,    true);
+    registerSet(scene, `bomber_run_${char}`,     `bomber_run_${char}`,     RUN_FPS,     true);
+    registerSet(scene, `bomber_hurt_${char}`,    `bomber_hurt_${char}`,    HURT_FPS,    false);
+    registerSet(scene, `bomber_death_${char}`,   `bomber_death_${char}`,   DEATH_FPS,   false);
+    registerSet(scene, `bomber_throw_${char}`,   `bomber_throw_${char}`,   THROW_FPS,   false);
+    registerSet(scene, `bomber_idle3_${char}`,   `bomber_idle3_${char}`,   IDLE3_FPS,   true);
+    registerSet(scene, `bomber_attack3_${char}`, `bomber_attack3_${char}`, ATTACK3_FPS, false);
+    registerSet(scene, `bomber_crouch_${char}`,  `bomber_crouch_${char}`,  CROUCH_FPS,  true);
   }
 }
 

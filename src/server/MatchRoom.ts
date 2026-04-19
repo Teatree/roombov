@@ -211,6 +211,7 @@ export class MatchRoom {
         teleportedThisTurn: false,
         onHatchIdleTurns: 0,
         statusEffects: [],
+        meleeTrapMode: false,
       };
     });
 
