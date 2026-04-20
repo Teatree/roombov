@@ -46,6 +46,7 @@ export class MainMenuScene extends Phaser.Scene {
     // Buttons
     const buttons: Array<[string, () => void]> = [
       ['[ PLAY ]', () => this.scene.start('LobbyScene')],
+      ['[ TUTORIAL ]', () => this.scene.start('MatchScene', { mode: 'tutorial' })],
       ['[ BOMBERMAN SHOP ]', () => this.scene.start('BombermanShopScene')],
       ['[ BOMBS SHOP ]', () => this.scene.start('BombsShopScene')],
     ];

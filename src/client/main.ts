@@ -6,6 +6,7 @@ import { BombermanShopScene } from './scenes/BombermanShopScene.ts';
 import { BombsShopScene } from './scenes/BombsShopScene.ts';
 import { MatchScene } from './scenes/MatchScene.ts';
 import { ResultsScene } from './scenes/ResultsScene.ts';
+import { TutorialOverlayScene } from './scenes/TutorialOverlayScene.ts';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -17,7 +18,7 @@ const config: Phaser.Types.Core.GameConfig = {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [BootScene, MainMenuScene, LobbyScene, BombermanShopScene, BombsShopScene, MatchScene, ResultsScene],
+  scene: [BootScene, MainMenuScene, LobbyScene, BombermanShopScene, BombsShopScene, MatchScene, ResultsScene, TutorialOverlayScene],
 };
 
 new Phaser.Game(config);

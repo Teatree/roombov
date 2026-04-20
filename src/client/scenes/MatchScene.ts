@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
-import { NetworkManager } from '../NetworkManager.ts';
 import { ProfileStore, UiAnimLock } from '../ClientState.ts';
+import type { MatchBackend } from '../backends/MatchBackend.ts';
+import { SocketMatchBackend } from '../backends/SocketMatchBackend.ts';
+import { TutorialMatchBackend, TUTORIAL_PLAYER_ID } from '../backends/TutorialMatchBackend.ts';
 import { MapRenderer, preloadTiledMap } from '../systems/MapRenderer.ts';
 import { FogRenderer } from '../systems/FogRenderer.ts';
 import { BombRenderer, decalDecayAlpha } from '../systems/BombRenderer.ts';
@@ -43,6 +45,12 @@ const SLOT_COUNT = 5;
  * action.
  */
 export class MatchScene extends Phaser.Scene {
+  /** Source of authoritative match events. Swapped to TutorialMatchBackend
+   *  in tutorial mode; everything else (rendering, input, HUD) is identical. */
+  private backend: MatchBackend | null = null;
+  /** 'network' drives a real server match. 'tutorial' runs a scripted
+   *  single-player scenario via the TutorialMatchBackend. */
+  private mode: 'network' | 'tutorial' = 'network';
   private mapData: MapData | null = null;
   private mapRenderer: MapRenderer | null = null;
   private fogRenderer: FogRenderer | null = null;
@@ -221,21 +229,29 @@ export class MatchScene extends Phaser.Scene {
     preloadBombermanSpritesheets(this);
   }
 
-  init(data: { matchId?: string | null } | undefined): void {
+  init(data: { matchId?: string | null; mode?: 'network' | 'tutorial' } | undefined): void {
     this.myMatchId = data?.matchId ?? null;
+    this.mode = data?.mode ?? 'network';
   }
 
   create(): void {
     this.events.once('shutdown', this.shutdown, this);
-    const profile = ProfileStore.get();
-    this.myPlayerId = profile?.id ?? null;
-    console.log(`[MatchScene] create(): myPlayerId = ${this.myPlayerId}, matchId = ${this.myMatchId}`);
+    if (this.mode === 'tutorial') {
+      // Tutorial is single-player with a fabricated player id — skip the
+      // profile lookup and the post-match UI-anim-lock clear.
+      this.myPlayerId = TUTORIAL_PLAYER_ID;
+      console.log(`[MatchScene] create(): tutorial mode, myPlayerId = ${this.myPlayerId}`);
+    } else {
+      const profile = ProfileStore.get();
+      this.myPlayerId = profile?.id ?? null;
+      console.log(`[MatchScene] create(): myPlayerId = ${this.myPlayerId}, matchId = ${this.myMatchId}`);
 
-    // "The selected Bomberman's UI animation cycles, but only after you play a
-    // match with him." Clearing the lock now means the next post-match UI
-    // render (menu, shops, selector) picks a fresh random idle/idle3/walk.
-    if (profile?.equippedBombermanId) {
-      UiAnimLock.clear(profile.equippedBombermanId);
+      // "The selected Bomberman's UI animation cycles, but only after you play a
+      // match with him." Clearing the lock now means the next post-match UI
+      // render (menu, shops, selector) picks a fresh random idle/idle3/walk.
+      if (profile?.equippedBombermanId) {
+        UiAnimLock.clear(profile.equippedBombermanId);
+      }
     }
 
     this.inputMode = { kind: 'idle' };
@@ -354,10 +370,15 @@ export class MatchScene extends Phaser.Scene {
       padding: { x: 24, y: 16 },
     }).setOrigin(0.5).setDepth(10000).setVisible(false));
 
-    const socket = NetworkManager.getSocket();
-    socket.on('match_state', (msg) => this.onMatchState(msg.state));
-    socket.on('turn_result', (msg) => this.onTurnResult(msg.events));
-    socket.on('match_end', (msg) => {
+    // Construct the authoritative-events backend. In network mode this wraps
+    // the shared socket; in tutorial mode it's a local scripted resolver.
+    // MatchScene's rendering/input code is backend-agnostic from here on.
+    this.backend = this.mode === 'tutorial'
+      ? this.buildTutorialBackend()
+      : new SocketMatchBackend();
+    this.backend.onMatchState((state) => this.onMatchState(state));
+    this.backend.onTurnResult((events) => this.onTurnResult(events));
+    this.backend.onMatchEnd((msg) => {
       // If we already transitioned client-side (death or local escape), ignore.
       if (this.myDeathAt !== null || this.myEscapeAt !== null) return;
       // Delay so the player can see the Bomberman reaching the escape hatch
@@ -366,6 +387,14 @@ export class MatchScene extends Phaser.Scene {
       const delay = BALANCE.match.transitionPhaseSeconds * 1000 + 500;
       this.time.delayedCall(delay, () => this.transitionToResults(msg));
     });
+    this.backend.start();
+
+    // Tutorial-only overlay. Renders dialogue, highlights, pause, etc.
+    // above MatchScene's HUD camera. Receives a scene ref so it can query
+    // HUD rects and drive camera pans on the main camera.
+    if (this.mode === 'tutorial') {
+      this.scene.launch('TutorialOverlayScene', { matchScene: this, backend: this.backend });
+    }
 
     // Left-click = game actions. Middle/right = manual camera pan: first
     // press also flips `cameraManualOverride` on, which disables the
@@ -433,10 +462,12 @@ export class MatchScene extends Phaser.Scene {
 
   shutdown(): void {
     this.game.canvas.removeEventListener('contextmenu', this.preventContext);
-    const socket = NetworkManager.getSocket();
-    socket.off('match_state');
-    socket.off('match_end');
-    socket.off('turn_result');
+    this.backend?.destroy();
+    this.backend = null;
+    // Stop the parallel tutorial overlay scene, if it was launched.
+    if (this.mode === 'tutorial' && this.scene.isActive('TutorialOverlayScene')) {
+      this.scene.stop('TutorialOverlayScene');
+    }
     this.mapRenderer?.destroy();
     this.mapRenderer = null;
     this.fogRenderer?.destroy();
@@ -1700,7 +1731,65 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private sendAction(action: { kind: 'idle' } | { kind: 'move'; x: number; y: number; rushX?: number; rushY?: number } | { kind: 'throw'; slotIndex: number; x: number; y: number }): void {
-    NetworkManager.getSocket().emit('player_action', { action });
+    this.backend?.sendAction(action);
+  }
+
+  /** Exposed to TutorialOverlayScene so its camera pans can target the world camera. */
+  getMainCamera(): Phaser.Cameras.Scene2D.Camera {
+    return this.cameras.main;
+  }
+
+  /**
+   * Resolve a symbolic HighlightTarget into a screen-space rect. Called by
+   * the overlay every frame while a highlight is active — keep the math
+   * tight and don't allocate.
+   *
+   * Approximate rects for Phase 4 — exact positions are tuned in Phase 12
+   * by reading the actual HUD widget bounds (hudObjects[]).
+   */
+  getHudRect(target: { kind: string; index?: number }): { x: number; y: number; w: number; h: number; space: 'hud' } | null {
+    const W = this.scale.width;
+    const H = this.scale.height;
+    switch (target.kind) {
+      case 'phaseIndicator':
+        return { x: 12, y: 12, w: 150, h: 28, space: 'hud' };
+      case 'timer':
+        return { x: 170, y: 12, w: 120, h: 28, space: 'hud' };
+      case 'hp':
+        return { x: W - 230, y: 12, w: 100, h: 28, space: 'hud' };
+      case 'coinCounter':
+        return { x: W - 120, y: 12, w: 100, h: 28, space: 'hud' };
+      case 'bombTray': {
+        // 5 slots of SLOT_SIZE (64) + 4 gaps of SLOT_GAP (8), bottom-centered.
+        const totalW = SLOT_COUNT * SLOT_SIZE + (SLOT_COUNT - 1) * SLOT_GAP;
+        return { x: (W - totalW) / 2, y: H - SLOT_SIZE - 16, w: totalW, h: SLOT_SIZE, space: 'hud' };
+      }
+      case 'slot': {
+        const i = target.index ?? 0;
+        const totalW = SLOT_COUNT * SLOT_SIZE + (SLOT_COUNT - 1) * SLOT_GAP;
+        const trayX = (W - totalW) / 2;
+        return {
+          x: trayX + i * (SLOT_SIZE + SLOT_GAP),
+          y: H - SLOT_SIZE - 16,
+          w: SLOT_SIZE,
+          h: SLOT_SIZE,
+          space: 'hud',
+        };
+      }
+      case 'lootPanel':
+        // Approximate — real position is centered above the tray.
+        return { x: (W - 320) / 2, y: H - SLOT_SIZE - 140, w: 320, h: 110, space: 'hud' };
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Constructs the TutorialMatchBackend. Kept as a method so `create()` stays
+   * clean. Called only when `mode === 'tutorial'`.
+   */
+  private buildTutorialBackend(): MatchBackend {
+    return new TutorialMatchBackend();
   }
 
   // --- HUD (rendered on a separate camera that never zooms/scrolls) ---
@@ -2186,7 +2275,7 @@ export class MatchScene extends Phaser.Scene {
     if (targetSlot !== -1) {
       // Direct pickup — compatible slot found
       this.lootPendingSwap = null;
-      NetworkManager.getSocket().emit('loot_bomb', {
+      this.backend?.sendLoot({
         sourceKind: loot.kind,
         sourceId: loot.sourceId,
         bombType: loot.type,
@@ -2207,7 +2296,7 @@ export class MatchScene extends Phaser.Scene {
 
   private executeLootSwap(inventorySlotIndex: number): void {
     if (!this.lootPendingSwap) return;
-    NetworkManager.getSocket().emit('loot_bomb', {
+    this.backend?.sendLoot({
       sourceKind: this.lootPendingSwap.sourceKind,
       sourceId: this.lootPendingSwap.sourceId,
       bombType: this.lootPendingSwap.bombType,

@@ -101,6 +101,11 @@ interface BombermanMap {
   chest1Zones: { x: number; y: number; w: number; h: number }[];
   chest2Zones: { x: number; y: number; w: number; h: number }[];
   doors: { id: number; tiles: { x: number; y: number }[]; orientation: 'horizontal' | 'vertical' }[];
+  tutorial?: {
+    bot1: { x: number; y: number };
+    bot2: { x: number; y: number };
+    bot2Path: { x: number; y: number };
+  };
 }
 
 // ------- Helpers -------
@@ -400,6 +405,29 @@ for (const e of escapeTiles) {
   }
 }
 
+// Optional Tutorial object layer — parses named point objects Tutorial_Bot1,
+// Tutorial_Bot2, Tutorial_Bot_Path. Only emitted when all three are present.
+let tutorial: BombermanMap['tutorial'];
+const tutorialLayer = findObjectLayer('Tutorial');
+if (tutorialLayer) {
+  const byName = new Map<string, { x: number; y: number }>();
+  for (const obj of tutorialLayer.objects) {
+    if (!obj.point) continue;
+    byName.set(obj.name, toTile(obj.x, obj.y));
+  }
+  const b1 = byName.get('Tutorial_Bot1');
+  const b2 = byName.get('Tutorial_Bot2');
+  const bp = byName.get('Tutorial_Bot_Path');
+  if (b1 && b2 && bp) {
+    tutorial = { bot1: b1, bot2: b2, bot2Path: bp };
+    console.log(`Tutorial: bot1 (${b1.x},${b1.y}), bot2 (${b2.x},${b2.y}), path→(${bp.x},${bp.y})`);
+  } else {
+    const missing = ['Tutorial_Bot1', 'Tutorial_Bot2', 'Tutorial_Bot_Path']
+      .filter(n => !byName.has(n));
+    console.warn(`⚠ Tutorial layer present but missing points: ${missing.join(', ')}`);
+  }
+}
+
 const mapId = basename(inputPath, '.tmj');
 const output: BombermanMap = {
   id: mapId,
@@ -413,6 +441,7 @@ const output: BombermanMap = {
   chest1Zones,
   chest2Zones,
   doors,
+  ...(tutorial ? { tutorial } : {}),
 };
 
 const outPath = join(dirname(inputPath), `${mapId}.json`);
