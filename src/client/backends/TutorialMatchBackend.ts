@@ -39,6 +39,12 @@ export class TutorialMatchBackend implements MatchBackend {
   private bootstrapComplete = false;
   /** Scripted bot actions queued for the next resolveTurn. Cleared after use. */
   private pendingBotActions = new Map<string, PlayerAction>();
+  /**
+   * True from the moment a player action is received until the post-
+   * transition flip back to input. Prevents stacked turns from double-clicks
+   * and keeps `forceIdleAndResolve` safe.
+   */
+  private turnInProgress = false;
 
   start(): void {
     if (this.started) return;
@@ -49,6 +55,10 @@ export class TutorialMatchBackend implements MatchBackend {
   sendAction(action: PlayerAction): void {
     if (!this.state || !this.map) return;
     if (this.state.phase !== 'input') return;
+    // One turn at a time — ignore stray clicks while the phase machine is
+    // running. Without this guard, a double-click during the input-phase
+    // hold would queue two turns.
+    if (this.turnInProgress) return;
 
     // Director gate: self-click-idle may be muted, and an expected action may
     // swallow non-matching inputs. If muted idle → drop. If wrong action →
@@ -56,8 +66,7 @@ export class TutorialMatchBackend implements MatchBackend {
     if (action.kind === 'idle' && this.director.shouldSwallowIdle()) return;
     if (!this.director.validatePlayerAction(action)) return;
 
-    this.resolveLocal(action);
-    this.director.onTurnResolved();
+    this.resolveLocal(action, /* notifyDirector */ true);
   }
 
   sendLoot(msg: LootBombMsg): void {
@@ -166,6 +175,7 @@ export class TutorialMatchBackend implements MatchBackend {
     this.started = false;
     this.overlay = null;
     this.bootstrapComplete = false;
+    this.turnInProgress = false;
   }
 
   /** Called by TutorialOverlayScene once it has finished creating its UI.
@@ -178,9 +188,22 @@ export class TutorialMatchBackend implements MatchBackend {
   /**
    * Runs resolveTurn with the given player action + any queued bot actions.
    * Broken out so the director's forceIdleAndResolve can share the same path.
+   *
+   * Phase timing mirrors a real match so tutorial throws look natural:
+   *   1. Stay in `phase: 'input'` for BALANCE.match.inputPhaseSeconds seconds
+   *      after the click. The red aim reticle is visible during this window.
+   *   2. Flip to `phase: 'transition'` — MatchScene plays the arc/burst.
+   *   3. Call `resolveTurn`, broadcast events + new state (still transition).
+   *   4. After BALANCE.match.transitionPhaseSeconds, flip back to `input`
+   *      and notify the director, which advances the script.
+   *
+   * If the director has `suppressRush` set, the player's rush state is
+   * reset after resolveTurn so OOC Rush cannot activate during that beat.
    */
-  private resolveLocal(action: PlayerAction): void {
+  private resolveLocal(action: PlayerAction, notifyDirector: boolean): void {
     if (!this.state || !this.map) return;
+    if (this.turnInProgress) return;
+    this.turnInProgress = true;
 
     const actions = new Map<string, PlayerAction>();
     actions.set(TUTORIAL_PLAYER_ID, action);
@@ -194,19 +217,62 @@ export class TutorialMatchBackend implements MatchBackend {
     }
     this.pendingBotActions.clear();
 
-    // Advance to transition first (matches the server's two-phase cycle).
-    this.state = { ...this.state, phase: 'transition' };
-    this.stateCb?.(this.state);
+    const inputHoldMs = BALANCE.match.inputPhaseSeconds * 1000;
+    const transitionHoldMs = BALANCE.match.transitionPhaseSeconds * 1000;
 
-    const result = resolveTurn(this.state, actions, this.map);
-    this.state = {
-      ...result.state,
-      phase: 'input',
-      phaseEndsAt: Date.now() + BALANCE.match.inputPhaseSeconds * 1000,
-    };
+    // Phase 1: hold in input so the client can render the aim reticle and
+    // staged path. `sendAction` ignores further clicks because turnInProgress
+    // is now set, so this hold isn't interruptible by stray input.
+    setTimeout(() => {
+      if (!this.state || !this.map) return;
 
-    this.turnCb?.(result.events);
-    this.stateCb?.(this.state);
+      // Phase 2: flip to transition, broadcast, run resolveTurn.
+      this.state = { ...this.state, phase: 'transition' };
+      this.stateCb?.(this.state);
+
+      const result = resolveTurn(this.state, actions, this.map);
+      let nextState: MatchState = { ...result.state };
+
+      // Rush suppression: during beats where OOC Rush should be off,
+      // force-reset the tutorial player's rush state after every resolve.
+      if (this.director.isRushSuppressed()) {
+        nextState = {
+          ...nextState,
+          bombermen: nextState.bombermen.map(b =>
+            b.playerId === TUTORIAL_PLAYER_ID
+              ? { ...b, rushCooldown: 0, rushActive: false }
+              : b,
+          ),
+        };
+      }
+
+      // Keep state in transition phase while animations play.
+      this.state = { ...nextState, phase: 'transition' };
+      this.turnCb?.(result.events);
+      this.stateCb?.(this.state);
+
+      // Phase 3: after transition hold, flip back to input and let the
+      // director consume the next script step.
+      setTimeout(() => {
+        if (!this.state) return;
+        this.state = {
+          ...this.state,
+          phase: 'input',
+          phaseEndsAt: Date.now() + inputHoldMs,
+        };
+        // Clear the turn-in-progress guard BEFORE broadcasting state. The
+        // broadcast triggers the client's flushStagedAction, which calls
+        // back into sendAction for the next move in a multi-tile path —
+        // if turnInProgress is still true at that moment, the follow-up
+        // action would be dropped and auto-walking would stall.
+        this.turnInProgress = false;
+        this.stateCb?.(this.state);
+        // `forceIdleAndResolve` callers already bump the script cursor,
+        // so we only notify the director for real player actions. Without
+        // this split, promptIdle would skip the step after it.
+        if (notifyDirector) this.director.onTurnResolved(this.state);
+      }, transitionHoldMs);
+    }, inputHoldMs);
   }
 
   /** Start the director once both the initial state and the overlay exist. */
@@ -246,7 +312,10 @@ export class TutorialMatchBackend implements MatchBackend {
       },
       forceIdleAndResolve: () => {
         if (!this.state || !this.map) return;
-        this.resolveLocal({ kind: 'idle' });
+        // Script already bumped the cursor past this step and called
+        // advance() to consume the next ones, so we must NOT call
+        // director.onTurnResolved here (would double-advance).
+        this.resolveLocal({ kind: 'idle' }, /* notifyDirector */ false);
       },
       setBotAction: (botId, action) => {
         this.pendingBotActions.set(botId, action);
@@ -264,6 +333,14 @@ export class TutorialMatchBackend implements MatchBackend {
           escapedPlayerIds: [TUTORIAL_PLAYER_ID],
           coinsEarned,
         });
+      },
+      spawnExclamation: (tileX, tileY, color) => {
+        const ts = this.map?.tileSize ?? 16;
+        this.overlay?.spawnExclamationAt(
+          tileX * ts + ts / 2,
+          tileY * ts + ts / 2,
+          color,
+        );
       },
     };
   }

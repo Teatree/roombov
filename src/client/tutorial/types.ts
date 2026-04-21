@@ -12,9 +12,22 @@ export type PortraitId = 'char4' | 'char4_angry' | null;
 /**
  * Thing the player is expected to do next. The director validates incoming
  * player actions against this and swallows anything that doesn't match.
+ *
+ * `moveTo` optionally accepts `rushX`/`rushY` for the OOC-Rush two-tile
+ * move: when both are provided, the player's action must carry matching
+ * `rushX`/`rushY` values. When omitted, the action must NOT carry rush
+ * fields (keeps strict matching during the no-rush beats).
+ *
+ * `reachTile` is the multi-turn walk variant: the player clicks the final
+ * destination and the client auto-walks one tile per turn via
+ * `inputMode === 'pathing'`. The director accepts every intermediate move
+ * action but only advances the script once the player's bomberman state
+ * reports it has actually reached (x, y). Use this for any walk longer
+ * than one tile so the tutorial teaches how the pathing system works.
  */
 export type ExpectedAction =
-  | { kind: 'moveTo'; x: number; y: number }
+  | { kind: 'moveTo'; x: number; y: number; rushX?: number; rushY?: number }
+  | { kind: 'reachTile'; x: number; y: number }
   | { kind: 'throwAt'; slotIndex: 0 | 1 | 2 | 3 | 4; x: number; y: number; bombType?: BombType }
   | { kind: 'idle' }
   | { kind: 'lootBomb'; sourceKind: 'chest' | 'body'; bombType: BombType };
@@ -30,6 +43,7 @@ export type HighlightTarget =
   | { kind: 'tile'; x: number; y: number }
   | { kind: 'slot'; index: 0 | 1 | 2 | 3 | 4 }
   | { kind: 'lootPanel' }
+  | { kind: 'lootItem'; bombType: BombType }
   | { kind: 'phaseIndicator' }
   | { kind: 'timer' }
   | { kind: 'hp' }
@@ -60,6 +74,13 @@ export type TutorialStep =
 
   // Mode flags
   | { kind: 'setIdleMuted'; muted: boolean }
+  // When enabled, the backend resets rushCooldown + rushActive on the
+  // tutorial player after every resolveTurn, so OOC Rush never activates
+  // during these beats. Disabled for Beat 6 where rush teaching applies.
+  | { kind: 'setSuppressRush'; enabled: boolean }
+  // Tutorial-only scripted attention: spawn a floating red "!" above the
+  // given tile. Used to flag enemy reveals and other one-off cues.
+  | { kind: 'flashExclamation'; x: number; y: number; color?: string }
 
   // Setup — non-blocking, mutates the local match state.
   | { kind: 'mutateState'; mutate: (s: MatchState) => void }
@@ -121,4 +142,7 @@ export interface TutorialHost {
 
   // Fires the MatchEnd path — MatchScene transitions to the results screen.
   endTutorial(message?: string): void;
+
+  // Spawn a floating "!" above a world tile (used for enemy-reveal cues).
+  spawnExclamation(tileX: number, tileY: number, color?: string): void;
 }

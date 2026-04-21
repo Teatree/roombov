@@ -1,7 +1,7 @@
 import type {
   ExpectedAction, HighlightTarget, TutorialHost, TutorialStep,
 } from './types.ts';
-import type { PlayerAction } from '@shared/types/match.ts';
+import type { MatchState, PlayerAction } from '@shared/types/match.ts';
 import { TUTORIAL_PLAYER_ID } from '../backends/TutorialMatchBackend.ts';
 
 /**
@@ -24,6 +24,13 @@ export class TutorialDirector {
 
   /** Player self-click-idle is swallowed while muted. Backend-consulted. */
   private idleMuted = true;
+
+  /**
+   * When true, the backend resets the tutorial player's rushCooldown and
+   * rushActive to 0/false after every resolveTurn so OOC Rush cannot
+   * activate during the relevant beats. Flipped via `setSuppressRush` steps.
+   */
+  private suppressRush = true;
 
   /** True once all steps are consumed. */
   private finished = false;
@@ -79,9 +86,24 @@ export class TutorialDirector {
     this.advance();
   }
 
-  /** Called by backend after it has successfully resolved a turn. */
-  onTurnResolved(): void {
+  /** Called by backend after it has successfully resolved a turn.
+   *  `state` is the post-resolve match state — used by `reachTile` to
+   *  decide whether the walk is finished (advance) or still in progress
+   *  (stay on this step, let the client auto-send the next move). */
+  onTurnResolved(state: MatchState | null): void {
     if (!this.expected) return;
+
+    // reachTile is the multi-turn walk. If the player hasn't reached the
+    // destination yet, keep the expectation active so the next move is
+    // accepted too. The client's `flushStagedAction` will auto-send the
+    // next step of its BFS path when the input phase starts.
+    if (this.expected.kind === 'reachTile' && state) {
+      const me = state.bombermen.find(b => b.playerId === TUTORIAL_PLAYER_ID);
+      if (me && (me.x !== this.expected.x || me.y !== this.expected.y)) {
+        return; // still walking — stay on this step
+      }
+    }
+
     this.expected = null;
     this.hintTarget = null;
     // Step past the blocking waitForAction (runStep returned `true` without
@@ -103,6 +125,11 @@ export class TutorialDirector {
   /** Backend asks: is idle muted for the player? */
   get isIdleMuted(): boolean {
     return this.idleMuted;
+  }
+
+  /** Backend asks: should the player's rush state be reset after each turn? */
+  isRushSuppressed(): boolean {
+    return this.suppressRush;
   }
 
   // ============================================================
@@ -182,6 +209,14 @@ export class TutorialDirector {
 
       case 'setIdleMuted':
         this.idleMuted = step.muted;
+        return false;
+
+      case 'setSuppressRush':
+        this.suppressRush = step.enabled;
+        return false;
+
+      case 'flashExclamation':
+        host.spawnExclamation(step.x, step.y, step.color);
         return false;
 
       case 'mutateState':
@@ -274,8 +309,22 @@ export class TutorialDirector {
     switch (expected.kind) {
       case 'idle':
         return action.kind === 'idle';
-      case 'moveTo':
-        return action.kind === 'move' && action.x === expected.x && action.y === expected.y;
+      case 'moveTo': {
+        if (action.kind !== 'move') return false;
+        if (action.x !== expected.x || action.y !== expected.y) return false;
+        // Rush fields: when the script specifies a rush target, the action
+        // must carry matching rushX/rushY. When omitted, the action must
+        // NOT carry rush fields (keeps non-rush beats strict).
+        if (expected.rushX !== undefined || expected.rushY !== undefined) {
+          return action.rushX === expected.rushX && action.rushY === expected.rushY;
+        }
+        return action.rushX === undefined && action.rushY === undefined;
+      }
+      case 'reachTile':
+        // Multi-turn walk: accept any move action. The client's BFS path
+        // determines the exact tile sequence. onTurnResolved decides when
+        // we've actually arrived and the script can advance.
+        return action.kind === 'move';
       case 'throwAt':
         return action.kind === 'throw'
           && action.slotIndex === expected.slotIndex

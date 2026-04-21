@@ -197,6 +197,14 @@ export class MatchScene extends Phaser.Scene {
   private bloodDecals = new Map<string, Phaser.GameObjects.Graphics>();
 
   /**
+   * Tile under the cursor in world tile coords, updated by the pointermove
+   * handler. Null when the cursor is off the map or outside the viewport.
+   * Drives the red throw-target preview reticle (see drawHighlights()).
+   */
+  private hoveredTileX: number | null = null;
+  private hoveredTileY: number | null = null;
+
+  /**
    * RTS-style fog: tracks which entities/decals the player has "discovered"
    * by having them in LOS at least once. Objects in seen-dim areas are only
    * rendered if they're in this set. New objects that appear while the area
@@ -424,6 +432,22 @@ export class MatchScene extends Phaser.Scene {
     });
 
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      // Track hovered tile for the red throw-target reticle. Runs on every
+      // pointermove regardless of drag state so the reticle keeps tracking
+      // while the player moves the mouse.
+      if (this.mapData) {
+        const ts = this.mapData.tileSize;
+        const wp = pointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2;
+        const tx = Math.floor(wp.x / ts);
+        const ty = Math.floor(wp.y / ts);
+        if (tx >= 0 && ty >= 0 && tx < this.mapData.width && ty < this.mapData.height) {
+          this.hoveredTileX = tx;
+          this.hoveredTileY = ty;
+        } else {
+          this.hoveredTileX = null;
+          this.hoveredTileY = null;
+        }
+      }
       if (!this.cameraDragging) return;
       const dx = pointer.x - this.cameraDragStartX;
       const dy = pointer.y - this.cameraDragStartY;
@@ -573,30 +597,11 @@ export class MatchScene extends Phaser.Scene {
           if (this.hudCamera) this.hudCamera.ignore(sprite);
           this.escapeSprites.push({ x: esc.x, y: esc.y, sprite, state: 'closed' });
         }
-        // Create chest sprites (persistent, same lifecycle as escape hatches)
+        // Initial chest-sprite build — subsequent syncs happen below on every
+        // state update so tutorial-spawned chests also get sprites.
         for (const cs of this.chestSprites) cs.sprite.destroy();
         this.chestSprites = [];
-        if (state.chests) {
-          for (const chest of state.chests) {
-            const key = `chest_${chest.tier}` as 'chest_1' | 'chest_2';
-            const sprite = this.add.sprite(
-              chest.x * mapTs + mapTs / 2,
-              chest.y * mapTs + mapTs,
-              key,
-            );
-            sprite.setDepth(15); // below decals per spec; fog overlay handles dim/hide
-            sprite.setOrigin(0.5, 1);
-            const opened = chest.opened;
-            sprite.play(opened ? `${key}_open` : `${key}_closed`);
-            if (this.hudCamera) this.hudCamera.ignore(sprite);
-            this.chestSprites.push({
-              id: chest.id, x: chest.x, y: chest.y, tier: chest.tier,
-              sprite, state: opened ? 'open' : 'closed',
-              permanentlyOpened: opened,
-              wasVisible: false,
-            });
-          }
-        }
+        this.syncChestSprites(state, mapTs);
 
         // Create door sprites
         for (const ds of this.doorSprites) ds.sprite.destroy();
@@ -664,6 +669,13 @@ export class MatchScene extends Phaser.Scene {
     }
 
     this.errorText.setVisible(false);
+
+    // Sync chest sprites to state every update, not just on the first frame.
+    // Tutorial's `spawnChest` mutateState pushes chests into the state after
+    // the initial map load — without this we'd never create sprites for them.
+    if (this.mapData) {
+      this.syncChestSprites(state, this.mapData.tileSize);
+    }
 
     const me = this.myBomberman();
 
@@ -1199,21 +1211,20 @@ export class MatchScene extends Phaser.Scene {
         const wx = bm.x * ts + ts / 2 + ts * 0.6;
         const wy = bm.y * ts + ts / 2 - ts * 1.5;
         const active = ev.active as boolean;
-        const txt = active ? '\u2191' : '!';  // ↑ or !
-        const color = active ? '#44ff88' : '#ff4444';
-        const indicator = this.add.text(wx, wy, txt, {
-          fontSize: '20px', color, fontFamily: 'monospace', fontStyle: 'bold',
-          stroke: '#000000', strokeThickness: 3,
-        }).setOrigin(0.5).setDepth(150);
-        if (this.hudCamera) this.hudCamera.ignore(indicator);
-        this.tweens.add({
-          targets: indicator,
-          y: wy - ts * 1.5,
-          alpha: 0,
-          duration: 1200,
-          ease: 'Cubic.easeOut',
-          onComplete: () => indicator.destroy(),
-        });
+        if (active) {
+          const indicator = this.add.text(wx, wy, '\u2191', {
+            fontSize: '20px', color: '#44ff88', fontFamily: 'monospace', fontStyle: 'bold',
+            stroke: '#000000', strokeThickness: 3,
+          }).setOrigin(0.5).setDepth(150);
+          if (this.hudCamera) this.hudCamera.ignore(indicator);
+          this.tweens.add({
+            targets: indicator, y: wy - ts * 1.5, alpha: 0,
+            duration: 1200, ease: 'Cubic.easeOut',
+            onComplete: () => indicator.destroy(),
+          });
+        } else {
+          this.spawnExclamation(wx, wy, '#ff4444');
+        }
       }
     }
 
@@ -1414,6 +1425,70 @@ export class MatchScene extends Phaser.Scene {
         });
       }
     }
+  }
+
+  /**
+   * Sync `chestSprites` to the latest `state.chests`. Creates sprites for
+   * newly-added chests and destroys sprites for chests that disappeared.
+   * Called both on first map load (during handleMatchState's firstFrame
+   * block) and on every subsequent state update so the tutorial's
+   * spawnChest mutations render correctly.
+   */
+  private syncChestSprites(state: MatchState, mapTs: number): void {
+    const stateChests = state.chests ?? [];
+
+    // Remove sprites whose chest is no longer in state.
+    const liveIds = new Set(stateChests.map(c => c.id));
+    for (let i = this.chestSprites.length - 1; i >= 0; i--) {
+      if (!liveIds.has(this.chestSprites[i].id)) {
+        this.chestSprites[i].sprite.destroy();
+        this.chestSprites.splice(i, 1);
+      }
+    }
+
+    // Add sprites for new chests.
+    const existingIds = new Set(this.chestSprites.map(cs => cs.id));
+    for (const chest of stateChests) {
+      if (existingIds.has(chest.id)) continue;
+      const key = `chest_${chest.tier}` as 'chest_1' | 'chest_2';
+      const sprite = this.add.sprite(
+        chest.x * mapTs + mapTs / 2,
+        chest.y * mapTs + mapTs,
+        key,
+      );
+      sprite.setDepth(15);
+      sprite.setOrigin(0.5, 1);
+      const opened = chest.opened;
+      sprite.play(opened ? `${key}_open` : `${key}_closed`);
+      if (this.hudCamera) this.hudCamera.ignore(sprite);
+      this.chestSprites.push({
+        id: chest.id, x: chest.x, y: chest.y, tier: chest.tier,
+        sprite, state: opened ? 'open' : 'closed',
+        permanentlyOpened: opened,
+        wasVisible: false,
+      });
+    }
+  }
+
+  /**
+   * Spawn a floating "!" over a world-space point. Used by the rush-broken
+   * indicator and by the tutorial's scripted enemy-reveal highlight.
+   */
+  spawnExclamation(worldX: number, worldY: number, color: string = '#ff4444'): void {
+    const indicator = this.add.text(worldX, worldY, '!', {
+      fontSize: '20px', color, fontFamily: 'monospace', fontStyle: 'bold',
+      stroke: '#000000', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(150);
+    if (this.hudCamera) this.hudCamera.ignore(indicator);
+    const ts = this.mapData?.tileSize ?? 32;
+    this.tweens.add({
+      targets: indicator,
+      y: worldY - ts * 1.5,
+      alpha: 0,
+      duration: 1200,
+      ease: 'Cubic.easeOut',
+      onComplete: () => indicator.destroy(),
+    });
   }
 
   /**
@@ -1634,11 +1709,27 @@ export class MatchScene extends Phaser.Scene {
     if (!this.mapData) return;
     const ts = this.mapData.tileSize;
 
+    // Committed throw target (aim mode) — rendered while the action is
+    // queued and during the transition phase.
     if (this.inputMode.kind === 'aim' && this.inputMode.targetX !== null && this.inputMode.targetY !== null) {
       this.highlightGraphics.lineStyle(3, 0xff4444, 1);
       this.highlightGraphics.strokeRect(
         this.inputMode.targetX * ts + 2,
         this.inputMode.targetY * ts + 2,
+        ts - 4, ts - 4,
+      );
+      return;
+    }
+
+    // Hover preview — while a bomb slot is armed and no aim is committed
+    // yet, show a red reticle on the tile under the cursor so the player
+    // can see where their throw will land before they click.
+    if (this.selectedSlot !== null
+        && this.hoveredTileX !== null && this.hoveredTileY !== null) {
+      this.highlightGraphics.lineStyle(3, 0xff4444, 0.85);
+      this.highlightGraphics.strokeRect(
+        this.hoveredTileX * ts + 2,
+        this.hoveredTileY * ts + 2,
         ts - 4, ts - 4,
       );
     }
@@ -1747,7 +1838,7 @@ export class MatchScene extends Phaser.Scene {
    * Approximate rects for Phase 4 — exact positions are tuned in Phase 12
    * by reading the actual HUD widget bounds (hudObjects[]).
    */
-  getHudRect(target: { kind: string; index?: number }): { x: number; y: number; w: number; h: number; space: 'hud' } | null {
+  getHudRect(target: { kind: string; index?: number; bombType?: BombType }): { x: number; y: number; w: number; h: number; space: 'hud' } | null {
     const W = this.scale.width;
     const H = this.scale.height;
     switch (target.kind) {
@@ -1779,9 +1870,62 @@ export class MatchScene extends Phaser.Scene {
       case 'lootPanel':
         // Approximate — real position is centered above the tray.
         return { x: (W - 320) / 2, y: H - SLOT_SIZE - 140, w: 320, h: 110, space: 'hud' };
+      case 'lootItem':
+        return target.bombType ? this.getLootItemRect(target.bombType) : null;
       default:
         return null;
     }
+  }
+
+  /**
+   * Rect of the specific loot-panel icon for the given bomb type, or null
+   * if the loot panel isn't visible or the type isn't shown. Used by the
+   * tutorial to highlight a single item (e.g. "click the Flare") instead
+   * of the whole panel.
+   */
+  private getLootItemRect(bombType: BombType): { x: number; y: number; w: number; h: number; space: 'hud' } | null {
+    if (!this.lootPanelVisible || !this.state) return null;
+    const me = this.myBomberman();
+    if (!me) return null;
+
+    // Rebuild the same flattened order used by renderLootPanel so indices
+    // line up with the visible icons.
+    const lootSlots: Array<{ type: BombType }> = [];
+    for (const c of this.state.chests) {
+      if (c.x === me.x && c.y === me.y && c.bombs.length > 0) {
+        for (const b of c.bombs) {
+          lootSlots.push({ type: b.type });
+          if (lootSlots.length >= 4) break;
+        }
+      }
+      if (lootSlots.length >= 4) break;
+    }
+    if (lootSlots.length < 4) {
+      for (const b of this.state.bodies) {
+        if (b.x === me.x && b.y === me.y) {
+          for (const bb of b.bombs) {
+            lootSlots.push({ type: bb.type });
+            if (lootSlots.length >= 4) break;
+          }
+        }
+        if (lootSlots.length >= 4) break;
+      }
+    }
+
+    const idx = lootSlots.findIndex(s => s.type === bombType);
+    if (idx < 0) return null;
+
+    const W = this.scale.width;
+    const panelWidth = SLOT_COUNT * SLOT_SIZE + (SLOT_COUNT - 1) * SLOT_GAP + 20;
+    const panelX = (W - panelWidth) / 2;
+    const slotStartX = panelX + 10;
+    return {
+      x: slotStartX + idx * (SLOT_SIZE + SLOT_GAP),
+      y: this.lootPanelY + 30,
+      w: SLOT_SIZE,
+      h: 50,
+      space: 'hud',
+    };
   }
 
   /**

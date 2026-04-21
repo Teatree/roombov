@@ -45,7 +45,7 @@ export class TutorialOverlayScene extends Phaser.Scene {
   private dialogueBg!: Phaser.GameObjects.Rectangle;
   private dialogueText!: Phaser.GameObjects.Text;
   private dialogueFooter!: Phaser.GameObjects.Text;
-  private dialoguePortrait: Phaser.GameObjects.Sprite | null = null;
+  private dialoguePortrait: Phaser.GameObjects.Image | null = null;
 
   // Pause
   private pauseContainer!: Phaser.GameObjects.Container;
@@ -68,8 +68,11 @@ export class TutorialOverlayScene extends Phaser.Scene {
   }
 
   preload(): void {
-    // Defensive: ensure char4 spritesheet is loaded for the portrait.
+    // Defensive: ensure char4 spritesheet is loaded (other scenes may need it
+    // if overlay starts first).
     preloadBombermanSpritesheets(this);
+    // Tutorial dialogue portrait — static image, displayed at native size.
+    this.load.image('tutorial_guy', 'sprites/tutorial_guy.png');
   }
 
   private backend: TutorialMatchBackend | null = null;
@@ -225,8 +228,21 @@ export class TutorialOverlayScene extends Phaser.Scene {
   }
 
   /**
+   * Spawn a floating "!" above a world-space point via MatchScene. Used by
+   * the tutorial's scripted enemy-reveal cue so the overlay stays the only
+   * seam between the director and the scene graph.
+   */
+  spawnExclamationAt(worldX: number, worldY: number, color?: string): void {
+    this.matchScene?.spawnExclamation(worldX, worldY, color);
+  }
+
+  /**
    * Pan the match camera to a world-space point over `durationMs`, cubic-out.
-   * Calls `onComplete` when the pan finishes.
+   * Calls `onComplete` when the pan finishes. A delayedCall with the same
+   * duration acts as a safety net — Phaser's `cam.pan` `onUpdate` callback
+   * does not fire when start == end (e.g. panning to the player while the
+   * camera is already centered on them), which would otherwise stall the
+   * tutorial director. `fired` ensures we only invoke onComplete once.
    */
   panCamera(worldX: number, worldY: number, durationMs: number, onComplete?: () => void): void {
     const cam = this.matchScene?.getMainCamera();
@@ -234,9 +250,16 @@ export class TutorialOverlayScene extends Phaser.Scene {
       onComplete?.();
       return;
     }
+    let fired = false;
+    const fire = (): void => {
+      if (fired) return;
+      fired = true;
+      onComplete?.();
+    };
     cam.pan(worldX, worldY, durationMs, 'Cubic.easeOut', true, (_c, progress) => {
-      if (progress >= 1) onComplete?.();
+      if (progress >= 1) fire();
     });
+    this.time.delayedCall(durationMs + 50, fire);
   }
 
   /**
@@ -262,21 +285,29 @@ export class TutorialOverlayScene extends Phaser.Scene {
   // Internals
   // ============================================================
 
-  /** Build the char4 portrait sprite lazily — runtime-cropped to the head. */
+  /**
+   * Build the dialogue portrait lazily from the static `tutorial_guy.png`.
+   * Centered inside the PORTRAIT_SIZE frame. If the source art is smaller
+   * than the frame it's drawn at native resolution; if larger, it's scaled
+   * down proportionally to fit — aspect ratio preserved, no cropping.
+   */
   private ensurePortrait(): void {
     if (this.dialoguePortrait) return;
-    // Place at the same offset as the portrait frame, 2× scale, cropped to
-    // the top 40% of the idle frame. Exact crop numbers get tuned in Phase 12.
-    const sprite = this.add.sprite(12 + PORTRAIT_SIZE / 2, 12 + PORTRAIT_SIZE / 2, 'char4_idle');
-    sprite.setOrigin(0.5, 0.5);
-    // char4 idle spritesheet frames are typically ~32×48; take the top 40%.
-    const f = sprite.frame;
-    sprite.setCrop(0, 0, f.width, Math.floor(f.height * 0.4));
-    // Scale so the cropped head fills the portrait box.
-    const scale = (PORTRAIT_SIZE - 8) / Math.max(f.width, f.height * 0.4);
-    sprite.setScale(scale);
-    this.dialoguePanel.add(sprite);
-    this.dialoguePortrait = sprite;
+    const image = this.add.image(
+      12 + PORTRAIT_SIZE / 2,
+      12 + PORTRAIT_SIZE / 2,
+      'tutorial_guy',
+    );
+    image.setOrigin(0.5, 0.5);
+    const inner = PORTRAIT_SIZE - 8;
+    const srcW = image.width;
+    const srcH = image.height;
+    if (srcW > inner || srcH > inner) {
+      const scale = Math.min(inner / srcW, inner / srcH);
+      image.setScale(scale);
+    }
+    this.dialoguePanel.add(image);
+    this.dialoguePortrait = image;
   }
 
   private enableClickCatcher(onAdvance: () => void): void {
