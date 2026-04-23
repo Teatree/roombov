@@ -30,7 +30,13 @@ export type ExpectedAction =
   | { kind: 'reachTile'; x: number; y: number }
   | { kind: 'throwAt'; slotIndex: 0 | 1 | 2 | 3 | 4; x: number; y: number; bombType?: BombType }
   | { kind: 'idle' }
-  | { kind: 'lootBomb'; sourceKind: 'chest' | 'body'; bombType: BombType };
+  | { kind: 'lootBomb'; sourceKind: 'chest' | 'body'; bombType: BombType }
+  // Waits for the player to click a bomb slot in the HUD. Satisfied by any
+  // slot click if `slotIndex` is omitted, otherwise only by that exact slot.
+  // Resolves without advancing a turn — selecting a slot is a UI state
+  // change, not a gameplay action. Wrong-slot clicks flash the hint like
+  // other expected-action mismatches.
+  | { kind: 'selectBomb'; slotIndex?: 0 | 1 | 2 | 3 | 4 };
 
 /**
  * Where to draw a pulsing highlight. World rects are in map-pixel coords;
@@ -64,20 +70,53 @@ export type TutorialStep =
   // Waits one turn on the player's behalf while self-click-idle is muted.
   // Rendered like a dialogue ("Click to wait this turn"); advance internally
   // fires an idle + resolveTurn via director.forceIdleAndResolve().
-  | { kind: 'promptIdle'; text: string }
+  //
+  // `delayAfterMs` adds a pause AFTER the turn finishes resolving (and its
+  // transition animation plays) before the next script step runs. Use this
+  // to let death/explosion animations finish before the next dialogue.
+  | { kind: 'promptIdle'; text: string; delayAfterMs?: number }
+
+  // Advances one turn with the player forced idle AND no dialogue / click
+  // required. Use during scripted sequences where the player is meant to
+  // watch (e.g. an enemy approaching during an ambush). `delayBeforeMs`
+  // and `delayAfterMs` pad the automatic turn with pauses so the pacing
+  // doesn't feel like a cutscene on fast-forward.
+  | { kind: 'autoIdleTurn'; delayBeforeMs?: number; delayAfterMs?: number }
 
   // Attention
   | { kind: 'highlight'; target: HighlightTarget }
   | { kind: 'clearHighlight' }
   | { kind: 'panCamera'; focus: { x: number; y: number } | 'player'; durationMs: number }
   | { kind: 'blockInput'; durationMs: number }
+  // Freeze the follow-player camera so scripted panCamera destinations stay
+  // visible instead of snapping back to the player on the next frame. Lock
+  // for the duration of the tutorial's cinematic sequences; unlock when the
+  // player regains free control.
+  | { kind: 'setCameraLocked'; locked: boolean }
 
   // Mode flags
   | { kind: 'setIdleMuted'; muted: boolean }
+  // Persistent block on player movement (both `move` and `reachTile` actions
+  // are rejected). Stays on until explicitly flipped back off. Use this to
+  // teach other mechanics without the player wandering off the scripted
+  // tile. Distinct from the transient `blockPlayerActions` that
+  // `autoIdleTurn` manages internally.
+  | { kind: 'setBlockMovement'; blocked: boolean }
+  // Persistent block on HUD bomb-slot clicks. While on, clicking a slot
+  // does nothing (the director flashes a hint if a `selectBomb` expectation
+  // is also active, otherwise the click is silently dropped). Stays on
+  // until explicitly flipped back off.
+  | { kind: 'setBlockSlotSelection'; blocked: boolean }
   // When enabled, the backend resets rushCooldown + rushActive on the
   // tutorial player after every resolveTurn, so OOC Rush never activates
   // during these beats. Disabled for Beat 6 where rush teaching applies.
   | { kind: 'setSuppressRush'; enabled: boolean }
+  // Melee Trap Mode gate. 'all' blocks both player and bots from entering
+  // trap mode (default during tutorial so the mechanic doesn't fire
+  // accidentally). 'bots' only blocks bots — use this once the player is
+  // positioned for the ambush so their next idle arms the trap. 'none'
+  // lets the resolver run unmodified.
+  | { kind: 'setSuppressMeleeTrap'; scope: 'all' | 'bots' | 'none' }
   // Tutorial-only scripted attention: spawn a floating red "!" above the
   // given tile. Used to flag enemy reveals and other one-off cues.
   | { kind: 'flashExclamation'; x: number; y: number; color?: string }
@@ -109,6 +148,28 @@ export type TutorialStep =
   // Scripted turn resolution
   | { kind: 'waitForAction'; expected: ExpectedAction; hintText?: string }
   | { kind: 'setBotAction'; botId: string; action: PlayerAction }
+  // Queue a real bot throw for the next resolveTurn. Sugar around
+  // `setBotAction` with `PlayerAction.throw`, plus optional auto-equip that
+  // guarantees the bot has the specified bomb in the given slot (mutates
+  // state before the throw resolves). Throw ranges are infinite, so any
+  // target tile on the map is valid.
+  | {
+      kind: 'botThrow';
+      botId: string;
+      /** Action-convention slot: 0 = Rock (always available),
+       *  1..4 → `inventory.slots[0..3]`. */
+      slotIndex: 0 | 1 | 2 | 3 | 4;
+      x: number;
+      y: number;
+      bombType?: BombType;
+      /** If true (default) and `slotIndex` is 1..4, make sure the bot has
+       *  `bombType` in the matching inventory slot before the throw
+       *  resolves. Ignored for slotIndex 0 (Rock is always available). */
+      autoEquip?: boolean;
+    }
+  // Queue a single-tile bot move. Sugar around `setBotAction` with
+  // `PlayerAction.move`.
+  | { kind: 'botMove'; botId: string; x: number; y: number }
   | { kind: 'resolveTurn' }
 
   // Lifecycle
@@ -125,17 +186,25 @@ export interface TutorialHost {
   hideDialogue(): void;
   showPause(text: string, onAdvance: () => void): void;
   hidePause(): void;
-  setHighlight(target: HighlightTarget | null): void;
+  setHighlights(targets: HighlightTarget[]): void;
   flashHint(target: HighlightTarget): void;
   panCamera(focus: { x: number; y: number } | 'player', durationMs: number, onComplete: () => void): void;
   blockInput(durationMs: number): void;
+  /** Freeze / unfreeze the follow-player camera so scripted panCamera
+   *  destinations stick. Lock during cinematic sequences; unlock when
+   *  player regains control. */
+  setCameraLocked(locked: boolean): void;
 
   // State accessors
   getState(): MatchState | null;
 
   // Turn-resolution hooks (backend side)
   mutateState(fn: (s: MatchState) => void): void;
-  forceIdleAndResolve(): void;
+  /** Run a synthetic idle turn. `onResolved` fires after the turn has
+   *  fully resolved AND the input-phase hold has elapsed — use it to
+   *  delay subsequent script steps until death/explosion animations
+   *  have settled. */
+  forceIdleAndResolve(onResolved?: () => void): void;
 
   // Scripted bot actions. Queued into the next resolveTurn call.
   setBotAction(botId: string, action: PlayerAction): void;

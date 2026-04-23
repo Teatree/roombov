@@ -66,6 +66,12 @@ export class MatchScene extends Phaser.Scene {
    *  per-frame `centerOn` in update() stops running so the player can pan
    *  freely. Resets to false in create() for each new match. */
   private cameraManualOverride = false;
+  /** Tutorial-only: when true, the per-frame centerOn() in update() is
+   *  skipped entirely so scripted `panCamera` destinations actually stick.
+   *  The tutorial director toggles this via `setCameraLocked`. Without
+   *  this flag, the default follow-player behavior snaps the camera back
+   *  on the next frame and the tutorial's "cinematic" pans never land. */
+  private cameraTutorialLocked = false;
   private cameraDragging = false;
   /** Suppresses the browser right-click menu so right-drag pan works. Stored
    *  as a field so shutdown() can remove the listener by reference. */
@@ -217,7 +223,8 @@ export class MatchScene extends Phaser.Scene {
   }
 
   preload(): void {
-    this.tiledInfo = preloadTiledMap(this, 'main_map');
+    const mapIdForPreload = this.mode === 'tutorial' ? 'tutorial_map' : 'main_map';
+    this.tiledInfo = preloadTiledMap(this, mapIdForPreload);
     // Escape hatch: 288x32 sheet, 6 frames of 48x32
     this.load.spritesheet('escape_hatch', 'sprites/escape_hatch.png', {
       frameWidth: 48,
@@ -529,7 +536,7 @@ export class MatchScene extends Phaser.Scene {
     // holds through the 500ms delay before the Results transition. Also
     // skips once the player has manually panned (middle/right click) —
     // from that point on they're in control until the match ends.
-    if (this.mapData && !this.cameraManualOverride) {
+    if (this.mapData && !this.cameraManualOverride && !this.cameraTutorialLocked) {
       const me = this.state.bombermen.find(b => b.playerId === this.myPlayerId);
       if (me && !me.escaped) {
         const ts = this.mapData.tileSize;
@@ -976,30 +983,33 @@ export class MatchScene extends Phaser.Scene {
       const fromY = ev.fromY as number;
       const toX = ev.x as number;
       const toY = ev.y as number;
-      // Only show the throw arc + throw animation if the thrower is in LOS.
-      // The arc duration is always recorded for explosion timing regardless.
+      // Arc always renders, but per-frame LOS-clipped: the bomb sprite
+      // hides on any frame whose current tile is outside LOS, so a throw
+      // from the fog visibly emerges when it enters the player's sight.
+      // The thrower's throw *animation*, however, still only plays if the
+      // thrower is in LOS — no point animating a sprite in darkness.
       const throwerVisible = playerId === this.myPlayerId
         || this.fogRenderer?.isVisible(fromX, fromY);
-      if (throwerVisible) {
-        const exitHold = meleeExiters.has(playerId) ? SWORD_FADE_MS : 0;
-        if (exitHold > 0) {
-          // Delay the throw arc + throw animation so the melee-trap sword
-          // fade clearly plays before the bomberman unwinds into the throw.
-          const duration = (BALANCE.match.transitionPhaseSeconds * 1000) / 2;
-          arcDurationByBombId.set(bombId, duration + exitHold);
-          this.time.delayedCall(exitHold, () => {
-            this.bombRenderer?.spawnThrowArc(type, fromX, fromY, toX, toY);
+      const fog = this.fogRenderer;
+      const los = fog ? (tx: number, ty: number) => fog.isVisible(tx, ty) : undefined;
+      const exitHold = meleeExiters.has(playerId) ? SWORD_FADE_MS : 0;
+      if (exitHold > 0) {
+        // Delay the throw arc + throw animation so the melee-trap sword
+        // fade clearly plays before the bomberman unwinds into the throw.
+        const duration = (BALANCE.match.transitionPhaseSeconds * 1000) / 2;
+        arcDurationByBombId.set(bombId, duration + exitHold);
+        this.time.delayedCall(exitHold, () => {
+          this.bombRenderer?.spawnThrowArc(type, fromX, fromY, toX, toY, los);
+          if (throwerVisible) {
             this.bombermanSpriteSystem?.applyThrowEvent(playerId, fromX, fromY, toX, toY, duration);
-          });
-        } else {
-          const { duration } = this.bombRenderer.spawnThrowArc(type, fromX, fromY, toX, toY);
-          arcDurationByBombId.set(bombId, duration);
+          }
+        });
+      } else {
+        const { duration } = this.bombRenderer.spawnThrowArc(type, fromX, fromY, toX, toY, los);
+        arcDurationByBombId.set(bombId, duration);
+        if (throwerVisible) {
           this.bombermanSpriteSystem?.applyThrowEvent(playerId, fromX, fromY, toX, toY, duration);
         }
-      } else {
-        // Still need the arc duration for explosion scheduling
-        const duration = (BALANCE.match.transitionPhaseSeconds * 1000) / 2;
-        arcDurationByBombId.set(bombId, duration);
       }
     }
 
@@ -1830,6 +1840,13 @@ export class MatchScene extends Phaser.Scene {
     return this.cameras.main;
   }
 
+  /** Exposed to the tutorial: freeze or unfreeze the follow-player camera.
+   *  While locked, `update()` skips centerOn, so scripted panCamera targets
+   *  stay put instead of snapping back to the player on the next frame. */
+  setTutorialCameraLocked(locked: boolean): void {
+    this.cameraTutorialLocked = locked;
+  }
+
   /**
    * Resolve a symbolic HighlightTarget into a screen-space rect. Called by
    * the overlay every frame while a highlight is active — keep the math
@@ -2198,6 +2215,11 @@ export class MatchScene extends Phaser.Scene {
       hasBomb = me.inventory.slots[slotIndex - 1] != null;
     }
     if (!hasBomb) return;
+
+    // Backend gate: the tutorial director can block slot selection
+    // persistently (setBlockSlotSelection) or wait for a specific slot
+    // (selectBomb expectation). Live matches always return true.
+    if (this.backend && !this.backend.onSlotSelected(slotIndex)) return;
 
     // Toggle the armed slot. Movement continues uninterrupted — the player
     // only commits to a throw when they click a target tile.

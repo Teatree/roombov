@@ -199,8 +199,22 @@ export class BombRenderer {
    * Spawn a simple rotating bomb sprite that flies in a straight line from
    * the thrower's tile to the target tile. Flight time is always half the
    * transition phase so all throws feel consistent regardless of distance.
+   *
+   * If `isVisible` is provided, the sprite is hidden on any frame where its
+   * current tile is outside LOS — so a bomb thrown from darkness appears to
+   * emerge from the fog when it enters the visible area, and disappears
+   * again if it leaves. The start/end tile is used for the check (the arc
+   * is a straight line in screen space, so the current tile is just the
+   * bomb's own position / tileSize).
    */
-  spawnThrowArc(type: BombType, fromX: number, fromY: number, toX: number, toY: number): { duration: number } {
+  spawnThrowArc(
+    type: BombType,
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+    isVisible?: (tileX: number, tileY: number) => boolean,
+  ): { duration: number } {
     const ts = this.tileSize;
     const sx = fromX * ts + ts / 2;
     const sy = fromY * ts + ts / 2;
@@ -210,6 +224,10 @@ export class BombRenderer {
     const img = this.scene.add.image(sx, sy, 'bomb_icons', bombIconFrame(type));
     img.setDisplaySize(ts * 0.9, ts * 0.9);
     this.layer.add(img);
+
+    // Seed initial visibility so bombs starting in fog don't flicker on for
+    // one frame before the first onUpdate runs.
+    if (isVisible) img.setVisible(isVisible(fromX, fromY));
 
     const duration = (BALANCE.match.transitionPhaseSeconds * 1000) / 2;
 
@@ -221,6 +239,11 @@ export class BombRenderer {
       ease: 'Linear',
       onUpdate: () => {
         img.setRotation(img.rotation + 0.15);
+        if (isVisible) {
+          const tx = Math.floor(img.x / ts);
+          const ty = Math.floor(img.y / ts);
+          img.setVisible(isVisible(tx, ty));
+        }
       },
       onComplete: () => img.destroy(),
     });

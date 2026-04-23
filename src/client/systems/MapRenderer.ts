@@ -68,22 +68,82 @@ export function preloadTiledMap(
           tilewidth?: number; tileheight?: number; margin?: number; spacing?: number;
         }>;
       };
+
+      // Resolve embedded + external tilesets into a common shape so the
+      // rest of the pipeline doesn't care where the metadata came from.
+      // Dedupe by name so a TMJ with accidental duplicates (same `name`
+      // pointing at the same image) doesn't collide on the preload key.
+      const seenNames = new Set<string>();
       for (const ts of tmj.tilesets) {
-        if (!ts.image || ts.source) continue; // skip external tilesets
-        const name = ts.name ?? ts.image.replace(/\.png$/i, '');
-        const key = `ts_${name}`;
+        let image = ts.image;
+        let name = ts.name;
+        let tw = ts.tilewidth;
+        let th = ts.tileheight;
+        let margin = ts.margin;
+        let spacing = ts.spacing;
+
+        if (ts.source) {
+          // External .tsx — fetch and parse for the image reference.
+          // Tiled writes `source` relative to the .tmj; for our setup all
+          // .tsx files live next to the .tmj so a basename is enough.
+          const tsxFile = ts.source.split(/[\\/]/).pop() ?? ts.source;
+          const tsxPath = `maps/${tsxFile}`;
+          try {
+            const tsxXhr = new XMLHttpRequest();
+            tsxXhr.open('GET', tsxPath, false);
+            tsxXhr.send();
+            if (tsxXhr.status !== 200) {
+              console.warn(`[preloadTiledMap] External tileset fetch failed: ${tsxPath} (${tsxXhr.status})`);
+              continue;
+            }
+            // Tiny regex-based parse: we only need name + image src + tile
+            // dimensions. A full XML parser is overkill for a 5-line file.
+            const text = tsxXhr.responseText;
+            const nameMatch = /name="([^"]+)"/.exec(text);
+            const twMatch = /tilewidth="(\d+)"/.exec(text);
+            const thMatch = /tileheight="(\d+)"/.exec(text);
+            const marginMatch = /margin="(\d+)"/.exec(text);
+            const spacingMatch = /spacing="(\d+)"/.exec(text);
+            const imgMatch = /<image[^>]*\bsource="([^"]+)"/.exec(text);
+            if (!imgMatch) {
+              console.warn(`[preloadTiledMap] External tileset has no <image>: ${tsxPath}`);
+              continue;
+            }
+            name = name ?? nameMatch?.[1];
+            tw = tw ?? (twMatch ? Number(twMatch[1]) : undefined);
+            th = th ?? (thMatch ? Number(thMatch[1]) : undefined);
+            margin = margin ?? (marginMatch ? Number(marginMatch[1]) : undefined);
+            spacing = spacing ?? (spacingMatch ? Number(spacingMatch[1]) : undefined);
+            image = imgMatch[1];
+          } catch (e) {
+            console.warn(`[preloadTiledMap] Failed to resolve external tileset ${ts.source}:`, e);
+            continue;
+          }
+        }
+
+        if (!image) continue;
+        let resolvedName = name ?? image.replace(/\.png$/i, '');
+        if (seenNames.has(resolvedName)) {
+          // Duplicate name — suffix with firstgid so each range keeps its
+          // own preload key + Phaser tileset binding. The converter
+          // already does this, but we guard runtime too in case a tmj
+          // bypassed the converter.
+          resolvedName = `${resolvedName}_${ts.firstgid}`;
+        }
+        seenNames.add(resolvedName);
+
+        const key = `ts_${resolvedName}`;
         tilesets.push({
-          name,
+          name: resolvedName,
           key,
-          tileWidth: ts.tilewidth ?? 16,
-          tileHeight: ts.tileheight ?? 16,
-          margin: ts.margin ?? 0,
-          spacing: ts.spacing ?? 0,
+          tileWidth: tw ?? 16,
+          tileHeight: th ?? 16,
+          margin: margin ?? 0,
+          spacing: spacing ?? 0,
           firstgid: ts.firstgid,
         });
         if (!scene.textures.exists(key)) {
-          // Image filename = just the basename from the tileset's image path
-          const imgFile = ts.image.split(/[\\/]/).pop() ?? ts.image;
+          const imgFile = image.split(/[\\/]/).pop() ?? image;
           scene.load.image(key, `maps/${imgFile}`);
         }
       }

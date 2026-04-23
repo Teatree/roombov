@@ -497,21 +497,36 @@ export function resolveTurn(
         for (const t of d.tiles) closedDoorsForLos.add(`${t.x},${t.y}`);
       }
       // Inside smoke → enemy proximity doesn't break rush (per design).
+      // Enemy "nearby" means mutual LOS — both Bombermen must be able to
+      // see each other. LOS geometry is symmetric, so checking one side is
+      // enough, but the check is capped at the fog sight radius so an
+      // enemy that sits behind the player's fog (even with clear
+      // geometric LOS) doesn't cancel OOC. This matches what the player
+      // actually perceives on their screen.
+      const sightCap = Math.min(rushCfg.proximityRadius, BALANCE.match.losRadius);
       const enemyNearby = insideSmoke ? false : actors.some(other => {
         if (other.playerId === bomberman.playerId) return false;
         if (!other.alive || other.escaped) return false;
-        if (chebyshevDistance(bomberman.x, bomberman.y, other.x, other.y) > rushCfg.proximityRadius) return false;
+        if (chebyshevDistance(bomberman.x, bomberman.y, other.x, other.y) > sightCap) return false;
         return hasLineOfSight(
           bomberman.x * ts + ts / 2, bomberman.y * ts + ts / 2,
           other.x * ts + ts / 2, other.y * ts + ts / 2,
           map.grid, ts, closedDoorsForLos,
         );
       });
-      // Bomb landed nearby (any bomb not owned by this player)
-      const bombNearby = state.bombs.some(bomb =>
-        bomb.ownerId !== bomberman.playerId &&
-        chebyshevDistance(bomberman.x, bomberman.y, bomb.x, bomb.y) <= rushCfg.bombProximityRadius,
-      );
+      // Bomb landed nearby: same rule — only cancel OOC for bombs the
+      // player can actually see (within fog radius + clear LOS). A bomb
+      // behind a wall or in the dark shouldn't break the player's rush.
+      const bombSightCap = Math.min(rushCfg.bombProximityRadius, BALANCE.match.losRadius);
+      const bombNearby = state.bombs.some(bomb => {
+        if (bomb.ownerId === bomberman.playerId) return false;
+        if (chebyshevDistance(bomberman.x, bomberman.y, bomb.x, bomb.y) > bombSightCap) return false;
+        return hasLineOfSight(
+          bomberman.x * ts + ts / 2, bomberman.y * ts + ts / 2,
+          bomb.x * ts + ts / 2, bomb.y * ts + ts / 2,
+          map.grid, ts, closedDoorsForLos,
+        );
+      });
       if (enemyNearby || threw || bombNearby) {
         // Combat contact — break rush
         if (bomberman.rushActive) {

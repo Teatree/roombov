@@ -33,6 +33,18 @@ export interface MatchBackend {
   /** Player → authority: loot a bomb from a chest or a body. */
   sendLoot(msg: LootBombMsg): void;
 
+  /**
+   * Client → backend: the player clicked a HUD bomb slot (0 = Rock, 1..4 =
+   * inventory). Not a gameplay action (no turn resolution), but the tutorial
+   * backend routes it to the director so scripts can wait for a
+   * `selectBomb` expectation and block slot selection via
+   * `setBlockSlotSelection`. Returns false to signal the selection should
+   * be suppressed (director is blocking clicks); MatchScene keeps its
+   * armed-slot state unchanged in that case. The socket backend always
+   * returns true — slot selection is a purely local UI state.
+   */
+  onSlotSelected(slotIndex: number): boolean;
+
   /** Authority → player: full match state snapshot. Called on every broadcast. */
   onMatchState(cb: (state: MatchState) => void): void;
 

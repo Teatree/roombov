@@ -32,8 +32,38 @@ export class TutorialDirector {
    */
   private suppressRush = true;
 
+  /**
+   * Melee Trap suppression scope applied after every resolveTurn.
+   *   - 'all'  → both player and bots have meleeTrapMode force-reset
+   *   - 'bots' → only bots reset (player can trap normally)
+   *   - 'none' → resolver output is used as-is
+   * Starts at 'all' so the mechanic is entirely disabled until the
+   * tutorial explicitly opens it up in the ambush beat.
+   */
+  private suppressMeleeTrap: 'all' | 'bots' | 'none' = 'all';
+
+  /** When true, `validatePlayerAction` / `validatePlayerLoot` reject
+   *  everything. Flipped on during `autoIdleTurn` sequences so stray
+   *  player clicks don't derail scripted bot-approach turns. */
+  private blockPlayerActions = false;
+
+  /** Persistent block on player movement (move + reachTile actions).
+   *  Flipped via `setBlockMovement` steps. Independent from the transient
+   *  `blockPlayerActions` flag above — both are consulted in
+   *  `validatePlayerAction`. */
+  private blockMovement = false;
+
+  /** Persistent block on HUD bomb-slot clicks. Flipped via
+   *  `setBlockSlotSelection` steps. Consulted in `validateSlotSelection`. */
+  private blockSlotSelection = false;
+
   /** True once all steps are consumed. */
   private finished = false;
+
+  /** Persistent list of highlights — each `highlight` step appends,
+   *  `clearHighlight` resets. Pushed to the host on change so the overlay
+   *  can render multiple rects at once (e.g. HUD slot + target tile). */
+  private activeHighlights: HighlightTarget[] = [];
 
   constructor(script: TutorialStep[]) {
     this.script = script;
@@ -56,6 +86,11 @@ export class TutorialDirector {
    *  - false → wrong action; backend should NOT resolve (director flashes hint)
    */
   validatePlayerAction(action: PlayerAction): boolean {
+    if (this.blockPlayerActions) return false;
+    // Persistent movement block rejects move + the multi-turn walk that
+    // feeds it. Idle and throw still pass so the script can explicitly
+    // expect them.
+    if (this.blockMovement && action.kind === 'move') return false;
     if (!this.expected) {
       // No specific expectation — accept anything. Used while no waitForAction
       // step is active (shouldn't happen in practice since non-waitForAction
@@ -69,9 +104,45 @@ export class TutorialDirector {
     return ok;
   }
 
+  /**
+   * Backend asks: is the player allowed to click this HUD bomb slot? Returns
+   * true if the click should proceed (MatchScene arms/disarms the slot) and
+   * also consumes a `selectBomb` expectation if one is active. False means
+   * the click is swallowed.
+   *
+   * Wrong slot while a `selectBomb` expectation is active flashes the hint
+   * rect, matching the pattern used for other expected-action mismatches.
+   */
+  validateSlotSelection(slotIndex: number): boolean {
+    if (this.blockSlotSelection) {
+      // Still flash the hint if a script step is waiting on a specific slot,
+      // so the player sees *why* their click did nothing.
+      if (this.expected?.kind === 'selectBomb' && this.hintTarget && this.host) {
+        this.host.flashHint(this.hintTarget);
+      }
+      return false;
+    }
+    if (this.expected?.kind !== 'selectBomb') return true;
+    const want = this.expected.slotIndex;
+    const ok = want === undefined || want === slotIndex;
+    if (!ok) {
+      // Wrong slot: flash the hint and swallow the click so the HUD stays
+      // clean instead of ending up armed on the wrong slot.
+      if (this.hintTarget && this.host) this.host.flashHint(this.hintTarget);
+      return false;
+    }
+    // Matched. Advance the script immediately (no turn to resolve).
+    this.expected = null;
+    this.hintTarget = null;
+    this.cursor++;
+    this.advance();
+    return true;
+  }
+
   /** Validate a loot message against the current expectation. Returns true if
    *  the loot should be applied. */
   validatePlayerLoot(sourceKind: 'chest' | 'body', bombType: string): boolean {
+    if (this.blockPlayerActions) return false;
     if (!this.expected) return true;
     if (this.expected.kind !== 'lootBomb') return false;
     return this.expected.sourceKind === sourceKind && this.expected.bombType === bombType;
@@ -132,6 +203,12 @@ export class TutorialDirector {
     return this.suppressRush;
   }
 
+  /** Backend asks: which bombermen's meleeTrapMode should be reset after
+   *  each turn? Returns 'all' | 'bots' | 'none'. */
+  getMeleeTrapSuppression(): 'all' | 'bots' | 'none' {
+    return this.suppressMeleeTrap;
+  }
+
   // ============================================================
   // Internals
   // ============================================================
@@ -172,23 +249,59 @@ export class TutorialDirector {
         });
         return true;
 
+      case 'autoIdleTurn': {
+        // Block player input for the full duration of this turn — otherwise
+        // a stray click during the 2s input phase would fire an unexpected
+        // move action and desync the bot-approach sequence.
+        this.blockPlayerActions = true;
+        const before = step.delayBeforeMs ?? 0;
+        const after = step.delayAfterMs ?? 0;
+        const runTurn = (): void => {
+          this.cursor++;
+          host.forceIdleAndResolve(() => {
+            if (after > 0) {
+              setTimeout(() => {
+                this.blockPlayerActions = false;
+                this.advance();
+              }, after);
+            } else {
+              this.blockPlayerActions = false;
+              this.advance();
+            }
+          });
+        };
+        if (before > 0) setTimeout(runTurn, before);
+        else runTurn();
+        return true;
+      }
+
       case 'promptIdle':
         host.showDialogue(step.text, () => {
           host.hideDialogue();
           this.cursor++;
-          // Force an idle + resolveTurn regardless of the mute. Director
-          // advances once the resolveTurn's emitted state settles.
-          host.forceIdleAndResolve();
-          this.advance();
+          // Force an idle + resolveTurn regardless of the mute. Waits for
+          // the turn to fully resolve (bomb explodes, bot dies, animations
+          // settle) before advancing, plus any extra `delayAfterMs` the
+          // script asked for (e.g. to let a death animation finish).
+          const delay = step.delayAfterMs ?? 0;
+          host.forceIdleAndResolve(() => {
+            if (delay > 0) {
+              setTimeout(() => this.advance(), delay);
+            } else {
+              this.advance();
+            }
+          });
         });
         return true;
 
       case 'highlight':
-        host.setHighlight(step.target);
+        this.activeHighlights.push(step.target);
+        host.setHighlights(this.activeHighlights);
         return false;
 
       case 'clearHighlight':
-        host.setHighlight(null);
+        this.activeHighlights = [];
+        host.setHighlights(this.activeHighlights);
         return false;
 
       case 'panCamera':
@@ -207,12 +320,28 @@ export class TutorialDirector {
         }, step.durationMs);
         return true;
 
+      case 'setCameraLocked':
+        host.setCameraLocked(step.locked);
+        return false;
+
       case 'setIdleMuted':
         this.idleMuted = step.muted;
         return false;
 
+      case 'setBlockMovement':
+        this.blockMovement = step.blocked;
+        return false;
+
+      case 'setBlockSlotSelection':
+        this.blockSlotSelection = step.blocked;
+        return false;
+
       case 'setSuppressRush':
         this.suppressRush = step.enabled;
+        return false;
+
+      case 'setSuppressMeleeTrap':
+        this.suppressMeleeTrap = step.scope;
         return false;
 
       case 'flashExclamation':
@@ -270,6 +399,36 @@ export class TutorialDirector {
 
       case 'setBotAction':
         host.setBotAction(step.botId, step.action);
+        return false;
+
+      case 'botThrow': {
+        const bombType = step.bombType;
+        const autoEquip = step.autoEquip ?? true;
+        // Action convention: slotIndex 0 = rock (no inventory entry),
+        // 1..4 → inventory.slots[0..3]. autoEquip only makes sense for the
+        // inventory slots; rock is always available on every bomberman.
+        if (autoEquip && bombType && step.slotIndex >= 1 && step.slotIndex <= 4) {
+          const invIdx = step.slotIndex - 1;
+          host.mutateState(s => {
+            const bot = s.bombermen.find(b => b.playerId === step.botId);
+            if (!bot) return;
+            const slot = bot.inventory.slots[invIdx];
+            if (!slot || slot.type !== bombType || slot.count < 1) {
+              bot.inventory.slots[invIdx] = { type: bombType, count: 1 };
+            }
+          });
+        }
+        host.setBotAction(step.botId, {
+          kind: 'throw',
+          slotIndex: step.slotIndex,
+          x: step.x,
+          y: step.y,
+        });
+        return false;
+      }
+
+      case 'botMove':
+        host.setBotAction(step.botId, { kind: 'move', x: step.x, y: step.y });
         return false;
 
       case 'equipPlayerBomb':
@@ -332,6 +491,12 @@ export class TutorialDirector {
           && action.y === expected.y;
       case 'lootBomb':
         // lootBomb arrives via sendLoot, not sendAction — never matched here.
+        return false;
+      case 'selectBomb':
+        // selectBomb arrives via onSlotSelected, not sendAction — never
+        // matched here. A gameplay action received while a selectBomb
+        // expectation is active is rejected (the player has to click the
+        // slot first).
         return false;
     }
   }

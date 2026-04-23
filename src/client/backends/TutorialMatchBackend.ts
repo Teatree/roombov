@@ -9,7 +9,7 @@ import type { LootBombMsg, MatchEndMsg } from '@shared/types/messages.ts';
 import { TutorialDirector } from '../tutorial/TutorialDirector.ts';
 import { TUTORIAL_SCRIPT } from '../tutorial/tutorial-script.ts';
 import type { TutorialHost, HighlightTarget } from '../tutorial/types.ts';
-import type { TutorialOverlayScene } from '../scenes/TutorialOverlayScene.ts';
+import type { TutorialOverlayScene, HighlightRect } from '../scenes/TutorialOverlayScene.ts';
 
 export const TUTORIAL_PLAYER_ID = 'tutorial-player';
 export const TUTORIAL_MAP_ID = 'tutorial_map';
@@ -76,6 +76,10 @@ export class TutorialMatchBackend implements MatchBackend {
     this.applyLootLocally(msg);
     this.stateCb?.(this.state);
     this.director.onLootResolved();
+  }
+
+  onSlotSelected(slotIndex: number): boolean {
+    return this.director.validateSlotSelection(slotIndex);
   }
 
   /**
@@ -200,7 +204,11 @@ export class TutorialMatchBackend implements MatchBackend {
    * If the director has `suppressRush` set, the player's rush state is
    * reset after resolveTurn so OOC Rush cannot activate during that beat.
    */
-  private resolveLocal(action: PlayerAction, notifyDirector: boolean): void {
+  private resolveLocal(
+    action: PlayerAction,
+    notifyDirector: boolean,
+    onResolved?: () => void,
+  ): void {
     if (!this.state || !this.map) return;
     if (this.turnInProgress) return;
     this.turnInProgress = true;
@@ -246,6 +254,22 @@ export class TutorialMatchBackend implements MatchBackend {
         };
       }
 
+      // Melee Trap suppression: the tutorial disables trap mode entirely
+      // by default (scope='all'). For the ambush beat it narrows to 'bots'
+      // so the player's trap can arm normally.
+      const trapScope = this.director.getMeleeTrapSuppression();
+      if (trapScope !== 'none') {
+        nextState = {
+          ...nextState,
+          bombermen: nextState.bombermen.map(b => {
+            const isPlayer = b.playerId === TUTORIAL_PLAYER_ID;
+            const shouldReset = trapScope === 'all' || (trapScope === 'bots' && !isPlayer);
+            if (!shouldReset || !b.meleeTrapMode) return b;
+            return { ...b, meleeTrapMode: false };
+          }),
+        };
+      }
+
       // Keep state in transition phase while animations play.
       this.state = { ...nextState, phase: 'transition' };
       this.turnCb?.(result.events);
@@ -271,6 +295,9 @@ export class TutorialMatchBackend implements MatchBackend {
         // so we only notify the director for real player actions. Without
         // this split, promptIdle would skip the step after it.
         if (notifyDirector) this.director.onTurnResolved(this.state);
+        // Fire the resolution callback last — callers (e.g. promptIdle)
+        // use this to gate the next dialogue on the post-explosion state.
+        onResolved?.();
       }, transitionHoldMs);
     }, inputHoldMs);
   }
@@ -292,7 +319,14 @@ export class TutorialMatchBackend implements MatchBackend {
       hideDialogue: () => overlay.hideDialogue(),
       showPause: (text, onAdvance) => overlay.showPause(text, onAdvance),
       hidePause: () => overlay.hidePause(),
-      setHighlight: (t) => overlay.setHighlight(this.resolveHighlight(t)),
+      setHighlights: (targets) => {
+        const rects: HighlightRect[] = [];
+        for (const t of targets) {
+          const r = this.resolveHighlight(t);
+          if (r) rects.push(r);
+        }
+        overlay.setHighlights(rects);
+      },
       flashHint: (t) => {
         const r = this.resolveHighlight(t);
         if (r) overlay.flashHint(r);
@@ -302,6 +336,7 @@ export class TutorialMatchBackend implements MatchBackend {
         overlay.panCamera(world.x, world.y, ms, done);
       },
       blockInput: (ms) => overlay.blockInput(ms),
+      setCameraLocked: (locked) => overlay.setCameraLocked(locked),
       getState: () => this.state,
       mutateState: (fn) => {
         if (!this.state) return;
@@ -310,12 +345,12 @@ export class TutorialMatchBackend implements MatchBackend {
         this.state = next;
         this.stateCb?.(this.state);
       },
-      forceIdleAndResolve: () => {
+      forceIdleAndResolve: (onResolved) => {
         if (!this.state || !this.map) return;
         // Script already bumped the cursor past this step and called
         // advance() to consume the next ones, so we must NOT call
         // director.onTurnResolved here (would double-advance).
-        this.resolveLocal({ kind: 'idle' }, /* notifyDirector */ false);
+        this.resolveLocal({ kind: 'idle' }, /* notifyDirector */ false, onResolved);
       },
       setBotAction: (botId, action) => {
         this.pendingBotActions.set(botId, action);
@@ -345,7 +380,7 @@ export class TutorialMatchBackend implements MatchBackend {
     };
   }
 
-  private resolveHighlight(target: HighlightTarget | null): Parameters<TutorialOverlayScene['setHighlight']>[0] {
+  private resolveHighlight(target: HighlightTarget | null): HighlightRect | null {
     if (!target) return null;
     if (target.kind === 'rect') {
       return { x: target.x, y: target.y, w: target.w, h: target.h, space: target.space };

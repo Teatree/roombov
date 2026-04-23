@@ -52,9 +52,13 @@ export class TutorialOverlayScene extends Phaser.Scene {
   private pauseDim!: Phaser.GameObjects.Rectangle;
   private pauseText!: Phaser.GameObjects.Text;
 
-  // Highlight
+  // Highlight — multiple simultaneous rects are supported so a single
+  // step sequence can pulse e.g. a HUD slot AND a world tile at once.
   private highlightGfx!: Phaser.GameObjects.Graphics;
-  private currentHighlight: HighlightRect | null = null;
+  private currentHighlights: HighlightRect[] = [];
+  /** Short-lived flash rect (e.g. wrong-input hint). Rendered on top of
+   *  the persistent `currentHighlights` list until its timer expires. */
+  private flashRect: HighlightRect | null = null;
   private highlightPulseT = 0;
 
   // Input blocker / click catcher
@@ -218,13 +222,13 @@ export class TutorialOverlayScene extends Phaser.Scene {
   }
 
   /**
-   * Set a pulsing yellow outline on the given rect. Pass `null` to clear.
-   * World-space rects are transformed by the main camera so they track
-   * the world on pan/zoom.
+   * Replace the active highlight list. Pass `[]` to clear. Each rect pulses
+   * yellow; world-space rects are transformed by the main camera so they
+   * track the world on pan/zoom.
    */
-  setHighlight(rect: HighlightRect | null): void {
-    this.currentHighlight = rect;
-    if (!rect) this.highlightGfx.clear();
+  setHighlights(rects: HighlightRect[]): void {
+    this.currentHighlights = rects;
+    if (rects.length === 0 && !this.flashRect) this.highlightGfx.clear();
   }
 
   /**
@@ -262,6 +266,12 @@ export class TutorialOverlayScene extends Phaser.Scene {
     this.time.delayedCall(durationMs + 50, fire);
   }
 
+  /** Freeze or unfreeze MatchScene's follow-player camera. See
+   *  MatchScene.setTutorialCameraLocked for why this matters. */
+  setCameraLocked(locked: boolean): void {
+    this.matchScene?.setTutorialCameraLocked(locked);
+  }
+
   /**
    * Block all tutorial advance input for `ms` milliseconds. During this
    * window the click catcher swallows clicks silently.
@@ -273,11 +283,15 @@ export class TutorialOverlayScene extends Phaser.Scene {
     this.time.delayedCall(ms + 16, () => this.maybeDisableClickCatcher());
   }
 
-  /** Short flash of the highlight to signal a wrong input. */
+  /** Short flash of a single rect to signal a wrong input. Does NOT clobber
+   *  the persistent `currentHighlights` list — both render together. */
   flashHint(rect: HighlightRect): void {
-    this.setHighlight(rect);
+    this.flashRect = rect;
     this.time.delayedCall(600, () => {
-      if (this.currentHighlight === rect) this.setHighlight(null);
+      if (this.flashRect === rect) {
+        this.flashRect = null;
+        if (this.currentHighlights.length === 0) this.highlightGfx.clear();
+      }
     });
   }
 
@@ -330,13 +344,16 @@ export class TutorialOverlayScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
-    if (this.currentHighlight) {
-      this.highlightPulseT += delta / 1000;
-      this.drawHighlight(this.currentHighlight);
-    }
+    if (this.currentHighlights.length === 0 && !this.flashRect) return;
+    this.highlightPulseT += delta / 1000;
+    const alpha = 0.6 + 0.4 * Math.abs(Math.sin(this.highlightPulseT * 4));
+    this.highlightGfx.clear();
+    this.highlightGfx.lineStyle(3, 0xffdd22, alpha);
+    for (const r of this.currentHighlights) this.strokeRectInSpace(r);
+    if (this.flashRect) this.strokeRectInSpace(this.flashRect);
   }
 
-  private drawHighlight(rect: HighlightRect): void {
+  private strokeRectInSpace(rect: HighlightRect): void {
     const cam = this.matchScene?.getMainCamera();
     let x = rect.x, y = rect.y;
     if (rect.space === 'world' && cam) {
@@ -346,17 +363,13 @@ export class TutorialOverlayScene extends Phaser.Scene {
     }
     const w = rect.space === 'world' && cam ? rect.w * cam.zoom : rect.w;
     const h = rect.space === 'world' && cam ? rect.h * cam.zoom : rect.h;
-
-    // Yellow pulse — alpha 0.6 → 1.0 with sine, stroke width 3.
-    const alpha = 0.6 + 0.4 * Math.abs(Math.sin(this.highlightPulseT * 4));
-    this.highlightGfx.clear();
-    this.highlightGfx.lineStyle(3, 0xffdd22, alpha);
     this.highlightGfx.strokeRect(x, y, w, h);
   }
 
   shutdown(): void {
     this.scale.off('resize', this.onResize, this);
-    this.currentHighlight = null;
+    this.currentHighlights = [];
+    this.flashRect = null;
     this.advanceHandler = null;
   }
 }

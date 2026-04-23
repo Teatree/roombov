@@ -36,6 +36,11 @@ export class SocketMatchBackend implements MatchBackend {
     NetworkManager.getSocket().emit('loot_bomb', msg);
   }
 
+  onSlotSelected(_slotIndex: number): boolean {
+    // No-op for live matches: slot selection is a local UI state only.
+    return true;
+  }
+
   onMatchState(cb: (state: MatchState) => void): void {
     this.stateCb = cb;
   }
