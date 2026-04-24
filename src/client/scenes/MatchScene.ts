@@ -3,6 +3,7 @@ import { ProfileStore, UiAnimLock } from '../ClientState.ts';
 import type { MatchBackend } from '../backends/MatchBackend.ts';
 import { SocketMatchBackend } from '../backends/SocketMatchBackend.ts';
 import { TutorialMatchBackend, TUTORIAL_PLAYER_ID } from '../backends/TutorialMatchBackend.ts';
+import type { TutorialOverlayScene } from './TutorialOverlayScene.ts';
 import { MapRenderer, preloadTiledMap } from '../systems/MapRenderer.ts';
 import { FogRenderer } from '../systems/FogRenderer.ts';
 import { BombRenderer, decalDecayAlpha } from '../systems/BombRenderer.ts';
@@ -887,8 +888,9 @@ export class MatchScene extends Phaser.Scene {
     // Each lerp lasts the full transition phase so the sprite physically
     // walks from old tile to new tile in sync with the resolution timer.
     // Group moved events by player — rush moves produce 2 events for one player.
-    // Chain them over the first 50% of the transition so walks finish before
-    // explosions kick in at the halfway mark.
+    // Walks are Beat 1 ("Action Perform") of the 3-beat resolve phase — they
+    // finish at the 1/3 mark, just before explosions/teleports/smoke (Beat 2,
+    // "Action Result") kick in.
     // Bombermen who exited Melee Trap this turn: their walk/throw visuals
     // are held back by the sword-fade duration so the fade-out plays
     // cleanly before the sprite starts moving (per the spec).
@@ -898,7 +900,13 @@ export class MatchScene extends Phaser.Scene {
         meleeExiters.add(ev.playerId as string);
       }
     }
-    const moveDurationMs = BALANCE.match.transitionPhaseSeconds * 1000 * 0.5;
+    // Three-beat resolve timings. Beat 1 is fixed (walks + throws must
+    // complete within it); Beats 2 and 3 are allowed to linger past their
+    // nominal slot as long as they start on time.
+    const transitionMsTotal = BALANCE.match.transitionPhaseSeconds * 1000;
+    const BEAT1_END_MS = Math.round(transitionMsTotal / 3);
+    const BEAT3_START_MS = Math.round((transitionMsTotal * 2) / 3);
+    const moveDurationMs = BEAT1_END_MS;
     const movesByPlayer = new Map<string, Array<{ fromX: number; fromY: number; toX: number; toY: number }>>();
     for (const ev of events) {
       if (ev.kind !== 'moved') continue;
@@ -961,14 +969,25 @@ export class MatchScene extends Phaser.Scene {
       }
     }
 
-    // Hurt animations on damage events — skipped for any victim already
-    // queued (melee victim, or a previous damage event in the same turn).
+    // Hurt animations on damage events — Beat 3 ("Action Reaction"). Fires
+    // 2/3 of the way through the transition so the victim visibly reacts
+    // AFTER the explosion (beat 2) connects, not at the start of the turn.
+    //   - hpRemaining > 0: play Hurt.
+    //   - hpRemaining === 0: skip — the death animation (also in beat 3,
+    //     scheduled below) covers the lethal blow per design ("just die
+    //     animation if 1 hp").
+    // Skipped for any victim already queued (melee victim, or a previous
+    // damage event in the same turn).
     for (const ev of events) {
       if (ev.kind !== 'damaged') continue;
       const playerId = ev.playerId as string;
       if (hurtQueued.has(playerId)) continue;
       hurtQueued.add(playerId);
-      this.bombermanSpriteSystem?.applyHurtEvent(playerId);
+      const hpRemaining = ev.hpRemaining as number;
+      if (hpRemaining <= 0) continue; // death anim covers lethal hits
+      this.time.delayedCall(BEAT3_START_MS, () => {
+        this.bombermanSpriteSystem?.applyHurtEvent(playerId);
+      });
     }
 
     // First pass: spawn arcs for every throw this turn and record the bomb
@@ -996,8 +1015,14 @@ export class MatchScene extends Phaser.Scene {
       if (exitHold > 0) {
         // Delay the throw arc + throw animation so the melee-trap sword
         // fade clearly plays before the bomberman unwinds into the throw.
-        const duration = (BALANCE.match.transitionPhaseSeconds * 1000) / 2;
-        arcDurationByBombId.set(bombId, duration + exitHold);
+        // Arc duration matches the Beat 1 window (1/3 of the transition).
+        const duration = BEAT1_END_MS;
+        const totalFlightMs = duration + exitHold;
+        arcDurationByBombId.set(bombId, totalFlightMs);
+        // Hold the landed-bomb sprite until the full exit-hold + arc finishes
+        // (onTurnResult runs before the new state is applied, so syncBombs
+        // will honor this marker when it sees the new BombInstance).
+        this.bombRenderer?.markPendingThrow(bombId, totalFlightMs);
         this.time.delayedCall(exitHold, () => {
           this.bombRenderer?.spawnThrowArc(type, fromX, fromY, toX, toY, los);
           if (throwerVisible) {
@@ -1007,21 +1032,23 @@ export class MatchScene extends Phaser.Scene {
       } else {
         const { duration } = this.bombRenderer.spawnThrowArc(type, fromX, fromY, toX, toY, los);
         arcDurationByBombId.set(bombId, duration);
+        this.bombRenderer?.markPendingThrow(bombId, duration);
         if (throwerVisible) {
           this.bombermanSpriteSystem?.applyThrowEvent(playerId, fromX, fromY, toX, toY, duration);
         }
       }
     }
 
-    // Second pass: explosions. Walks finish at 50% of the transition; the
-    // burst starts at that halfway mark. The animation is long enough to
-    // linger PAST the transition end for impact — explosions aren't clipped
-    // by the turn boundary. For thrown bombs whose arc exceeds 50%, the
+    // Second pass: explosions. Beat 2 ("Action Result") — starts at the 1/3
+    // mark when walks + throws have completed. Explosions are allowed to
+    // linger past the end of the transition; they are not clipped by the
+    // turn boundary. For thrown bombs whose arc exceeds the beat 1 window
+    // (e.g. a melee-exiter whose arc is offset by SWORD_FADE_MS), the
     // explosion starts when the bomb lands instead.
-    const transitionMs = BALANCE.match.transitionPhaseSeconds * 1000;
-    const explosionStartMs = Math.round(transitionMs * 0.5);
-    // Burst lasts ~70% of a transition — with a 50% start, it ends at ~120%
-    // of the transition, which is the intended linger.
+    const transitionMs = transitionMsTotal;
+    const explosionStartMs = BEAT1_END_MS;
+    // Burst lasts ~70% of a transition — with a 1/3 start, it ends around
+    // the end of the transition (slight linger).
     const burstDurationMs = Math.round(transitionMs * 0.7);
     // Pre-collect cluster mine positions from this turn's mine_placed
     // events so we can animate bombs flying out of the cluster cylinder
@@ -1115,7 +1142,13 @@ export class MatchScene extends Phaser.Scene {
       });
     }
 
-    // Door-opened events: trigger opening animation on matching door sprites.
+    // Door-opened events: Beat 3 ("Action Reaction"). Deferred to the 2/3
+    // mark so a door opened BY an explosion visibly reacts to the blast
+    // rather than animating at turn start. Proximity-triggered opens (a
+    // bomberman walking up to the door in beat 1) also play here — visually
+    // the door opens a moment after the bomberman arrives, which still
+    // reads naturally.
+    //
     // Gate the animation on current LoS — if ANY of the door's tiles is in
     // the local player's LoS at event time we play it; otherwise snap
     // straight to `open` so the animation doesn't leak through seen-dim
@@ -1125,24 +1158,25 @@ export class MatchScene extends Phaser.Scene {
       if (ev.kind !== 'door_opened') continue;
       const doorId = ev.doorId as number;
       const ds = this.doorSprites.find(d => d.id === doorId);
-      if (ds && !ds.opened) {
-        ds.opened = true;
-        if (ds.state === 'closed') {
-          const prefix = ds.orientation === 'horizontal' ? 'h' : 'v';
-          const inLoS = ds.tiles.some(t => this.fogRenderer?.isVisible(t.x, t.y));
-          if (inLoS) {
-            ds.state = 'opening';
-            ds.sprite.play(`door_${prefix}_opening`);
-            ds.sprite.once('animationcomplete', () => {
-              ds.state = 'open';
-              ds.sprite.play(`door_${prefix}_open`);
-            });
-          } else {
+      if (!ds || ds.opened) continue;
+      ds.opened = true;
+      if (ds.state !== 'closed') continue;
+      this.time.delayedCall(BEAT3_START_MS, () => {
+        if (ds.state !== 'closed') return;
+        const prefix = ds.orientation === 'horizontal' ? 'h' : 'v';
+        const inLoS = ds.tiles.some(t => this.fogRenderer?.isVisible(t.x, t.y));
+        if (inLoS) {
+          ds.state = 'opening';
+          ds.sprite.play(`door_${prefix}_opening`);
+          ds.sprite.once('animationcomplete', () => {
             ds.state = 'open';
             ds.sprite.play(`door_${prefix}_open`);
-          }
+          });
+        } else {
+          ds.state = 'open';
+          ds.sprite.play(`door_${prefix}_open`);
         }
-      }
+      });
     }
 
     // Melee-killed victims: collect their IDs so we skip the generic death
@@ -1640,35 +1674,17 @@ export class MatchScene extends Phaser.Scene {
         ds.opened = true;
       }
 
-      // Already open → stick on open frame
-      if (ds.opened) {
-        if (ds.state !== 'open' && ds.state !== 'opening') {
-          ds.state = 'open';
-          ds.sprite.play(`${animKey}_open`);
-        }
-        if (ds.state === 'opening') continue; // let anim finish
-        if (ds.state !== 'open') {
-          ds.state = 'open';
-          ds.sprite.play(`${animKey}_open`);
-        }
-        continue;
+      // Server is authoritative: `ds.opened` is synced from the server's
+      // `door.opened` flag above. If the door is open, stick on the open
+      // frame; otherwise it stays closed. The opening animation is driven
+      // from the `door_opened` event handler in onTurnResult (Beat 3), so
+      // we don't fire animations from here — previous client-side proximity
+      // rule was removed when the resolver became the single source of
+      // truth for door-open conditions.
+      if (ds.opened && ds.state !== 'open' && ds.state !== 'opening') {
+        ds.state = 'open';
+        ds.sprite.play(`${animKey}_open`);
       }
-
-      // Proximity check: any alive Bomberman within Chebyshev ≤ 1 of any door tile
-      const nearby = this.state.bombermen.some(b =>
-        b.alive && !b.escaped &&
-        ds.tiles.some(t => Math.max(Math.abs(b.x - t.x), Math.abs(b.y - t.y)) <= 1),
-      );
-
-      if (nearby && ds.state === 'closed') {
-        ds.state = 'opening';
-        ds.sprite.play(`${animKey}_opening`);
-        ds.sprite.once('animationcomplete', () => {
-          ds.state = 'open';
-          ds.sprite.play(`${animKey}_open`);
-        });
-      }
-      // No closing — doors never close once opened by proximity either
     }
   }
 
@@ -1756,6 +1772,7 @@ export class MatchScene extends Phaser.Scene {
     // anyway. HUD renders a lock icon to make the state visible.
     if ((me.statusEffects ?? []).some(s => s.kind === 'stunned' && s.turnsRemaining > 0)) return;
 
+
     // Loot panel intercepts first (it sits above the bomb tray).
     const lootSlot = this.hitTestLootPanel(pointer.x, pointer.y);
     if (lootSlot >= 0) {
@@ -1778,6 +1795,27 @@ export class MatchScene extends Phaser.Scene {
 
     if (tx < 0 || ty < 0 || tx >= this.mapData.width || ty >= this.mapData.height) return;
     if (me.escaped) return;
+
+    // Tutorial: when a walk-target highlight is posted (circle on a specific
+    // tile), only clicks on that tile or on self are honored — every other
+    // tile is ignored. This stops dialogue-dismiss clicks and stray map
+    // clicks from BFS-walking the player off the scripted path, and lets a
+    // single click on the highlighted tile both dismiss the active dialogue
+    // and fire the real gameplay action (e.g. wait-one-turn on the escape
+    // hatch). When no walk target is posted we fall back to the general
+    // "block gameplay clicks while a dialogue/pause is up" rule so those
+    // beats still can't leak phantom actions.
+    if (this.mode === 'tutorial') {
+      const overlay = this.scene.get('TutorialOverlayScene') as TutorialOverlayScene | undefined;
+      const walkTarget = overlay?.getActiveWalkTargetTile?.(ts) ?? null;
+      const isSelf = tx === me.x && ty === me.y;
+      if (walkTarget) {
+        const onTarget = tx === walkTarget.x && ty === walkTarget.y;
+        if (!onTarget && !isSelf) return;
+      } else if (overlay?.isBlockingInput?.()) {
+        return;
+      }
+    }
 
     // Click on self = cancel any staged action (armed slot stays)
     if (tx === me.x && ty === me.y) {

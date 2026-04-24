@@ -52,7 +52,7 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   // the walk is exactly four single-tile turns.
   { kind: 'setBlockMovement', blocked: false },
   { kind: 'dialogue', portrait: 'char4', text: 'To move click on walkable tiles.' },
-  { kind: 'highlight', target: { kind: 'tile', x: 8, y: 11 } },
+  { kind: 'highlight', target: { kind: 'tile', x: 8, y: 11, shape: 'circle' } },
   { kind: 'waitForAction', expected: { kind: 'reachTile', x: 8, y: 11 } },
   { kind: 'clearHighlight' },
   { kind: 'dialogue', portrait: 'char4', text: 'Good Job.' },
@@ -71,7 +71,7 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   // resolution.
   { kind: 'waitForAction', expected: { kind: 'selectBomb', slotIndex: 0 } },
   { kind: 'setBlockMovement', blocked: false },
-  { kind: 'highlight', target: { kind: 'tile', x: 9, y: 9 } },
+  { kind: 'highlight', target: { kind: 'tile', x: 9, y: 9, shape: 'x' } },
   { kind: 'waitForAction', expected: { kind: 'throwAt', slotIndex: 0, x: 9, y: 9 } },
   { kind: 'clearHighlight' },
   { kind: 'dialogue', portrait: 'char4', text: "Yeah you killed the shit out of that target" },
@@ -93,7 +93,7 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   },
   { kind: 'panCamera', focus: { x: 10, y: 10 }, durationMs: 500 },
   { kind: 'dialogue', portrait: 'char4', text: 'Chest. Walk onto it and loot it!' },
-  { kind: 'highlight', target: { kind: 'tile', x: 10, y: 10 } },
+  { kind: 'highlight', target: { kind: 'tile', x: 10, y: 10, shape: 'circle' } },
   // Click the chest tile — the client BFS-walks there over two turns.
   { kind: 'waitForAction', expected: { kind: 'reachTile', x: 10, y: 10 } },
   { kind: 'clearHighlight' },
@@ -123,7 +123,7 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   // Flare target is one tile LEFT of the enemy (16, 10) so the flare
   // lights the enemy tile without landing on top of it.
   { kind: 'highlight', target: { kind: 'slot', index: 1 } },
-  { kind: 'highlight', target: { kind: 'tile', x: 16, y: 10 } },
+  { kind: 'highlight', target: { kind: 'tile', x: 16, y: 10, shape: 'x' } },
   { kind: 'setBotAction', botId: 'B1', action: { kind: 'idle' } },
   {
     kind: 'waitForAction',
@@ -134,11 +134,11 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   { kind: 'flashExclamation', x: 17, y: 10 },
   { kind: 'dialogue', portrait: 'char4', text: 'Holy Mother of Jesus! What a surprise, there is an enemy RIGHT FKN THERE! Kill em' },
   { kind: 'highlight', target: { kind: 'slot', index: 2 } },
-  { kind: 'highlight', target: { kind: 'tile', x: 17, y: 9 } },
+  { kind: 'highlight', target: { kind: 'tile', x: 17, y: 11, shape: 'x' } },
   { kind: 'setBotAction', botId: 'B1', action: { kind: 'idle' } },
   {
     kind: 'waitForAction',
-    expected: { kind: 'throwAt', slotIndex: 2, x: 17, y: 9, bombType: 'bomb' },
+    expected: { kind: 'throwAt', slotIndex: 2, x: 17, y: 11, bombType: 'bomb' },
   },
   { kind: 'clearHighlight' },
   // Hold after the explosion so the bot's death animation can finish
@@ -147,20 +147,20 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   { kind: 'dialogue', portrait: 'char4', text: 'Down.' },
 
   // --- Beat 5: Dodge -----------------------------------------------------
-  // B2 is spawned far east (27, 10) so it stays outside the player's LOS
+  // B2 is spawned far east (26, 8) so it stays outside the player's LOS
   // for the whole dodge beat — the bomb visibly "arrives from the dark"
   // without the shooter being shown. B2 is reused later for the ambush
   // so hp=2 is fine (the counter-kill caps at 2 damage anyway).
+  // Coord matches map.tutorial.bot2 in tutorial_map.json.
   {
     kind: 'spawnBot',
     botId: 'B2',
-    x: 31,
-    y: 10,
+    x: 26,
+    y: 8,
     character: 'char2',
     tint: 0x4488cc,
-    hp: 2,
-    inventory: [{ slot: 0, type: 'bomb', count: 1 },
-		{ slot: 2, type: 'ender_pearl', count: 1 }],
+    hp: 1,
+    inventory: [{ slot: 0, type: 'ender_pearl', count: 1 }],
   },
   { kind: 'panCamera', focus: 'player', durationMs: 500 },
   { kind: 'dialogue', portrait: 'char4', text: 'This is how we fight out here.' },
@@ -169,7 +169,7 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   // Camera snaps east to suggest the bomb is flying in from the dark.
   // Nothing is actually shown at that tile — B2 is further out, outside
   // LOS. The tiles are either seen-dim or black.
-  { kind: 'panCamera', focus: { x: 25, y: 10 }, durationMs: 400 },
+  { kind: 'panCamera', focus: { x: 25, y: 8 }, durationMs: 400 },
   // B2 actually throws the bomb (throw ranges are infinite) instead of us
   // fabricating one inline. autoEquip guarantees slot 0 holds a bomb even
   // if earlier beats mutated inventory. After this turn resolves the bomb
@@ -193,13 +193,13 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   { kind: 'panCamera', focus: 'player', durationMs: 600 },
   { kind: 'dialogue', portrait: 'char4', text: "Don't panic, that bomb will take a turn to explode." },
   { kind: 'dialogue', portrait: 'char4', text: 'Just move one tile down.' },
-  { kind: 'highlight', target: { kind: 'tile', x: 10, y: 11 } },
+  { kind: 'highlight', target: { kind: 'tile', x: 10, y: 11, shape: 'circle' } },
   // Single-tile move south. On resolve, bomb explodes at (11, 10); player
   // at (10, 11) is outside the plus pattern.
   { kind: 'waitForAction', expected: { kind: 'moveTo', x: 10, y: 11 } },
   { kind: 'clearHighlight' },
   // Wait for the explosion + dust to settle before reacting.
-  { kind: 'autoIdleTurn', delayBeforeMs: 400, delayAfterMs: 800 },
+  { kind: 'autoIdleTurn', delayBeforeMs: 100, delayAfterMs: 100 },
   { kind: 'dialogue', portrait: 'char4', text: 'That was a close one!' },
 
   // --- Beat 6: Ambush ----------------------------------------------------
@@ -217,28 +217,34 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   // they get close.
   { kind: 'setSuppressRush', enabled: false },
 
-  // Snap B2 to its ambush start. hp=1 so one counter hit kills. Keep the
-  // bomb in slot 0 and the ender_pearl in slot 2 (inv[1]) so the body
-  // drops with both bombs intact for looting in Beat 6.5.
+  // Snap B2 to (22, 8) — two tiles east of the door. Close enough to the
+  // ambush that the scripted approach takes only 3 turns: (22,8)→(21,8)
+  // [approach tile, opens door]→(20,8) [through door]→(19,9) [Chebyshev-1
+  // of player at (19,10), step-in melee fires]. The snap bypasses the
+  // Chebyshev move-validation via mutateState, so it can land anywhere
+  // walkable. hp=1 so one counter hit kills. Body drops with a single
+  // ender_pearl for the Beat 6.5 loot step — no other bombs.
   {
     kind: 'mutateState',
     mutate: (s) => {
       const b2 = s.bombermen.find((b) => b.playerId === 'B2');
       if (!b2) return;
       b2.hp = 1;
-      b2.x = 23;
-      b2.y = 10;
+      b2.x = 22;
+      b2.y = 8;
       b2.coins = 15;
-      b2.inventory.slots[0] = { type: 'bomb', count: 1 };
-      b2.inventory.slots[1] = { type: 'ender_pearl', count: 1 };
+      b2.inventory.slots[0] = { type: 'ender_pearl', count: 1 };
+      b2.inventory.slots[1] = null;
+      b2.inventory.slots[2] = null;
+      b2.inventory.slots[3] = null;
     },
   },
 
-  // Hiding tile is (18, 9). Reachable from (10, 11) via row 10 / 11
+  // Hiding tile is (18, 12). Reachable from (10, 11) via row 10 / 11
   // without touching the wall column on row 9.
-  { kind: 'panCamera', focus: { x: 18, y: 9 }, durationMs: 600 },
-  { kind: 'highlight', target: { kind: 'tile', x: 18, y: 9 } },
-  { kind: 'waitForAction', expected: { kind: 'reachTile', x: 18, y: 9 } },
+  { kind: 'panCamera', focus: { x: 19, y: 10 }, durationMs: 600 },
+  { kind: 'highlight', target: { kind: 'tile', x: 19, y: 10, shape: 'circle' } },
+  { kind: 'waitForAction', expected: { kind: 'reachTile', x: 19, y: 10 } },
   { kind: 'clearHighlight' },
 
   // Player is hiding. Open the trap mechanic for them (bots still can't
@@ -255,18 +261,21 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   { kind: 'dialogue', portrait: 'char4', text: 'Now if anyone comes close, you will have an element of surprise!' },
   { kind: 'dialogue', portrait: 'char4', text: 'Just you wait...' },
 
-  // B2 walks (23, 10) → (22, 10) → (21, 10) → (20, 10) → (19, 10) over
-  // four auto-idle turns. EACH setBotAction MUST target an adjacent tile
-  // or the resolver silently drops the move. On the final step B2 is
-  // Chebyshev-1 from player at (18, 9); the step-in melee counter fires
-  // inside the same turn and B2 dies at (19, 10).
-  { kind: 'setBotAction', botId: 'B2', action: { kind: 'move', x: 22, y: 10 } },
+  // B2 walks (22, 8) → (21, 8) → (20, 8) → (19, 9) over three auto-idle
+  // turns. EACH setBotAction MUST target an adjacent tile or the resolver
+  // silently drops the move. Sequence:
+  //   - Turn 1: (22,8) → (21,8). (21,8) is a door approach tile, so the
+  //     server opens the door at end of this resolve. Player gains LoS on
+  //     B2 once the door animation plays (Beat 3).
+  //   - Turn 2: (21,8) → (20,8). Door is open; B2 walks onto the door tile.
+  //   - Turn 3: (20,8) → (19,9). Chebyshev-1 of player at (19,10); the
+  //     step-in melee counter fires inside this same turn and B2 dies at
+  //     (19,9). Body drops there for Beat 6.5 looting.
+  { kind: 'setBotAction', botId: 'B2', action: { kind: 'move', x: 21, y: 9 } },
   { kind: 'autoIdleTurn', delayAfterMs: 200 },
-  { kind: 'setBotAction', botId: 'B2', action: { kind: 'move', x: 21, y: 10 } },
+  { kind: 'setBotAction', botId: 'B2', action: { kind: 'move', x: 20, y: 9 } },
   { kind: 'autoIdleTurn', delayAfterMs: 200 },
-  { kind: 'setBotAction', botId: 'B2', action: { kind: 'move', x: 20, y: 10 } },
-  { kind: 'autoIdleTurn', delayAfterMs: 200 },
-  { kind: 'setBotAction', botId: 'B2', action: { kind: 'move', x: 19, y: 10 } },
+  { kind: 'setBotAction', botId: 'B2', action: { kind: 'move', x: 19, y: 9 } },
   // Counter kill fires this turn. Hold a long pause so the death
   // animation plays out cleanly before the next dialogue.
   { kind: 'autoIdleTurn', delayAfterMs: 3000 },
@@ -279,8 +288,8 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   // ender_pearl, then throws it 2 tiles south of the Escape Hatch (26, 7)
   // to teleport near the extraction point.
   { kind: 'dialogue', portrait: 'char4', text: "Let's see what that fool had on him." },
-  { kind: 'highlight', target: { kind: 'tile', x: 19, y: 10 } },
-  { kind: 'waitForAction', expected: { kind: 'reachTile', x: 19, y: 10 } },
+  { kind: 'highlight', target: { kind: 'tile', x: 19, y: 9, shape: 'circle' } },
+  { kind: 'waitForAction', expected: { kind: 'reachTile', x: 19, y: 9 } },
   { kind: 'clearHighlight' },
   { kind: 'dialogue', portrait: 'char4', text: 'Aw sweet, an Ender Pearl! Grab it' },
   { kind: 'highlight', target: { kind: 'lootItem', bombType: 'ender_pearl' } },
@@ -302,15 +311,14 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
     },
   },
   { kind: 'dialogue', portrait: 'char4', text: "Nice let's test it out!" },
-  { kind: 'dialogue', portrait: 'char4', text: "Throw it 2 tiles south of the Escape Hatch — you'll teleport right there." },
   // Target (26, 9): two tiles south of the hatch at (26, 7). Ender Pearl
   // teleports the thrower to the target tile, so the player ends up at
   // (26, 9) — Beat 7 then walks them the remaining two tiles north.
   { kind: 'highlight', target: { kind: 'slot', index: 2 } },
-  { kind: 'highlight', target: { kind: 'tile', x: 26, y: 9 } },
+  { kind: 'highlight', target: { kind: 'tile', x: 25, y: 8, shape: 'x' } },
   {
     kind: 'waitForAction',
-    expected: { kind: 'throwAt', slotIndex: 2, x: 26, y: 9, bombType: 'ender_pearl' },
+    expected: { kind: 'throwAt', slotIndex: 2, x: 25, y: 8, bombType: 'ender_pearl' },
   },
   { kind: 'clearHighlight' },
   { kind: 'dialogue', portrait: 'char4', text: "Use Ender Pearls if you ever need to Escape" },
@@ -322,11 +330,11 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   { kind: 'setCameraLocked', locked: false },
   // Skip the long walk from the ambush corner to the hatch — drop the
   // player right next to it so the escape beat stays punchy.
-  { kind: 'panCamera', focus: { x: 26, y: 7 }, durationMs: 900 },
+  { kind: 'panCamera', focus: { x: 25, y: 5 }, durationMs: 900 },
   { kind: 'dialogue', portrait: 'char4', text: 'That is the hatch. Walk onto it, then wait one turn.' },
-  { kind: 'highlight', target: { kind: 'tile', x: 26, y: 7 } },
+  { kind: 'highlight', target: { kind: 'tile', x: 25, y: 5, shape: 'circle' } },
   // Click the hatch — client BFS-walks there.
-  { kind: 'waitForAction', expected: { kind: 'reachTile', x: 26, y: 7 } },
+  { kind: 'waitForAction', expected: { kind: 'reachTile', x: 25, y: 5 } },
   { kind: 'dialogue', portrait: 'char4', text: 'On the hatch. Now wait one turn.' },
   { kind: 'waitForAction', expected: { kind: 'idle' } },
   { kind: 'clearHighlight' },

@@ -470,8 +470,12 @@ export class MatchRoom {
       }
     }
 
-    this.io.to(this.id).emit('match_state', { state: this.state });
+    // Order matters: clients scan `turn_result` events (e.g. to mark bombs
+    // that are being thrown) before consuming the new `match_state` snapshot,
+    // so deferred visuals like the "landed" bomb sprite can wait for their
+    // throw arc to finish. Keep this order aligned with TutorialMatchBackend.
     this.io.to(this.id).emit('turn_result', { events });
+    this.io.to(this.id).emit('match_state', { state: this.state });
 
     // Per-owner notification when one of their mines trips. Only sent to the
     // mine's owner (private ping); the public turn_result still carries the

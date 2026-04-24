@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
 import type { MatchScene } from './MatchScene.ts';
-import type { HighlightTarget } from '../tutorial/types.ts';
+import type { HighlightShape, HighlightTarget } from '../tutorial/types.ts';
 import type { TutorialMatchBackend } from '../backends/TutorialMatchBackend.ts';
 
 /**
@@ -19,6 +19,10 @@ export interface HighlightRect {
   /** 'world' rects are in map coords (transformed by main camera);
    *  'hud' rects are in screen space (drawn directly). */
   space: 'world' | 'hud';
+  /** Draw style. HUD rects always render as 'box' regardless of this field.
+   *  World rects honor the shape: 'x' for throw targets, 'circle' for walk
+   *  targets, 'box' (default) otherwise. */
+  shape?: HighlightShape;
 }
 
 const DIALOGUE_PANEL_W = 420;
@@ -343,17 +347,44 @@ export class TutorialOverlayScene extends Phaser.Scene {
     }
   }
 
+  /** True while a dialogue, pause screen, or timed input block is intercepting
+   *  clicks. MatchScene consults this so a dialogue-dismiss click can't also
+   *  leak through as a gameplay action (phantom-move / phantom-idle). */
+  isBlockingInput(): boolean {
+    const dialogueOpen = this.dialoguePanel?.visible ?? false;
+    const pauseOpen = this.pauseContainer?.visible ?? false;
+    const blocked = this.inputBlockedUntil > this.time.now;
+    return dialogueOpen || pauseOpen || blocked;
+  }
+
+  /** Return the tile coords of the currently-active "walk target" highlight
+   *  (the circle-shape world highlight used for single-tile walk beats), or
+   *  null if none is active. MatchScene consults this to reject clicks on
+   *  any other tile while a walk target is posted. */
+  getActiveWalkTargetTile(tileSize: number): { x: number; y: number } | null {
+    if (tileSize <= 0) return null;
+    for (const r of this.currentHighlights) {
+      if (r.space !== 'world') continue;
+      if (r.shape !== 'circle') continue;
+      return {
+        x: Math.floor(r.x / tileSize),
+        y: Math.floor(r.y / tileSize),
+      };
+    }
+    return null;
+  }
+
   update(_time: number, delta: number): void {
     if (this.currentHighlights.length === 0 && !this.flashRect) return;
     this.highlightPulseT += delta / 1000;
     const alpha = 0.6 + 0.4 * Math.abs(Math.sin(this.highlightPulseT * 4));
     this.highlightGfx.clear();
     this.highlightGfx.lineStyle(3, 0xffdd22, alpha);
-    for (const r of this.currentHighlights) this.strokeRectInSpace(r);
-    if (this.flashRect) this.strokeRectInSpace(this.flashRect);
+    for (const r of this.currentHighlights) this.drawHighlight(r);
+    if (this.flashRect) this.drawHighlight(this.flashRect);
   }
 
-  private strokeRectInSpace(rect: HighlightRect): void {
+  private drawHighlight(rect: HighlightRect): void {
     const cam = this.matchScene?.getMainCamera();
     let x = rect.x, y = rect.y;
     if (rect.space === 'world' && cam) {
@@ -363,7 +394,29 @@ export class TutorialOverlayScene extends Phaser.Scene {
     }
     const w = rect.space === 'world' && cam ? rect.w * cam.zoom : rect.w;
     const h = rect.space === 'world' && cam ? rect.h * cam.zoom : rect.h;
-    this.highlightGfx.strokeRect(x, y, w, h);
+    // HUD rects always stay boxes — UI highlights must keep their rectangular
+    // frame regardless of any shape hint attached to the target.
+    const shape: HighlightShape = rect.space === 'world' ? (rect.shape ?? 'box') : 'box';
+    if (shape === 'box') {
+      this.highlightGfx.strokeRect(x, y, w, h);
+    } else if (shape === 'x') {
+      // Diagonal strokes corner-to-corner. Inset a hair so the strokes don't
+      // collide with adjacent tile highlights when used on a tight grid.
+      const inset = Math.max(1, Math.round(Math.min(w, h) * 0.08));
+      this.highlightGfx.beginPath();
+      this.highlightGfx.moveTo(x + inset, y + inset);
+      this.highlightGfx.lineTo(x + w - inset, y + h - inset);
+      this.highlightGfx.moveTo(x + w - inset, y + inset);
+      this.highlightGfx.lineTo(x + inset, y + h - inset);
+      this.highlightGfx.strokePath();
+    } else {
+      // 'circle' — smaller than the tile, centered. Radius ~35% of the short
+      // side per design spec (walk target).
+      const cx = x + w / 2;
+      const cy = y + h / 2;
+      const r = Math.min(w, h) * 0.35;
+      this.highlightGfx.strokeCircle(cx, cy, r);
+    }
   }
 
   shutdown(): void {

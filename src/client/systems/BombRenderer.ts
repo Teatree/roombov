@@ -93,12 +93,37 @@ export class BombRenderer {
    *  above fog at 95% alpha so the player can still see them clearly. */
   private smokeMode = false;
 
+  /**
+   * Bombs whose "landed" visual should be delayed until their throw arc
+   * completes. Populated by MatchScene when it sees a `throw` event, read
+   * by syncBombs on the next snapshot. Key is bombId, value is the delay
+   * in ms. Entries are cleared after the deferred spawn fires.
+   */
+  private pendingThrowLanding = new Map<string, number>();
+
+  /** Called by MatchScene when a throw arc is spawned. Defers the landed
+   *  bomb visual for `delayMs` so the sprite doesn't pop in at the target
+   *  while the arc is still mid-flight. */
+  markPendingThrow(bombId: string, delayMs: number): void {
+    this.pendingThrowLanding.set(bombId, delayMs);
+  }
+
   syncBombs(bombs: BombInstance[]): void {
     const seen = new Set<string>();
     for (const b of bombs) {
       seen.add(b.id);
       if (!this.bombVisuals.has(b.id)) {
-        this.bombVisuals.set(b.id, this.createBomb(b));
+        const pendingDelay = this.pendingThrowLanding.get(b.id);
+        if (pendingDelay !== undefined) {
+          this.pendingThrowLanding.delete(b.id);
+          const bombSnapshot = b;
+          this.scene.time.delayedCall(pendingDelay, () => {
+            if (this.bombVisuals.has(bombSnapshot.id)) return;
+            this.bombVisuals.set(bombSnapshot.id, this.createBomb(bombSnapshot));
+          });
+        } else {
+          this.bombVisuals.set(b.id, this.createBomb(b));
+        }
       } else {
         // Update the fuse countdown on existing visuals
         this.bombVisuals.get(b.id)!.updateFuse?.(b.fuseRemaining);
@@ -109,20 +134,22 @@ export class BombRenderer {
       // with fuseTurns >= 1 (Bomb, Wide Bomb, Delay Tricky, Banana, Flash,
       // Big Huge, Banana Piece) sit with fuseRemaining=0 for one turn
       // before exploding, and shake during that window.
-      const vis = this.bombVisuals.get(b.id)!;
-      vis.setShake?.(b.fuseRemaining === 0 && BALANCE.bombs.shakePreDetonation);
+      // `vis` is undefined during the deferred-landing window for a bomb
+      // mid-throw — skip shake/smoke-mode updates until its visual exists.
+      const vis = this.bombVisuals.get(b.id);
+      vis?.setShake?.(b.fuseRemaining === 0 && BALANCE.bombs.shakePreDetonation);
       // Smoke mode override: bump bomb alpha toward full so it's clearly
       // visible vs the surrounding smoke haze.
-      vis.setSmokeMode?.(this.smokeMode);
+      vis?.setSmokeMode?.(this.smokeMode);
     }
     for (const [id, vis] of this.bombVisuals) {
       if (!seen.has(id)) {
         // Bomb is gone from state — but we want it to KEEP SHAKING all the
         // way until the explosion visual kicks in. Defer destruction until
-        // the moment the explosion starts (halfway through the transition
-        // phase — same delay that BombRenderer.spawnExplosion uses). The
-        // shake tween keeps running in the interim.
-        const delay = (BALANCE.match.transitionPhaseSeconds * 1000) / 2;
+        // the start of Beat 2 (1/3 of the transition) — same moment
+        // explosions begin in MatchScene.onTurnResult. The shake tween
+        // keeps running in the interim.
+        const delay = (BALANCE.match.transitionPhaseSeconds * 1000) / 3;
         this.scene.time.delayedCall(delay, () => vis.destroy());
         this.bombVisuals.delete(id);
       }
@@ -229,7 +256,10 @@ export class BombRenderer {
     // one frame before the first onUpdate runs.
     if (isVisible) img.setVisible(isVisible(fromX, fromY));
 
-    const duration = (BALANCE.match.transitionPhaseSeconds * 1000) / 2;
+    // Arc duration = one third of the transition (beat 1 window: "Action
+    // Perform"). The bomb lands exactly when beat 2 ("Action Result") begins,
+    // which is when its explosion/smoke/teleport visual kicks in.
+    const duration = (BALANCE.match.transitionPhaseSeconds * 1000) / 3;
 
     this.scene.tweens.add({
       targets: img,

@@ -39,14 +39,28 @@ export type ExpectedAction =
   | { kind: 'selectBomb'; slotIndex?: 0 | 1 | 2 | 3 | 4 };
 
 /**
+ * Visual shape of a pulsing highlight. Only honored for world-space targets
+ * (tile, rect with space:'world'). HUD/symbolic targets always render as a
+ * box regardless — UI highlights must stay rectangular per design.
+ *
+ *   'box'    — outlined rectangle (default, legacy behavior)
+ *   'x'      — two diagonal strokes corner-to-corner (throw-target feel)
+ *   'circle' — smaller pulsing ring centered in the tile (walk-target feel)
+ */
+export type HighlightShape = 'box' | 'x' | 'circle';
+
+/**
  * Where to draw a pulsing highlight. World rects are in map-pixel coords;
  * HUD rects are in screen space; symbolic targets (slot[i], lootPanel,
  * phase, timer, hp, coins, bombTray) are resolved to screen rects by
  * `MatchScene.getHudRect()` each frame so HUD layout changes don't break
  * the tutorial.
+ *
+ * Optional `shape` overrides the draw style on world targets. See
+ * `HighlightShape`. Symbolic/HUD targets ignore the field.
  */
 export type HighlightTarget =
-  | { kind: 'tile'; x: number; y: number }
+  | { kind: 'tile'; x: number; y: number; shape?: HighlightShape }
   | { kind: 'slot'; index: 0 | 1 | 2 | 3 | 4 }
   | { kind: 'lootPanel' }
   | { kind: 'lootItem'; bombType: BombType }
@@ -55,7 +69,7 @@ export type HighlightTarget =
   | { kind: 'hp' }
   | { kind: 'coinCounter' }
   | { kind: 'bombTray' }
-  | { kind: 'rect'; x: number; y: number; w: number; h: number; space: 'world' | 'hud' };
+  | { kind: 'rect'; x: number; y: number; w: number; h: number; space: 'world' | 'hud'; shape?: HighlightShape };
 
 /**
  * One step in the tutorial script. The director walks steps top-to-bottom;

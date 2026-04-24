@@ -629,6 +629,15 @@ export class BombermanSpriteSystem {
       if (killed) {
         this.setAnim(victim, 'death');
         victim.resumeAfter = 'death';
+        // Transfer to the corpse layer so the body renders below any live
+        // Bomberman who later walks onto the tile to loot it. Without this
+        // step the sprite stays in the active-Bomberman layer (depth 100)
+        // and floats above the looter.
+        if (victim.aimShadow) victim.aimShadow.setVisible(false);
+        this.layer.remove(victim.sprite);
+        this.layer.remove(victim.hpPips);
+        this.corpseLayer.add(victim.sprite);
+        this.corpseLayer.add(victim.hpPips);
       } else {
         this.setAnim(victim, 'hurt');
         victim.resumeAfter = 'idle';

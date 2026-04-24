@@ -452,12 +452,40 @@ export function resolveTurn(
     // turn of the bomberman standing idle on the hatch tile.
   }
 
-  // Door proximity: open doors when any alive Bomberman is within Chebyshev 1
+  // Door proximity: open doors when any alive Bomberman stands directly IN
+  // FRONT of the door — axis-adjacent on one of its two front tiles. The
+  // front tiles are:
+  //   - Vertical door (tiles stacked along y): the two tiles with the
+  //     largest y values (the bottom pair). Trigger tiles are
+  //     (x-1, y) and (x+1, y) for each front tile — two to the left, two
+  //     to the right. Tiles above or below the door do NOT trigger.
+  //   - Horizontal door (tiles along x, expected length 2): both tiles.
+  //     Trigger tiles are (x, y-1) and (x, y+1) for each — two above,
+  //     two below.
+  // Corner/diagonal tiles are deliberately excluded. Explosions that
+  // overlap door tiles still open them (handled in the bomb-burst step).
   for (const door of state.doors ?? []) {
     if (door.opened) continue;
+    if (door.tiles.length === 0) continue;
+    const triggers: Array<{ x: number; y: number }> = [];
+    if (door.orientation === 'vertical') {
+      // Bottom 2 tiles (largest y) are the front; trigger on their east/west
+      // neighbours only. Guard short doors by taking all tiles.
+      const sorted = [...door.tiles].sort((a, b) => b.y - a.y);
+      const front = sorted.slice(0, Math.min(2, sorted.length));
+      for (const t of front) {
+        triggers.push({ x: t.x - 1, y: t.y });
+        triggers.push({ x: t.x + 1, y: t.y });
+      }
+    } else {
+      for (const t of door.tiles) {
+        triggers.push({ x: t.x, y: t.y - 1 });
+        triggers.push({ x: t.x, y: t.y + 1 });
+      }
+    }
     const nearby = actors.some(b =>
       b.alive && !b.escaped &&
-      door.tiles.some(t => Math.max(Math.abs(b.x - t.x), Math.abs(b.y - t.y)) <= 1),
+      triggers.some(t => t.x === b.x && t.y === b.y),
     );
     if (nearby) {
       door.opened = true;
@@ -824,11 +852,13 @@ export function resolveTurn(
     const closedDoorTiles = buildClosedDoorTiles();
     const trigger = resolveBombTrigger(bomb.type, bomb.x, bomb.y, map, closedDoorTiles);
 
-    // Open any closed doors hit by the explosion
-    const allBlastTiles = [...trigger.damageTiles, ...trigger.fireTiles, ...trigger.lightTiles];
+    // Open any closed doors hit by the explosion. Light-only tiles (Flare)
+    // do NOT open doors — flares illuminate without applying force, so a
+    // flare landing on a door tile just lights it up.
+    const blastTiles = [...trigger.damageTiles, ...trigger.fireTiles];
     for (const door of state.doors ?? []) {
       if (door.opened) continue;
-      if (door.tiles.some(dt => allBlastTiles.some(bt => bt.x === dt.x && bt.y === dt.y))) {
+      if (door.tiles.some(dt => blastTiles.some(bt => bt.x === dt.x && bt.y === dt.y))) {
         door.opened = true;
         events.push({ kind: 'door_opened', doorId: door.id });
       }

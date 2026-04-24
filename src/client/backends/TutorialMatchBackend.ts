@@ -383,11 +383,19 @@ export class TutorialMatchBackend implements MatchBackend {
   private resolveHighlight(target: HighlightTarget | null): HighlightRect | null {
     if (!target) return null;
     if (target.kind === 'rect') {
-      return { x: target.x, y: target.y, w: target.w, h: target.h, space: target.space };
+      return {
+        x: target.x, y: target.y, w: target.w, h: target.h,
+        space: target.space,
+        shape: target.shape,
+      };
     }
     if (target.kind === 'tile') {
       const ts = this.map?.tileSize ?? 16;
-      return { x: target.x * ts, y: target.y * ts, w: ts, h: ts, space: 'world' };
+      return {
+        x: target.x * ts, y: target.y * ts, w: ts, h: ts,
+        space: 'world',
+        shape: target.shape,
+      };
     }
     // HUD-symbolic targets are resolved by the overlay via MatchScene.getHudRect.
     const rect = this.overlay?.getHudRectFor(target);
