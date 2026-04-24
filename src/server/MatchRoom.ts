@@ -78,9 +78,16 @@ export class MatchRoom {
   private createBots(): void {
     const cfg = BALANCE.bots;
     const realCount = this.participants.length;
-    if (realCount < cfg.minPlayersForBots) return;
+    console.log(`[MatchRoom] createBots: real=${realCount} minPlayersForBots=${cfg.minPlayersForBots} maxPerMatch=${cfg.maxPerMatch} fillToTotal=${cfg.fillToTotal}`);
+    if (realCount < cfg.minPlayersForBots) {
+      console.log(`[MatchRoom] createBots: realCount<minPlayersForBots, no bots`);
+      return;
+    }
     const slotsToFill = Math.min(cfg.maxPerMatch, cfg.fillToTotal - realCount);
-    if (slotsToFill <= 0) return;
+    if (slotsToFill <= 0) {
+      console.log(`[MatchRoom] createBots: slotsToFill=${slotsToFill}, no bots`);
+      return;
+    }
 
     const rng = () => Math.random();
     const tierWeights = TIER_CONFIG.paid.weights;

@@ -483,13 +483,14 @@ export function resolveTurn(
         triggers.push({ x: t.x, y: t.y + 1 });
       }
     }
-    const nearby = actors.some(b =>
+    const opener = actors.find(b =>
       b.alive && !b.escaped &&
       triggers.some(t => t.x === b.x && t.y === b.y),
     );
-    if (nearby) {
+    if (opener) {
       door.opened = true;
       events.push({ kind: 'door_opened', doorId: door.id });
+      console.log(`[TurnResolver] door ${door.id} opened by proximity: ${opener.playerId} at (${opener.x},${opener.y})`);
     }
   }
 
@@ -861,6 +862,7 @@ export function resolveTurn(
       if (door.tiles.some(dt => blastTiles.some(bt => bt.x === dt.x && bt.y === dt.y))) {
         door.opened = true;
         events.push({ kind: 'door_opened', doorId: door.id });
+        console.log(`[TurnResolver] door ${door.id} opened by ${bomb.type} bomb at (${bomb.x},${bomb.y}) — blastTiles=${blastTiles.length} (damage=${trigger.damageTiles.length}, fire=${trigger.fireTiles.length}, light=${trigger.lightTiles.length})`);
       }
     }
 

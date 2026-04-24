@@ -97,7 +97,7 @@ export const BALANCE = {
   },
   bots: {
     /** Max bots that can be added to a single match. */
-    maxPerMatch: 0,
+    maxPerMatch: 2,
     /** Only add bots if at least this many real players joined. */
     minPlayersForBots: 1,
     /** Fill the match up to this many total players (real + bot). */

@@ -1,10 +1,45 @@
 {
   "id": "p_3a9ad8b22613",
   "createdAt": 1775946762703,
-  "updatedAt": 1777060581437,
-  "coins": 461,
-  "ownedBombermen": [],
-  "equippedBombermanId": null,
+  "updatedAt": 1777073248317,
+  "coins": 801,
+  "ownedBombermen": [
+    {
+      "id": "owned_p_3a9ad8b22613_1777072422920_xt3x",
+      "name": "Regan",
+      "tier": "free",
+      "colors": {
+        "shirt": 14107258,
+        "pants": 7678090,
+        "hair": 9450674
+      },
+      "tint": 8832496,
+      "character": "char5",
+      "inventory": {
+        "slots": [
+          {
+            "type": "bomb_wide",
+            "count": 4
+          },
+          {
+            "type": "banana",
+            "count": 5
+          },
+          {
+            "type": "flare",
+            "count": 5
+          },
+          {
+            "type": "motion_detector_flare",
+            "count": 3
+          }
+        ]
+      },
+      "purchasedAt": 1777072422920,
+      "sourceTemplateId": "cycle_1777072421728_1_free"
+    }
+  ],
+  "equippedBombermanId": "owned_p_3a9ad8b22613_1777072422920_xt3x",
   "bombStockpile": {
     "flare": 10,
     "delay_tricky": 8,

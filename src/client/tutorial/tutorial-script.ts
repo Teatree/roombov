@@ -222,8 +222,9 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   // [approach tile, opens door]→(20,8) [through door]→(19,9) [Chebyshev-1
   // of player at (19,10), step-in melee fires]. The snap bypasses the
   // Chebyshev move-validation via mutateState, so it can land anywhere
-  // walkable. hp=1 so one counter hit kills. Body drops with a single
-  // ender_pearl for the Beat 6.5 loot step — no other bombs.
+  // walkable. hp=1 so one counter hit kills. Keep the bomb in slot 0 and
+  // the ender_pearl in slot 2 (inv[1]) so the body drops with both bombs
+  // intact for looting in Beat 6.5.
   {
     kind: 'mutateState',
     mutate: (s) => {
@@ -234,9 +235,6 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
       b2.y = 8;
       b2.coins = 15;
       b2.inventory.slots[0] = { type: 'ender_pearl', count: 1 };
-      b2.inventory.slots[1] = null;
-      b2.inventory.slots[2] = null;
-      b2.inventory.slots[3] = null;
     },
   },
 
