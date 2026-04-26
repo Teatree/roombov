@@ -1,9 +1,11 @@
 import Phaser from 'phaser';
 import { NetworkManager } from '../NetworkManager.ts';
+import { type TreasureBundle, hasAnyTreasure } from '@shared/config/treasures.ts';
+import { TreasureListWidget } from '../systems/TreasureListWidget.ts';
 
 export interface MatchResultsData {
   outcome: 'escaped' | 'died' | 'lost';
-  coinsEarned: number;
+  treasuresEarned: TreasureBundle;
   turnsPlayed: number;
   /** Bomb inventory kept (escaped only). */
   inventory: Array<{ name: string; count: number }>;
@@ -33,7 +35,7 @@ export class ResultsScene extends Phaser.Scene {
   init(data: MatchResultsData): void {
     this.results = data ?? {
       outcome: 'died',
-      coinsEarned: 0,
+      treasuresEarned: {},
       turnsPlayed: 0,
       inventory: [],
       kills: 0,
@@ -77,11 +79,29 @@ export class ResultsScene extends Phaser.Scene {
     let subtitleY = height * 0.32;
 
     if (r.outcome === 'escaped') {
-      // Gold earned
-      this.add.text(width / 2, subtitleY, `Gold collected: ${r.coinsEarned}`, {
-        fontSize: '18px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
-      }).setOrigin(0.5);
-      subtitleY += 36;
+      // Treasures earned this match — static widget. Skip the row entirely
+      // when nothing was looted.
+      if (hasAnyTreasure(r.treasuresEarned)) {
+        this.add.text(width / 2, subtitleY, 'Treasures collected:', {
+          fontSize: '16px', color: '#aaaaaa', fontFamily: 'monospace',
+        }).setOrigin(0.5);
+        subtitleY += 26;
+        // Center the widget by anchoring top-left to (width/2 - approx-w/2).
+        // Use a chunkier icon scale here than the in-match HUD — there's
+        // plenty of space on the results screen.
+        const widget = new TreasureListWidget(this, {
+          x: width / 2 - 50,
+          y: subtitleY,
+          anchor: 'top-left',
+          iconScale: 0.6,
+          rowGap: 6,
+          fontSize: 16,
+          staticRender: true,
+        });
+        widget.setBundleStatic(r.treasuresEarned);
+        const rect = widget.getRect();
+        subtitleY += rect.h + 14;
+      }
 
       // Kills
       if (r.kills > 0) {

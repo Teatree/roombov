@@ -212,6 +212,7 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
     createdAt: raw.createdAt ?? now,
     updatedAt: raw.updatedAt ?? now,
     coins: raw.coins ?? 500,
+    treasures: (raw.treasures && typeof raw.treasures === 'object') ? { ...raw.treasures } : {},
     ownedBombermen: owned,
     equippedBombermanId: raw.equippedBombermanId ?? null,
     bombStockpile: normalizedStockpile as PlayerProfile['bombStockpile'],

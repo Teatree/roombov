@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
 import { preloadBombIcons } from '../systems/BombIcons.ts';
+import { preloadTreasureIcons } from '../systems/TreasureIcons.ts';
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -13,6 +14,7 @@ export class BootScene extends Phaser.Scene {
     // is game-global so the load only happens once.
     preloadBombermanSpritesheets(this);
     preloadBombIcons(this);
+    preloadTreasureIcons(this);
   }
 
   create(): void {

@@ -10,6 +10,7 @@ import type { BombermanTemplate } from './bomberman.ts';
 import type { BombType } from './bombs.ts';
 import type { MatchListing, MatchState, PlayerAction } from './match.ts';
 import type { TurnEvent } from '../systems/TurnResolver.ts';
+import type { TreasureBundle } from '../config/treasures.ts';
 
 // --- Auth / profile (Step 2) ---
 
@@ -103,7 +104,8 @@ export interface TurnResultMsg {
 export interface MatchEndMsg {
   endReason: 'all_escaped' | 'all_dead' | 'turn_limit';
   escapedPlayerIds: string[];
-  coinsEarned: Record<string, number>;
+  /** Per-player treasures earned this match (keyed by playerId). */
+  treasuresEarned: Record<string, TreasureBundle>;
 }
 
 // --- Loot (real-time during match, not turn-gated) ---
@@ -114,7 +116,8 @@ export interface MatchEndMsg {
  * an updated match_state if the loot succeeds.
  *
  * `targetSlotIndex` uses the same convention as bomb throws:
- *   1..4 → inventory.slots[0..3]  (slot 0 = Rock is never a valid target)
+ *   1..INVENTORY_SLOT_COUNT → inventory.slots[0..N-1]
+ *   (slot 0 = Rock is never a valid target)
  *
  * If `targetSlotIndex` already contains a different bomb type, the existing
  * stack is swapped back to the source (per the brief).

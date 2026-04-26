@@ -10,6 +10,7 @@
  */
 
 import type { BombType, StatusEffect } from './bombs.ts';
+import type { TreasureBundle } from '../config/treasures.ts';
 
 /** Tier drives price range + starting bomb count + rarity of premium bombs. */
 export type BombermanTier = 'free' | 'paid' | 'paid_expensive';
@@ -120,8 +121,8 @@ export interface BombermanState {
   y: number;
   hp: number;
   alive: boolean;
-  /** Coins picked up during this match (dropped on death, kept on escape). */
-  coins: number;
+  /** Treasures picked up during this match (dropped on death, kept on escape). */
+  treasures: TreasureBundle;
   /** Live bomb inventory (mutates as bombs are thrown / looted). */
   inventory: BombInventory;
   /** Turns remaining bleeding (0 = not bleeding). */

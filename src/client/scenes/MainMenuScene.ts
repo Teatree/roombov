@@ -3,6 +3,8 @@ import { NetworkManager } from '../NetworkManager.ts';
 import { ProfileStore, UiAnimLock } from '../ClientState.ts';
 import { ActivityIndicator } from '../systems/ActivityIndicator.ts';
 import { ensureBombermanAnims, createShopBombermanSprite, preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
+import { TreasureListWidget } from '../systems/TreasureListWidget.ts';
+import { preloadTreasureIcons } from '../systems/TreasureIcons.ts';
 
 /**
  * Entry point after Boot. Connects to the server, authenticates, and offers
@@ -11,6 +13,7 @@ import { ensureBombermanAnims, createShopBombermanSprite, preloadBombermanSprite
 export class MainMenuScene extends Phaser.Scene {
   private statusText!: Phaser.GameObjects.Text;
   private coinsText!: Phaser.GameObjects.Text;
+  private treasureList!: TreasureListWidget;
   private equippedContainer!: Phaser.GameObjects.Container;
   private unsubscribe: (() => void) | null = null;
   private activity: ActivityIndicator | null = null;
@@ -22,6 +25,7 @@ export class MainMenuScene extends Phaser.Scene {
 
   preload(): void {
     preloadBombermanSpritesheets(this);
+    preloadTreasureIcons(this);
   }
 
   create(): void {
@@ -41,6 +45,14 @@ export class MainMenuScene extends Phaser.Scene {
       fontSize: '22px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5);
 
+    // Treasures list — top-right of the menu, read-only mirror of the
+    // persistent profile stash.
+    this.treasureList = new TreasureListWidget(this, {
+      x: width - 20,
+      y: 20,
+      anchor: 'top-right',
+    });
+
     this.equippedContainer = this.add.container(width / 2, 260);
 
     // Buttons
@@ -49,6 +61,7 @@ export class MainMenuScene extends Phaser.Scene {
       ['[ TUTORIAL ]', () => this.scene.start('MatchScene', { mode: 'tutorial' })],
       ['[ BOMBERMAN SHOP ]', () => this.scene.start('BombermanShopScene')],
       ['[ BOMBS SHOP ]', () => this.scene.start('BombsShopScene')],
+      ['[ GAMBLER STREET ]', () => this.scene.start('GamblerStreetScene')],
     ];
 
     for (let i = 0; i < buttons.length; i++) {
@@ -128,6 +141,7 @@ export class MainMenuScene extends Phaser.Scene {
     }
 
     this.coinsText.setText(`Coins: ${profile.coins}`);
+    this.treasureList.setBundle(profile.treasures);
 
     // Clear and rebuild the equipped preview
     this.equippedContainer.removeAll(true);

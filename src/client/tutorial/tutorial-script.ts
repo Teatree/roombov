@@ -38,8 +38,8 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   { kind: 'dialogue', portrait: 'char4', text: 'Every Action Requires a Turn.' },
   { kind: 'highlight', target: { kind: 'hp' } },
   { kind: 'dialogue', portrait: 'char4', text: 'Your HP. Do not lose it.' },
-  { kind: 'highlight', target: { kind: 'coinCounter' } },
-  { kind: 'dialogue', portrait: 'char4', text: 'Coins. You keep these after extraction.' },
+  { kind: 'highlight', target: { kind: 'treasureList' } },
+  { kind: 'dialogue', portrait: 'char4', text: 'Treasures. You keep these after extraction. Cash them in at Gambler Street.' },
   { kind: 'highlight', target: { kind: 'bombTray' } },
   { kind: 'dialogue', portrait: 'char4', text: 'Four bomb slots. Loot to fill them.' },
   { kind: 'clearHighlight' },
@@ -78,14 +78,14 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   { kind: 'dialogue', portrait: 'char4', text: "Now let's find some real bomb!" },
 
   // --- Beat 3: Chest Loot ------------------------------------------------
-  // Hand-placed chest at (10, 9): 25 coins, 1 Flare, 1 Bomb.
+  // Hand-placed chest at (10, 10): 3 Chalices, 1 Flare, 1 Bomb.
   {
     kind: 'spawnChest',
     chestId: 'tut_chest',
     tier: 2,
     x: 10,
     y: 10,
-    coins: 25,
+    treasures: { chalice: 3 },
     bombs: [
       { type: 'flare', count: 1 },
       { type: 'bomb', count: 1 },
@@ -105,8 +105,8 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   { kind: 'highlight', target: { kind: 'lootItem', bombType: 'bomb' } },
   { kind: 'waitForAction', expected: { kind: 'lootBomb', sourceKind: 'chest', bombType: 'bomb' } },
   { kind: 'clearHighlight' },
-  { kind: 'dialogue', portrait: 'char4', text: 'Good job, notice that the coins get picked up automatically' },
-  { kind: 'highlight', target: { kind: 'coinCounter' } },
+  { kind: 'dialogue', portrait: 'char4', text: 'Good job, notice that the treasures get picked up automatically' },
+  { kind: 'highlight', target: { kind: 'treasureList' } },
 
   // --- Beat 4: Flare + Bomb kill (Bot1 at (17, 10)) ----------------------
   {
@@ -233,7 +233,7 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
       b2.hp = 1;
       b2.x = 22;
       b2.y = 8;
-      b2.coins = 15;
+      b2.treasures = { fish: 5, jade: 5, books: 5 };
       b2.inventory.slots[0] = { type: 'ender_pearl', count: 1 };
     },
   },

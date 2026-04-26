@@ -1,6 +1,7 @@
 import type { BombType } from '@shared/types/bombs.ts';
 import type { CharacterVariant } from '@shared/types/bomberman.ts';
 import type { MatchState, PlayerAction } from '@shared/types/match.ts';
+import type { TreasureBundle } from '@shared/config/treasures.ts';
 
 /**
  * Character portrait used in the dialogue panel. Only char4 is used per the
@@ -52,7 +53,7 @@ export type HighlightShape = 'box' | 'x' | 'circle';
 /**
  * Where to draw a pulsing highlight. World rects are in map-pixel coords;
  * HUD rects are in screen space; symbolic targets (slot[i], lootPanel,
- * phase, timer, hp, coins, bombTray) are resolved to screen rects by
+ * phase, timer, hp, treasureList, bombTray) are resolved to screen rects by
  * `MatchScene.getHudRect()` each frame so HUD layout changes don't break
  * the tutorial.
  *
@@ -67,7 +68,7 @@ export type HighlightTarget =
   | { kind: 'phaseIndicator' }
   | { kind: 'timer' }
   | { kind: 'hp' }
-  | { kind: 'coinCounter' }
+  | { kind: 'treasureList' }
   | { kind: 'bombTray' }
   | { kind: 'rect'; x: number; y: number; w: number; h: number; space: 'world' | 'hud'; shape?: HighlightShape };
 
@@ -153,7 +154,8 @@ export type TutorialStep =
       tier: 1 | 2;
       x: number;
       y: number;
-      coins: number;
+      /** Exact treasures to put in the chest (overrides any roll). */
+      treasures: TreasureBundle;
       bombs: Array<{ type: BombType; count: number }>;
     }
   | { kind: 'equipPlayerBomb'; slot: 0 | 1 | 2 | 3; type: BombType; count: number }

@@ -18,7 +18,7 @@ export type TooltipKey =
   | { kind: 'turnsTicks' }
   | { kind: 'hp' }
   | { kind: 'turnLimit' }
-  | { kind: 'coin' }
+  | { kind: 'treasureList' }
   | { kind: 'bombSlot'; bombType: BombType }
   | { kind: 'lootBomb'; bombType: BombType }
   | { kind: 'tileWalkable' }
@@ -66,13 +66,15 @@ export function tooltipDataFor(key: TooltipKey): TooltipData {
           { text: '.' },
         ],
       };
-    case 'coin':
+    case 'treasureList':
       return {
         icon: { kind: 'shape', shape: 'coin' },
         parts: [
-          { text: 'Coins ' },
+          { text: 'Treasures ' },
           { text: 'looted', bold: true },
-          { text: ' this match.' },
+          { text: ' this match. Cash them in at ' },
+          { text: 'Gambler Street', bold: true },
+          { text: '.' },
         ],
       };
     case 'bombSlot':

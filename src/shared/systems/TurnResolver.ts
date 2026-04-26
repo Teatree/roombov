@@ -7,7 +7,7 @@
  *
  * Resolution order (important — lots of interactions depend on this):
  *   1. Apply movement (bombermen commit chosen target tiles)
- *   2. Interaction pass (coin pickup, collectible pickup, body loot, escape flag)
+ *   2. Interaction pass (treasure pickup, collectible pickup, body loot, escape flag)
  *   3. Place thrown bombs
  *   4. Tick fuses on all bombs; collect the ones that trigger this turn
  *   5. Resolve triggered bombs (explosions, fire, scatter) — each Bomberman
@@ -37,6 +37,11 @@ import { resolveBombTrigger, shapeTiles, type Tile } from './BombResolver.ts';
 import { hasLineOfSight } from './LineOfSight.ts';
 import { findPath } from './Pathfinding.ts';
 import { createSeededRandom } from '../utils/seeded-random.ts';
+import {
+  type TreasureBundle,
+  hasAnyTreasure,
+  mergeTreasures,
+} from '../config/treasures.ts';
 
 let bombIdCounter = 0;
 let bodyIdCounter = 0;
@@ -155,8 +160,8 @@ export type TurnEvent =
   | { kind: 'damaged'; playerId: string; hpRemaining: number }
   | { kind: 'died'; playerId: string; x: number; y: number; killerId: string | null }
   | { kind: 'escaped'; playerId: string }
-  | { kind: 'coin_collected'; playerId: string; amount: number }
-  | { kind: 'body_looted'; playerId: string; bodyId: string; coins: number }
+  | { kind: 'treasures_collected'; playerId: string; treasures: TreasureBundle }
+  | { kind: 'body_looted'; playerId: string; bodyId: string; treasures: TreasureBundle }
   | { kind: 'teleport'; playerId: string; fromX: number; fromY: number; toX: number; toY: number }
   | { kind: 'door_opened'; doorId: number }
   | { kind: 'rush_changed'; playerId: string; active: boolean }
@@ -422,29 +427,31 @@ export function resolveTurn(
     }
   }
 
-  // --- 2. Interaction pass (auto-collect coins + escape; bomb looting is manual) ---
+  // --- 2. Interaction pass (auto-collect treasures + escape; bomb looting is manual) ---
   for (const bomberman of actors) {
     if (!bomberman.alive) continue;
 
-    // Chest coins — auto-collect on walk-over; also marks chest as opened
+    // Chest treasures — auto-collect on walk-over; also marks chest as opened
     const chest = state.chests.find(c => c.x === bomberman.x && c.y === bomberman.y);
     if (chest) {
-      if (chest.coins > 0) {
-        bomberman.coins += chest.coins;
-        events.push({ kind: 'coin_collected', playerId: bomberman.playerId, amount: chest.coins });
-        chest.coins = 0;
+      if (hasAnyTreasure(chest.treasures)) {
+        const picked: TreasureBundle = { ...chest.treasures };
+        mergeTreasures(bomberman.treasures, picked);
+        events.push({ kind: 'treasures_collected', playerId: bomberman.playerId, treasures: picked });
+        chest.treasures = {};
       }
       if (!chest.opened) chest.opened = true;
     }
 
-    // Body coins — auto-transfer on walk-over (bombs are looted manually via loot panel)
+    // Body treasures — auto-transfer on walk-over (bombs are looted manually via loot panel)
     const bodyIdx = state.bodies.findIndex(b => b.x === bomberman.x && b.y === bomberman.y);
     if (bodyIdx >= 0) {
       const body = state.bodies[bodyIdx];
-      if (body.coins > 0) {
-        bomberman.coins += body.coins;
-        events.push({ kind: 'body_looted', playerId: bomberman.playerId, bodyId: body.id, coins: body.coins });
-        body.coins = 0;
+      if (hasAnyTreasure(body.treasures)) {
+        const picked: TreasureBundle = { ...body.treasures };
+        mergeTreasures(bomberman.treasures, picked);
+        events.push({ kind: 'body_looted', playerId: bomberman.playerId, bodyId: body.id, treasures: picked });
+        body.treasures = {};
       }
     }
 
@@ -1282,7 +1289,7 @@ export function resolveTurn(
         events.push({ kind: 'melee_trap_changed', playerId: b.playerId, active: false });
       }
       events.push({ kind: 'died', playerId: b.playerId, x: b.x, y: b.y, killerId: lastDamagedBy.get(b.playerId) ?? null });
-      // Drop a body with current coins + inventory
+      // Drop a body with current treasures + inventory
       const bombs: { type: BombType; count: number }[] = [];
       for (const slot of b.inventory.slots) {
         if (slot && slot.count > 0) bombs.push({ type: slot.type, count: slot.count });
@@ -1292,10 +1299,10 @@ export function resolveTurn(
         x: b.x,
         y: b.y,
         ownerPlayerId: b.playerId,
-        coins: b.coins,
+        treasures: b.treasures,
         bombs,
       });
-      b.coins = 0;
+      b.treasures = {};
       b.inventory = { slots: [null, null, null, null] };
     }
   }

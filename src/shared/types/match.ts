@@ -10,6 +10,7 @@ import type {
   BombInstance, BombType, FireTile, LightTile,
   SmokeCloud, Mine, PhosphorusPending,
 } from './bombs.ts';
+import type { TreasureBundle } from '../config/treasures.ts';
 
 export interface MatchConfig {
   id: string;
@@ -26,7 +27,7 @@ export interface MatchListing {
   countdown: number;
 }
 
-/** A loot chest on the map. Contains coins (auto-collected on step) and
+/** A loot chest on the map. Contains treasures (auto-collected on step) and
  *  bombs (manual loot panel pickup). Stays permanently open once any player
  *  steps on it. */
 export interface Chest {
@@ -34,8 +35,8 @@ export interface Chest {
   tier: 1 | 2;
   x: number;
   y: number;
-  /** Remaining coins — 0 after the first player steps on the tile. */
-  coins: number;
+  /** Remaining treasures — emptied after the first player steps on the tile. */
+  treasures: TreasureBundle;
   /** Remaining bombs available for looting. Entries are removed/decremented as players pick them up. */
   bombs: Array<{ type: BombType; count: number }>;
   /** Permanently true after any player steps on the chest tile. */
@@ -52,14 +53,15 @@ export interface DoorInstance {
 
 /**
  * A dropped Bomberman body. Left behind when a Bomberman dies. Walking onto
- * it picks up their coins and lets the player loot bombs from their inventory.
+ * it picks up their treasures and lets the player loot bombs from their
+ * inventory.
  */
 export interface DroppedBody {
   id: string;
   x: number;
   y: number;
   ownerPlayerId: string;
-  coins: number;
+  treasures: TreasureBundle;
   bombs: { type: BombType; count: number }[];
 }
 

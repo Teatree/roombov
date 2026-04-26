@@ -28,7 +28,8 @@ import { rollBombermanName } from '../shared/config/bomberman-names.ts';
 import { TIER_CONFIG } from '../shared/config/bomberman-tiers.ts';
 import { resolveTurn } from '../shared/systems/TurnResolver.ts';
 import { createSeededRandom, seededRandInt, seededShuffle } from '../shared/utils/seeded-random.ts';
-import { rollBombLoot } from '../shared/utils/loot-roll.ts';
+import { rollBombLoot, rollTreasureLoot } from '../shared/utils/loot-roll.ts';
+import { mergeTreasures } from '../shared/config/treasures.ts';
 import { loadMapById } from '../shared/maps/map-loader.ts';
 import type { PlayerStore } from './PlayerStore.ts';
 
@@ -156,6 +157,7 @@ export class MatchRoom {
           createdAt: Date.now(),
           updatedAt: Date.now(),
           coins: 0,
+          treasures: {},
           ownedBombermen: [{
             id: `bot_bm_${i}`,
             name,
@@ -208,7 +210,7 @@ export class MatchRoom {
         y: spawn.y,
         hp: BALANCE.match.bombermanMaxHp,
         alive: true,
-        coins: 0,
+        treasures: {},
         inventory: equipped
           ? { slots: equipped.inventory.slots.map(s => (s ? { ...s } : null)) }
           : { slots: new Array(INVENTORY_SLOT_COUNT).fill(null) },
@@ -241,12 +243,14 @@ export class MatchRoom {
       const pick = pickWalkable(zone);
       if (!pick) return;
       const cfg = CHEST_CONFIG[tier];
-      const coins = seededRandInt(rng, cfg.coinRange[0], cfg.coinRange[1] + 1);
-      // Pick unique-slot count uniformly inside the configured range, then
-      // roll the loot bundle with weighted distribution (utils/loot-roll.ts).
+      // Pick unique-slot counts uniformly inside the configured ranges, then
+      // roll bomb + treasure bundles with weighted distribution
+      // (utils/loot-roll.ts).
       const slots = seededRandInt(rng, cfg.slotCount[0], cfg.slotCount[1] + 1);
       const bombs = rollBombLoot(cfg.weights, cfg.totalBombs, slots, rng);
-      chests.push({ id: `chest_${chests.length}`, tier, x: pick.x, y: pick.y, coins, bombs, opened: false });
+      const treasureSlots = seededRandInt(rng, cfg.treasureSlotCount[0], cfg.treasureSlotCount[1] + 1);
+      const treasures = rollTreasureLoot(cfg.treasureWeights, cfg.totalTreasures, treasureSlots, rng);
+      chests.push({ id: `chest_${chests.length}`, tier, x: pick.x, y: pick.y, treasures, bombs, opened: false });
     };
 
     for (const zone of this.map.chest1Zones) spawnChest(zone, 1);
@@ -308,8 +312,8 @@ export class MatchRoom {
     const me = this.state.bombermen.find(b => b.playerId === playerId);
     if (!me || !me.alive || me.escaped) return;
 
-    // Target slot must be 1..4 (slot 0 is Rock, never writable)
-    if (msg.targetSlotIndex < 1 || msg.targetSlotIndex > 4) return;
+    // Target slot must be 1..INVENTORY_SLOT_COUNT (slot 0 is Rock, never writable)
+    if (msg.targetSlotIndex < 1 || msg.targetSlotIndex > INVENTORY_SLOT_COUNT) return;
     const invIdx = msg.targetSlotIndex - 1;
 
     const stackLimit = BALANCE.match.bombSlotStackLimit;
@@ -439,7 +443,7 @@ export class MatchRoom {
 
     // Immediately persist escaped players' match-end state to their profile.
     // Without this, a player who escapes mid-match (while bots/others still
-    // alive) keeps their pre-match inventory + coins until finalize runs —
+    // alive) keeps their pre-match inventory + treasures until finalize runs —
     // which only happens when the WHOLE match ends. If finalize never runs
     // (player quits, bots keep playing), the match-end changes were lost.
     for (const ev of events) {
@@ -451,9 +455,9 @@ export class MatchRoom {
       const bm = this.state.bombermen.find(b => b.playerId === escapedPlayerId);
       if (!bm) continue;
       const ownedBomberman = profile.ownedBombermen.find(ob => ob.id === bm.bombermanId);
-      profile.coins += bm.coins;
+      mergeTreasures(profile.treasures, bm.treasures);
       // Drain so finalize() doesn't double-count if the match ends this turn.
-      bm.coins = 0;
+      bm.treasures = {};
       if (ownedBomberman) {
         ownedBomberman.inventory = {
           slots: bm.inventory.slots.map(s => (s ? { ...s } : null)),
@@ -537,8 +541,8 @@ export class MatchRoom {
       const ownedBomberman = profile.ownedBombermen.find(ob => ob.id === b.bombermanId);
 
       if (b.escaped) {
-        // Escaped: keep coins earned during the match
-        profile.coins += b.coins;
+        // Escaped: keep treasures earned during the match
+        mergeTreasures(profile.treasures, b.treasures);
 
         // Sync the match-end inventory back to the profile.
         // Spent bombs are gone, looted bombs are added.
@@ -549,7 +553,7 @@ export class MatchRoom {
         }
       } else {
         // Dead: lose the Bomberman entirely — strip from the profile roster.
-        // Coins on the Bomberman were already dropped as a body in-match.
+        // Treasures on the Bomberman were already dropped as a body in-match.
         const idx = profile.ownedBombermen.findIndex(ob => ob.id === b.bombermanId);
         if (idx >= 0) {
           profile.ownedBombermen.splice(idx, 1);
@@ -572,8 +576,8 @@ export class MatchRoom {
     this.io.to(this.id).emit('match_end', {
       endReason: this.state.endReason ?? 'all_dead',
       escapedPlayerIds: this.state.escapedPlayerIds ?? [],
-      coinsEarned: Object.fromEntries(
-        this.state.bombermen.map(b => [b.playerId, b.coins]),
+      treasuresEarned: Object.fromEntries(
+        this.state.bombermen.map(b => [b.playerId, { ...b.treasures }]),
       ),
     });
 

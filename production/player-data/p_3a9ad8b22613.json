@@ -1,8 +1,13 @@
 {
   "id": "p_3a9ad8b22613",
   "createdAt": 1775946762703,
-  "updatedAt": 1777156439123,
-  "coins": 1313,
+  "updatedAt": 1777247074429,
+  "coins": 1344,
+  "treasures": {
+    "fish": 1,
+    "books": 2,
+    "grapes": 2
+  },
   "ownedBombermen": [
     {
       "id": "owned_p_3a9ad8b22613_1777146811513_hpbr",
@@ -23,11 +28,11 @@
           },
           {
             "type": "ender_pearl",
-            "count": 5
+            "count": 4
           },
           {
             "type": "flash",
-            "count": 2
+            "count": 4
           },
           {
             "type": "bomb_wide",

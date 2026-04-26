@@ -93,7 +93,7 @@ export class TutorialMatchBackend implements MatchBackend {
     if (!this.state) return;
     const me = this.state.bombermen.find(b => b.playerId === TUTORIAL_PLAYER_ID);
     if (!me || !me.alive || me.escaped) return;
-    if (msg.targetSlotIndex < 1 || msg.targetSlotIndex > 4) return;
+    if (msg.targetSlotIndex < 1 || msg.targetSlotIndex > INVENTORY_SLOT_COUNT) return;
     const invIdx = msg.targetSlotIndex - 1;
     const stackLimit = BALANCE.match.bombSlotStackLimit;
 
@@ -359,15 +359,15 @@ export class TutorialMatchBackend implements MatchBackend {
       endTutorial: (_message) => {
         // Synthesize a MatchEnd event. MatchScene's onMatchEnd handler
         // transitions to the results screen after the usual delay.
-        const coinsEarned: Record<string, number> = {};
+        const treasuresEarned: MatchEndMsg['treasuresEarned'] = {};
         if (this.state) {
           const me = this.state.bombermen.find(b => b.playerId === TUTORIAL_PLAYER_ID);
-          coinsEarned[TUTORIAL_PLAYER_ID] = me?.coins ?? 0;
+          treasuresEarned[TUTORIAL_PLAYER_ID] = { ...(me?.treasures ?? {}) };
         }
         this.endCb?.({
           endReason: 'all_escaped',
           escapedPlayerIds: [TUTORIAL_PLAYER_ID],
-          coinsEarned,
+          treasuresEarned,
         });
       },
       spawnExclamation: (tileX, tileY, color) => {
@@ -439,7 +439,7 @@ export class TutorialMatchBackend implements MatchBackend {
       y: spawn.y,
       hp: BALANCE.match.bombermanMaxHp,
       alive: true,
-      coins: 0,
+      treasures: {},
       inventory: { slots: new Array(INVENTORY_SLOT_COUNT).fill(null) },
       bleedingTurns: 0,
       escaped: false,

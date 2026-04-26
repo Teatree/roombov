@@ -22,6 +22,15 @@ import type { BombType } from '@shared/types/bombs.ts';
 import { BOMB_CATALOG } from '@shared/config/bombs.ts';
 import { BALANCE } from '@shared/config/balance.ts';
 import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
+import { preloadTreasureIcons, TREASURE_TEXTURE_KEY, treasureIconFrame } from '../systems/TreasureIcons.ts';
+import { TreasureListWidget } from '../systems/TreasureListWidget.ts';
+import {
+  type TreasureType,
+  type TreasureBundle,
+  TREASURE_TYPES,
+  TREASURE_DISPLAY_NAMES,
+} from '@shared/config/treasures.ts';
+import type { MatchEndMsg } from '@shared/types/messages.ts';
 
 /**
  * Click targeting mode.
@@ -143,7 +152,7 @@ export class MatchScene extends Phaser.Scene {
   private phaseText!: Phaser.GameObjects.Text;
   private turnText!: Phaser.GameObjects.Text;
   private hpText!: Phaser.GameObjects.Text;
-  private coinsText!: Phaser.GameObjects.Text;
+  private treasureList!: TreasureListWidget;
   private slotRects: Phaser.GameObjects.Rectangle[] = [];
   private slotLabelTexts: Phaser.GameObjects.Text[] = [];
   private slotCountTexts: Phaser.GameObjects.Text[] = [];
@@ -236,6 +245,7 @@ export class MatchScene extends Phaser.Scene {
     this.load.image('sword_icon', 'sprites/sword_icon.png');
     // Bomb icons (safety fallback — normally loaded by BootScene)
     preloadBombIcons(this);
+    preloadTreasureIcons(this);
     // Bomberman sheets are normally loaded by BootScene, but this is a
     // safety fallback in case MatchScene is reached without Boot running.
     preloadBombermanSpritesheets(this);
@@ -844,7 +854,7 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  private transitionToResults(msg?: { endReason: string; escapedPlayerIds: string[]; coinsEarned: Record<string, number> }): void {
+  private transitionToResults(msg?: MatchEndMsg): void {
     const me = this.state?.bombermen.find(b => b.playerId === this.myPlayerId);
     // Prefer the authoritative escape list from match_end when available;
     // fall back to the per-player flag on state for the client-side-exit
@@ -874,7 +884,7 @@ export class MatchScene extends Phaser.Scene {
 
     this.scene.start('ResultsScene', {
       outcome,
-      coinsEarned: msg?.coinsEarned?.[this.myPlayerId ?? ''] ?? 0,
+      treasuresEarned: msg?.treasuresEarned?.[this.myPlayerId ?? ''] ?? {},
       turnsPlayed: this.state?.turnNumber ?? 0,
       inventory,
       kills: this.myKills,
@@ -1275,46 +1285,70 @@ export class MatchScene extends Phaser.Scene {
       }
     }
 
-    // Fourth pass: coin collection visuals.
+    // Fourth pass: treasure collection visuals. Stagger per type so the
+    // player can read each pickup separately (icon + "+N").
     if (this.mapData) {
       const ts = this.mapData.tileSize;
       for (const ev of events) {
-        if (ev.kind === 'coin_collected') {
-          const bm = this.state?.bombermen.find(b => b.playerId === ev.playerId as string);
-          // Only show coin popup if the collecting player's tile is in LOS
-          if (bm && (bm.playerId === this.myPlayerId || this.fogRenderer?.isVisible(bm.x, bm.y))) {
-            this.spawnCoinPopup(bm.x * ts + ts / 2, bm.y * ts + ts / 2 - ts * 0.5, ev.amount as number);
-          }
+        let bundle: TreasureBundle | null = null;
+        let playerId: string | null = null;
+        if (ev.kind === 'treasures_collected') {
+          bundle = ev.treasures as TreasureBundle;
+          playerId = ev.playerId as string;
+        } else if (ev.kind === 'body_looted') {
+          bundle = ev.treasures as TreasureBundle;
+          playerId = ev.playerId as string;
         }
-        if (ev.kind === 'body_looted') {
-          const bm = this.state?.bombermen.find(b => b.playerId === ev.playerId as string);
-          const coins = ev.coins as number;
-          if (bm && coins > 0 && (bm.playerId === this.myPlayerId || this.fogRenderer?.isVisible(bm.x, bm.y))) {
-            this.spawnCoinPopup(bm.x * ts + ts / 2, bm.y * ts + ts / 2 - ts * 0.5, coins);
+        if (!bundle || !playerId) continue;
+        const bm = this.state?.bombermen.find(b => b.playerId === playerId);
+        if (!bm) continue;
+        const visible = bm.playerId === this.myPlayerId || (this.fogRenderer?.isVisible(bm.x, bm.y) ?? false);
+        if (!visible) continue;
+        const baseX = bm.x * ts + ts / 2;
+        const baseY = bm.y * ts + ts / 2 - ts * 0.5;
+        let stagger = 0;
+        for (const t of TREASURE_TYPES) {
+          const amount = bundle[t] ?? 0;
+          if (amount > 0) {
+            this.spawnTreasurePopup(baseX, baseY, t, amount, stagger);
+            stagger += 80;
           }
         }
       }
     }
   }
 
-  /** Floating "+N" coin text that rises and fades out. */
-  private spawnCoinPopup(worldX: number, worldY: number, amount: number): void {
-    const popup = this.add.text(worldX, worldY, `+${amount}¢`, {
+  /** Floating "+N [icon]" treasure popup that rises and fades out. Staggered
+   *  by `delayMs` so multi-type pickups appear in sequence. */
+  private spawnTreasurePopup(worldX: number, worldY: number, type: TreasureType, amount: number, delayMs: number): void {
+    const POPUP_ICON = 18;
+    const icon = this.add.image(worldX - 14, worldY, TREASURE_TEXTURE_KEY, treasureIconFrame(type))
+      .setDisplaySize(POPUP_ICON, POPUP_ICON)
+      .setDepth(500)
+      .setAlpha(0);
+    const text = this.add.text(worldX + 4, worldY, `+${amount}`, {
       fontSize: '16px',
       color: '#ffd944',
       fontFamily: 'monospace',
       fontStyle: 'bold',
-      stroke: '#553300',
+      stroke: '#000000',
       strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(500);
+    }).setOrigin(0, 0.5).setDepth(500).setAlpha(0);
 
     this.tweens.add({
-      targets: popup,
+      targets: [icon, text],
+      alpha: 1,
+      duration: 120,
+      delay: delayMs,
+    });
+    this.tweens.add({
+      targets: [icon, text],
       y: worldY - 40,
       alpha: 0,
       duration: 1200,
+      delay: delayMs + 120,
       ease: 'Cubic.easeOut',
-      onComplete: () => popup.destroy(),
+      onComplete: () => { icon.destroy(); text.destroy(); },
     });
   }
 
@@ -1924,8 +1958,8 @@ export class MatchScene extends Phaser.Scene {
       if (Math.abs(screenX - W / 2) <= 100) return { kind: 'turnLimit' };
       // hp
       if (screenX >= W - 230 && screenX <= W - 130) return { kind: 'hp' };
-      // coin
-      if (screenX >= W - 120 && screenX <= W - 20) return { kind: 'coin' };
+      // treasure list (top-right)
+      if (screenX >= W - 120 && screenX <= W - 20) return { kind: 'treasureList' };
     }
 
     const hudSlot = this.hitTestHud(screenX, screenY);
@@ -2025,8 +2059,13 @@ export class MatchScene extends Phaser.Scene {
         return { x: 170, y: 12, w: 120, h: 28, space: 'hud' };
       case 'hp':
         return { x: W - 230, y: 12, w: 100, h: 28, space: 'hud' };
-      case 'coinCounter':
-        return { x: W - 120, y: 12, w: 100, h: 28, space: 'hud' };
+      case 'treasureList': {
+        const r = this.treasureList?.getRect();
+        if (r && r.h > 0) return { x: r.x - 4, y: r.y - 4, w: r.w + 8, h: r.h + 8, space: 'hud' };
+        // Empty list: highlight the anchor area so the tutorial dialogue
+        // still has somewhere to point at on first encounter.
+        return { x: W - 120, y: 8, w: 100, h: 28, space: 'hud' };
+      }
       case 'bombTray': {
         // 5 slots of SLOT_SIZE (64) + 4 gaps of SLOT_GAP (8), bottom-centered.
         const totalW = SLOT_COUNT * SLOT_SIZE + (SLOT_COUNT - 1) * SLOT_GAP;
@@ -2153,9 +2192,18 @@ export class MatchScene extends Phaser.Scene {
       fontSize: '16px', color: '#ff6666', fontFamily: 'monospace', fontStyle: 'bold',
     }).setDepth(1001));
 
-    this.coinsText = this.hud(this.add.text(width - 100, 14, '0¢', {
-      fontSize: '16px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setDepth(1001));
+    // Treasure list — vertical, top-right, fills as the player picks up
+    // treasures during the match. Coins indicator removed: in-match
+    // currency is now treasures only. Icons render at native 32×32 in the
+    // HUD; tweak `iconScale` to taste.
+    this.treasureList = new TreasureListWidget(this, {
+      x: width - 20,
+      y: 14,
+      anchor: 'top-right',
+      iconScale: 1.0,
+      fontSize: 16,
+      depth: 1001,
+    });
 
     // Bomb slot tray
     const trayWidth = SLOT_COUNT * SLOT_SIZE + (SLOT_COUNT - 1) * SLOT_GAP;
@@ -2264,7 +2312,7 @@ export class MatchScene extends Phaser.Scene {
       const displayedHp = this.bombermanSpriteSystem?.getDisplayedHp(me.playerId) ?? me.hp;
       this.hpText.setText(`HP ${displayedHp}/${BALANCE.match.bombermanMaxHp}`);
       this.hpText.setColor('#ff6666');
-      this.coinsText.setText(`${me.coins}¢`);
+      this.treasureList.setBundle(me.treasures);
       this.renderBombSlots(me);
       this.renderLootPanel(me);
     } else {

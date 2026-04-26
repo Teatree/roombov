@@ -360,7 +360,7 @@ export class TutorialDirector {
             tier: step.tier,
             x: step.x,
             y: step.y,
-            coins: step.coins,
+            treasures: { ...step.treasures },
             bombs: step.bombs.map(b => ({ ...b })),
             opened: false,
           });
@@ -384,7 +384,7 @@ export class TutorialDirector {
             y: step.y,
             hp: step.hp ?? 2,
             alive: true,
-            coins: 0,
+            treasures: {},
             inventory: { slots },
             bleedingTurns: 0,
             escaped: false,

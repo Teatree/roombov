@@ -1,4 +1,5 @@
 import type { BombType } from '../types/bombs.ts';
+import type { TreasureType, TreasureBundle } from '../config/treasures.ts';
 
 /**
  * Roll a bomb-loot bundle: pick `slotCount` unique bomb types weighted by
@@ -32,6 +33,30 @@ export function rollBombLoot(
   const result: Array<{ type: BombType; count: number }> = [];
   for (let i = 0; i < picks.length; i++) {
     if (counts[i] > 0) result.push({ type: picks[i][0], count: counts[i] });
+  }
+  return result;
+}
+
+/**
+ * Roll a treasure bundle using the same algorithm as `rollBombLoot`. Returns
+ * a sparse map (TreasureBundle) keyed by type. Types with zero count are
+ * omitted. Determinism + edge cases mirror the bomb version.
+ */
+export function rollTreasureLoot(
+  weights: Partial<Record<TreasureType, number>>,
+  totalTreasures: number,
+  slotCount: number,
+  rng: () => number,
+): TreasureBundle {
+  const available: Array<[TreasureType, number]> = (Object.entries(weights) as [TreasureType, number][])
+    .filter(([, w]) => (w ?? 0) > 0);
+  if (available.length === 0 || totalTreasures <= 0 || slotCount <= 0) return {};
+
+  const picks = pickWeightedWithoutReplacement(available, slotCount, rng);
+  const counts = distributeByWeight(totalTreasures, picks.map(([, w]) => w));
+  const result: TreasureBundle = {};
+  for (let i = 0; i < picks.length; i++) {
+    if (counts[i] > 0) result[picks[i][0]] = counts[i];
   }
   return result;
 }

@@ -6,6 +6,7 @@
 
 import type { OwnedBomberman } from './bomberman.ts';
 import type { BombType } from './bombs.ts';
+import type { TreasureBundle } from '../config/treasures.ts';
 
 export interface PlayerProfile {
   id: string;
@@ -15,6 +16,11 @@ export interface PlayerProfile {
   updatedAt: number;
   /** Soft currency. */
   coins: number;
+  /**
+   * Persistent treasure stash. Accumulates across matches (each escaped
+   * match merges its haul in). Spent at Gambler Street.
+   */
+  treasures: TreasureBundle;
   /**
    * Bombermen the player owns. Order is stable (roster display).
    * Max length enforced at BALANCE.player.ownedBombermenCap.
@@ -36,6 +42,7 @@ export function createEmptyProfile(id: string): PlayerProfile {
     createdAt: now,
     updatedAt: now,
     coins: 500,
+    treasures: {},
     ownedBombermen: [],
     equippedBombermanId: null,
     bombStockpile: {},

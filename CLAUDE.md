@@ -75,7 +75,9 @@ Rendering is split into systems under `src/client/systems/` (`MapRenderer`, `Bom
 
 ### Data model
 
-See `src/shared/types/match.ts` for the full `MatchState` shape. Key nouns: `BombermanState`, `Chest`, `DoorInstance`, `DroppedBody`, `ActiveFlare`, `BombInstance`, `FireTile`, `LightTile`, `SmokeCloud`, `Mine`, `PhosphorusPending`. All bomb behavior is data-driven from `src/shared/config/bombs.ts` + `BOMB_CATALOG`; balance constants in `src/shared/config/balance.ts`; chest loot in `src/shared/config/chests.ts`.
+See `src/shared/types/match.ts` for the full `MatchState` shape. Key nouns: `BombermanState`, `Chest`, `DoorInstance`, `DroppedBody`, `ActiveFlare`, `BombInstance`, `FireTile`, `LightTile`, `SmokeCloud`, `Mine`, `PhosphorusPending`. All bomb behavior is data-driven from `src/shared/config/bombs.ts` + `BOMB_CATALOG`; balance constants in `src/shared/config/balance.ts`; chest loot (bombs **and** treasures) in `src/shared/config/chests.ts`.
+
+**Treasures** are the in-match currency picked up from chests + dead bodies (10 types, defined in `src/shared/config/treasures.ts`). Stored as a sparse `TreasureBundle = Partial<Record<TreasureType, number>>` on `Chest`, `DroppedBody`, `BombermanState`, and `PlayerProfile`. Rolled with `rollTreasureLoot` (mirrors `rollBombLoot` — pick K unique types, distribute total by weight). Persistent profile stash is shown by `TreasureListWidget` in MainMenu, MatchScene HUD (top-right), Results, and Gambler Street. Coins (`PlayerProfile.coins`) remain the soft currency for shops but are **not** earned in-match.
 
 Maps are JSON under `public/maps/`, authored in Tiled and converted via `npm run convert-map` (`tools/tiled-to-roombov.ts`). The pipeline expects a `Collision` layer.
 
