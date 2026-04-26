@@ -11,8 +11,9 @@ import Phaser from 'phaser';
 import { NetworkManager } from '../NetworkManager.ts';
 import { ProfileStore, UiAnimLock } from '../ClientState.ts';
 import { createShopBombermanSprite, pickRandomUiAnimation } from './BombermanAnimations.ts';
-import { bombIconFrame, createBombLabelOverlay } from './BombIcons.ts';
+import { bombIconFrame } from './BombIcons.ts';
 import type { OwnedBomberman } from '@shared/types/bomberman.ts';
+import { INVENTORY_SLOT_COUNT } from '@shared/types/bomberman.ts';
 
 const SELECTOR_CARD_W = 140;
 const SELECTOR_CARD_H = 180;
@@ -102,15 +103,13 @@ export class BombermanSelector {
     const iconStartX = -totalIconW / 2 + iconSize / 2;
     const iconY = 16;
 
-    for (let si = 0; si < 4; si++) {
+    for (let si = 0; si < INVENTORY_SLOT_COUNT; si++) {
       const slot = slots[si];
       const ix = iconStartX + si * (iconSize + iconGap);
       if (slot) {
         const icon = this.scene.add.image(ix, iconY, 'bomb_icons', bombIconFrame(slot.type))
           .setDisplaySize(iconSize, iconSize);
         container.add(icon);
-        const iconLabel = createBombLabelOverlay(this.scene, ix, iconY, slot.type, iconSize);
-        if (iconLabel) container.add(iconLabel);
         container.add(this.scene.add.text(ix, iconY + 12, `${slot.count}`, {
           fontSize: '8px', color: '#ffd944', fontFamily: 'monospace',
         }).setOrigin(0.5, 0));

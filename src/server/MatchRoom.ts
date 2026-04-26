@@ -17,7 +17,7 @@ import type { ClientToServerEvents, ServerToClientEvents } from '../shared/types
 import type { MatchConfig, MatchState, PlayerAction, Chest, DroppedBody } from '../shared/types/match.ts';
 import type { LootBombMsg } from '../shared/types/messages.ts';
 import type { BombermanState } from '../shared/types/bomberman.ts';
-import { CHARACTER_VARIANTS } from '../shared/types/bomberman.ts';
+import { CHARACTER_VARIANTS, INVENTORY_SLOT_COUNT } from '../shared/types/bomberman.ts';
 import type { MapData } from '../shared/types/map.ts';
 import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import { BALANCE } from '../shared/config/balance.ts';
@@ -28,6 +28,7 @@ import { rollBombermanName } from '../shared/config/bomberman-names.ts';
 import { TIER_CONFIG } from '../shared/config/bomberman-tiers.ts';
 import { resolveTurn } from '../shared/systems/TurnResolver.ts';
 import { createSeededRandom, seededRandInt, seededShuffle } from '../shared/utils/seeded-random.ts';
+import { rollBombLoot } from '../shared/utils/loot-roll.ts';
 import { loadMapById } from '../shared/maps/map-loader.ts';
 import type { PlayerStore } from './PlayerStore.ts';
 
@@ -137,8 +138,8 @@ export class MatchRoom {
       const sorted = Object.entries(counts)
         .filter(([, c]) => (c ?? 0) > 0)
         .sort(([, a], [, b]) => (b ?? 0) - (a ?? 0)) as [BombType, number][];
-      const slots: (null | { type: BombType; count: number })[] = [null, null, null, null];
-      for (let si = 0; si < Math.min(4, sorted.length); si++) {
+      const slots: (null | { type: BombType; count: number })[] = new Array(INVENTORY_SLOT_COUNT).fill(null);
+      for (let si = 0; si < Math.min(INVENTORY_SLOT_COUNT, sorted.length); si++) {
         slots[si] = { type: sorted[si][0], count: Math.min(sorted[si][1], BALANCE.match.bombSlotStackLimit) };
       }
 
@@ -210,7 +211,7 @@ export class MatchRoom {
         coins: 0,
         inventory: equipped
           ? { slots: equipped.inventory.slots.map(s => (s ? { ...s } : null)) }
-          : { slots: [null, null, null, null] },
+          : { slots: new Array(INVENTORY_SLOT_COUNT).fill(null) },
         bleedingTurns: 0,
         escaped: false,
         rushCooldown: 0,
@@ -236,27 +237,15 @@ export class MatchRoom {
       return candidates.length > 0 ? candidates[seededRandInt(rng, 0, candidates.length)] : null;
     };
 
-    const rollBomb = (tier: 1 | 2): BombType => {
-      const cfg = CHEST_CONFIG[tier];
-      const entries = Object.entries(cfg.weights).filter(([, w]) => (w ?? 0) > 0) as [BombType, number][];
-      const total = entries.reduce((s, [, w]) => s + w, 0);
-      let roll = rng() * total;
-      for (const [type, w] of entries) {
-        roll -= w;
-        if (roll <= 0) return type;
-      }
-      return entries[entries.length - 1][0];
-    };
-
     const spawnChest = (zone: { x: number; y: number; w: number; h: number }, tier: 1 | 2): void => {
       const pick = pickWalkable(zone);
       if (!pick) return;
       const cfg = CHEST_CONFIG[tier];
       const coins = seededRandInt(rng, cfg.coinRange[0], cfg.coinRange[1] + 1);
-      const bombs: Array<{ type: BombType; count: number }> = [];
-      for (let i = 0; i < cfg.bombCount; i++) {
-        bombs.push({ type: rollBomb(tier), count: cfg.bombStackSize });
-      }
+      // Pick unique-slot count uniformly inside the configured range, then
+      // roll the loot bundle with weighted distribution (utils/loot-roll.ts).
+      const slots = seededRandInt(rng, cfg.slotCount[0], cfg.slotCount[1] + 1);
+      const bombs = rollBombLoot(cfg.weights, cfg.totalBombs, slots, rng);
       chests.push({ id: `chest_${chests.length}`, tier, x: pick.x, y: pick.y, coins, bombs, opened: false });
     };
 

@@ -3,6 +3,7 @@ import type {
 } from './types.ts';
 import type { MatchState, PlayerAction } from '@shared/types/match.ts';
 import { TUTORIAL_PLAYER_ID } from '../backends/TutorialMatchBackend.ts';
+import { INVENTORY_SLOT_COUNT } from '@shared/types/bomberman.ts';
 
 /**
  * Walks a TutorialStep[] top to bottom. For each step it either performs an
@@ -369,7 +370,7 @@ export class TutorialDirector {
       case 'spawnBot':
         host.mutateState(s => {
           const slots: Array<{ type: import('@shared/types/bombs.ts').BombType; count: number } | null> =
-            [null, null, null, null];
+            new Array(INVENTORY_SLOT_COUNT).fill(null);
           for (const item of step.inventory ?? []) {
             slots[item.slot] = { type: item.type, count: item.count };
           }
@@ -407,7 +408,7 @@ export class TutorialDirector {
         // Action convention: slotIndex 0 = rock (no inventory entry),
         // 1..4 → inventory.slots[0..3]. autoEquip only makes sense for the
         // inventory slots; rock is always available on every bomberman.
-        if (autoEquip && bombType && step.slotIndex >= 1 && step.slotIndex <= 4) {
+        if (autoEquip && bombType && step.slotIndex >= 1 && step.slotIndex <= INVENTORY_SLOT_COUNT) {
           const invIdx = step.slotIndex - 1;
           host.mutateState(s => {
             const bot = s.bombermen.find(b => b.playerId === step.botId);

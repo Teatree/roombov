@@ -5,6 +5,7 @@ import { BALANCE } from '@shared/config/balance.ts';
 import type { MapData } from '@shared/types/map.ts';
 import type { MatchState, PlayerAction } from '@shared/types/match.ts';
 import type { BombermanState } from '@shared/types/bomberman.ts';
+import { INVENTORY_SLOT_COUNT } from '@shared/types/bomberman.ts';
 import type { LootBombMsg, MatchEndMsg } from '@shared/types/messages.ts';
 import { TutorialDirector } from '../tutorial/TutorialDirector.ts';
 import { TUTORIAL_SCRIPT } from '../tutorial/tutorial-script.ts';
@@ -439,7 +440,7 @@ export class TutorialMatchBackend implements MatchBackend {
       hp: BALANCE.match.bombermanMaxHp,
       alive: true,
       coins: 0,
-      inventory: { slots: [null, null, null, null] },
+      inventory: { slots: new Array(INVENTORY_SLOT_COUNT).fill(null) },
       bleedingTurns: 0,
       escaped: false,
       rushCooldown: 0,

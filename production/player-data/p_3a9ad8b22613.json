@@ -1,45 +1,45 @@
 {
   "id": "p_3a9ad8b22613",
   "createdAt": 1775946762703,
-  "updatedAt": 1777073248317,
-  "coins": 801,
+  "updatedAt": 1777156439123,
+  "coins": 1313,
   "ownedBombermen": [
     {
-      "id": "owned_p_3a9ad8b22613_1777072422920_xt3x",
-      "name": "Regan",
+      "id": "owned_p_3a9ad8b22613_1777146811513_hpbr",
+      "name": "Doyle",
       "tier": "free",
       "colors": {
-        "shirt": 14107258,
-        "pants": 7678090,
-        "hair": 9450674
+        "shirt": 4380486,
+        "pants": 9069352,
+        "hair": 11678790
       },
-      "tint": 8832496,
-      "character": "char5",
+      "tint": 15821239,
+      "character": "char3",
       "inventory": {
         "slots": [
           {
+            "type": "bomb",
+            "count": 5
+          },
+          {
+            "type": "ender_pearl",
+            "count": 5
+          },
+          {
+            "type": "flash",
+            "count": 2
+          },
+          {
             "type": "bomb_wide",
-            "count": 4
-          },
-          {
-            "type": "banana",
-            "count": 5
-          },
-          {
-            "type": "flare",
-            "count": 5
-          },
-          {
-            "type": "motion_detector_flare",
-            "count": 3
+            "count": 2
           }
         ]
       },
-      "purchasedAt": 1777072422920,
-      "sourceTemplateId": "cycle_1777072421728_1_free"
+      "purchasedAt": 1777146811513,
+      "sourceTemplateId": "cycle_1777146810883_1_free"
     }
   ],
-  "equippedBombermanId": "owned_p_3a9ad8b22613_1777072422920_xt3x",
+  "equippedBombermanId": "owned_p_3a9ad8b22613_1777146811513_hpbr",
   "bombStockpile": {
     "flare": 10,
     "delay_tricky": 8,

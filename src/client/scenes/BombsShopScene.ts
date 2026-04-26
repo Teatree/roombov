@@ -7,7 +7,8 @@ import { BombermanSelector } from '../systems/BombermanSelector.ts';
 import type { BombType } from '@shared/types/bombs.ts';
 import type { BombsCatalogEntry } from '@shared/types/messages.ts';
 import { BALANCE } from '@shared/config/balance.ts';
-import { preloadBombIcons, bombIconFrame, createBombLabelOverlay } from '../systems/BombIcons.ts';
+import { INVENTORY_SLOT_COUNT } from '@shared/types/bomberman.ts';
+import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
 
 /**
  * Bombs Shop scene.
@@ -151,8 +152,6 @@ export class BombsShopScene extends Phaser.Scene {
       const icon = this.add.image(col1X + 22, y + 19, 'bomb_icons', bombIconFrame(entry.type))
         .setDisplaySize(28, 28);
       catalogCol.add(icon);
-      const catLabel = createBombLabelOverlay(this, col1X + 22, y + 19, entry.type, 28);
-      if (catLabel) catalogCol.add(catLabel);
 
       catalogCol.add(this.add.text(col1X + 42, y + 8, entry.name, {
         fontSize: '13px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
@@ -209,8 +208,6 @@ export class BombsShopScene extends Phaser.Scene {
         const sIcon = this.add.image(col2X + 22, y + 17, 'bomb_icons', bombIconFrame(type))
           .setDisplaySize(24, 24);
         stockCol.add(sIcon);
-        const stockLabel = createBombLabelOverlay(this, col2X + 22, y + 17, type, 24);
-        if (stockLabel) stockCol.add(stockLabel);
         const label = this.add.text(col2X + 40, y + 17, `${name}  x${count}`, {
           fontSize: '13px', color: '#ffffff', fontFamily: 'monospace',
         }).setOrigin(0, 0.5);
@@ -256,11 +253,11 @@ export class BombsShopScene extends Phaser.Scene {
       );
       eqCol.add(preview);
 
-      // Slot rows: 4 custom slots + 1 fixed Rock slot
+      // Custom slot rows + 1 fixed Rock slot
       const slotsStartY = topY + 150;
       const slotH = 44;
 
-      for (let slotIdx = 0; slotIdx < 4; slotIdx++) {
+      for (let slotIdx = 0; slotIdx < INVENTORY_SLOT_COUNT; slotIdx++) {
         const slot = equipped.inventory.slots[slotIdx];
         const y = slotsStartY + slotIdx * (slotH + 6);
 
@@ -277,8 +274,6 @@ export class BombsShopScene extends Phaser.Scene {
           const eqIcon = this.add.image(col3X + 26, y + slotH / 2, 'bomb_icons', bombIconFrame(slot.type))
             .setDisplaySize(28, 28);
           eqCol.add(eqIcon);
-          const eqLabel = createBombLabelOverlay(this, col3X + 26, y + slotH / 2, slot.type, 28);
-          if (eqLabel) eqCol.add(eqLabel);
           eqCol.add(this.add.text(col3X + 46, y + 10, `SLOT ${slotIdx + 1}: ${name}`, {
             fontSize: '12px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
           }));

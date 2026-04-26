@@ -25,7 +25,7 @@ import type {
   CosmeticColors,
   OwnedBomberman,
 } from '../shared/types/bomberman.ts';
-import { CHARACTER_VARIANTS } from '../shared/types/bomberman.ts';
+import { CHARACTER_VARIANTS, INVENTORY_SLOT_COUNT } from '../shared/types/bomberman.ts';
 import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import {
   SHOP_CYCLE_COMPOSITION,
@@ -34,6 +34,7 @@ import {
 } from '../shared/config/bomberman-tiers.ts';
 import { BALANCE } from '../shared/config/balance.ts';
 import { createSeededRandom, seededRandInt } from '../shared/utils/seeded-random.ts';
+import { rollBombLoot } from '../shared/utils/loot-roll.ts';
 import type { PlayerStore } from './PlayerStore.ts';
 
 export interface BombermanShopCycle {
@@ -106,35 +107,13 @@ export class BombermanShopService {
       price = Math.round(raw / 5) * 5;
     }
 
-    // Starting inventory: roll `totalBombs` units against weights, then pack
-    // into 4 stack-limited slots.
-    const weightEntries = (Object.entries(cfg.weights) as [BombType, number][])
-      .filter(([, w]) => (w ?? 0) > 0);
-    if (weightEntries.length === 0) throw new Error(`Tier ${tier} has no bomb weights`);
-
-    // First: pick which unique bomb types this Bomberman will carry
-    // (limited to maxUniqueSlots). Weighted random selection without replacement.
-    const maxSlots = cfg.maxUniqueSlots ?? 4;
-    const chosenTypes: BombType[] = [];
-    const available = [...weightEntries];
-    for (let s = 0; s < Math.min(maxSlots, available.length); s++) {
-      const totalW = available.reduce((sum, [, w]) => sum + w, 0);
-      let roll = rng() * totalW;
-      let idx = 0;
-      for (let j = 0; j < available.length; j++) {
-        roll -= available[j][1];
-        if (roll <= 0) { idx = j; break; }
-      }
-      chosenTypes.push(available[idx][0]);
-      available.splice(idx, 1); // remove to prevent duplicates
-    }
-
-    // Second: distribute totalBombs among the chosen types (uniform random)
+    // Starting inventory: pick unique bomb types weighted, then distribute
+    // totalBombs proportionally to those weights (largest-remainder rule).
+    // Same algorithm as chests — see utils/loot-roll.ts.
+    const rolled = rollBombLoot(cfg.weights, cfg.totalBombs, cfg.maxUniqueSlots, rng);
+    if (rolled.length === 0) throw new Error(`Tier ${tier} produced empty inventory`);
     const counts: Partial<Record<BombType, number>> = {};
-    for (let i = 0; i < cfg.totalBombs; i++) {
-      const picked = chosenTypes[Math.floor(rng() * chosenTypes.length)];
-      counts[picked] = (counts[picked] ?? 0) + 1;
-    }
+    for (const r of rolled) counts[r.type] = r.count;
 
     const inventory = packInventory(counts);
 
@@ -237,7 +216,7 @@ function hashString(s: string): number {
  */
 function packInventory(counts: Partial<Record<BombType, number>>): BombInventory {
   const stackLimit = BALANCE.match.bombSlotStackLimit;
-  const slots: (BombSlot | null)[] = [null, null, null, null];
+  const slots: (BombSlot | null)[] = new Array(INVENTORY_SLOT_COUNT).fill(null);
   let slotIdx = 0;
 
   const types = Object.entries(counts).filter(([, c]) => c && c > 0) as [BombType, number][];

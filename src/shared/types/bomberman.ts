@@ -46,13 +46,19 @@ export interface BombSlot {
   count: number;
 }
 
+/** Number of custom inventory slots a Bomberman carries (HUD shows this + 1
+ *  fixed Rock slot at index 0). Bump this constant to change carry capacity
+ *  everywhere — server inventory init, packing, loot panel, HUD, and tutorial
+ *  validators all read from it. */
+export const INVENTORY_SLOT_COUNT = 5;
+
 export interface BombInventory {
-  /** 4 custom slots (empty = null). */
+  /** Custom slots (empty = null). Length always equals INVENTORY_SLOT_COUNT. */
   slots: (BombSlot | null)[];
 }
 
 export function emptyInventory(): BombInventory {
-  return { slots: [null, null, null, null] };
+  return { slots: new Array(INVENTORY_SLOT_COUNT).fill(null) };
 }
 
 /**

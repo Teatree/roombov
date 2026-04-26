@@ -4,6 +4,8 @@ import type { MatchBackend } from '../backends/MatchBackend.ts';
 import { SocketMatchBackend } from '../backends/SocketMatchBackend.ts';
 import { TutorialMatchBackend, TUTORIAL_PLAYER_ID } from '../backends/TutorialMatchBackend.ts';
 import type { TutorialOverlayScene } from './TutorialOverlayScene.ts';
+import type { TooltipScene } from './TooltipScene.ts';
+import type { TooltipKey } from '../tooltip/tooltipData.ts';
 import { MapRenderer, preloadTiledMap } from '../systems/MapRenderer.ts';
 import { FogRenderer } from '../systems/FogRenderer.ts';
 import { BombRenderer, decalDecayAlpha } from '../systems/BombRenderer.ts';
@@ -15,10 +17,11 @@ import { findPath, type PathTile } from '@shared/systems/Pathfinding.ts';
 import type { MapData } from '@shared/types/map.ts';
 import type { MatchState } from '@shared/types/match.ts';
 import type { BombermanState } from '@shared/types/bomberman.ts';
+import { INVENTORY_SLOT_COUNT } from '@shared/types/bomberman.ts';
 import type { BombType } from '@shared/types/bombs.ts';
 import { BOMB_CATALOG } from '@shared/config/bombs.ts';
 import { BALANCE } from '@shared/config/balance.ts';
-import { preloadBombIcons, bombIconFrame, bombNeedsLabel, bombShortLabel } from '../systems/BombIcons.ts';
+import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
 
 /**
  * Click targeting mode.
@@ -34,7 +37,7 @@ type InputMode =
 
 const SLOT_SIZE = 64;
 const SLOT_GAP = 8;
-const SLOT_COUNT = 5;
+const SLOT_COUNT = 1 + INVENTORY_SLOT_COUNT; // Rock + custom inventory
 
 /**
  * Active match scene.
@@ -153,13 +156,6 @@ export class MatchScene extends Phaser.Scene {
   /** Small sword icon shown on the left of the bomb tray while the local
    *  bomberman is in Melee Trap Mode. Disappears instantly on exit. */
   private meleeHudIcon: Phaser.GameObjects.Image | null = null;
-  /**
-   * Per-slot placeholder label text. For new bomb types (no dedicated icon art
-   * yet) we draw the bomb's short name over the reused legacy icon so players
-   * can tell them apart. Empty string + invisible when the slot holds a bomb
-   * whose real icon is already in the sheet.
-   */
-  private slotNameTexts: Phaser.GameObjects.Text[] = [];
   private errorText!: Phaser.GameObjects.Text;
 
   // Loot panel — appears above the bomb tray when standing on loot
@@ -412,6 +408,9 @@ export class MatchScene extends Phaser.Scene {
       this.scene.launch('TutorialOverlayScene', { matchScene: this, backend: this.backend });
     }
 
+    // Hover tooltip overlay — runs in both network and tutorial mode.
+    if (!this.scene.isActive('TooltipScene')) this.scene.launch('TooltipScene');
+
     // Left-click = game actions. Middle/right = manual camera pan: first
     // press also flips `cameraManualOverride` on, which disables the
     // per-frame auto-centering in update() for the rest of the match.
@@ -456,6 +455,7 @@ export class MatchScene extends Phaser.Scene {
           this.hoveredTileY = null;
         }
       }
+      this.refreshTooltip(pointer.x, pointer.y);
       if (!this.cameraDragging) return;
       const dx = pointer.x - this.cameraDragStartX;
       const dy = pointer.y - this.cameraDragStartY;
@@ -465,6 +465,7 @@ export class MatchScene extends Phaser.Scene {
     });
 
     this.input.on('pointerup', () => { this.cameraDragging = false; });
+    this.input.on('gameout', () => this.getTooltipScene()?.setKey(null));
 
     // Suppress the browser context menu so right-drag works cleanly.
     this.game.canvas.addEventListener('contextmenu', this.preventContext);
@@ -483,6 +484,7 @@ export class MatchScene extends Phaser.Scene {
       kb.on('keydown-THREE', () => this.onSlotClicked(2));
       kb.on('keydown-FOUR', () => this.onSlotClicked(3));
       kb.on('keydown-FIVE', () => this.onSlotClicked(4));
+      kb.on('keydown-SIX', () => this.onSlotClicked(5));
       kb.on('keydown-ESC', () => {
         this.inputMode = { kind: 'idle' };
         this.sendAction({ kind: 'idle' });
@@ -500,6 +502,7 @@ export class MatchScene extends Phaser.Scene {
     if (this.mode === 'tutorial' && this.scene.isActive('TutorialOverlayScene')) {
       this.scene.stop('TutorialOverlayScene');
     }
+    if (this.scene.isActive('TooltipScene')) this.scene.stop('TooltipScene');
     this.mapRenderer?.destroy();
     this.mapRenderer = null;
     this.fogRenderer?.destroy();
@@ -1885,6 +1888,125 @@ export class MatchScene extends Phaser.Scene {
     this.cameraTutorialLocked = locked;
   }
 
+  // ============================================================
+  // Tooltip
+  // ============================================================
+
+  private getTooltipScene(): TooltipScene | null {
+    const sc = this.scene.get('TooltipScene') as TooltipScene | null;
+    return sc && this.scene.isActive('TooltipScene') ? sc : null;
+  }
+
+  /**
+   * Recompute the hover-tooltip key from the current pointer screen position
+   * and dispatch to TooltipScene. Cheap to call every pointermove — the
+   * scene does its own debouncing.
+   */
+  private refreshTooltip(screenX: number, screenY: number): void {
+    const tip = this.getTooltipScene();
+    if (!tip) return;
+    tip.setKey(this.computeTooltipKey(screenX, screenY));
+  }
+
+  /**
+   * Inspect HUD rects and the hovered world tile and decide which tooltip
+   * (if any) to show. Returns null when nothing meaningful is under the cursor.
+   */
+  private computeTooltipKey(screenX: number, screenY: number): TooltipKey | null {
+    const me = this.myBomberman();
+    const W = this.scale.width;
+
+    // ---- HUD hit tests (top bar + bomb tray) ----
+    if (screenY >= 0 && screenY <= 48) {
+      // phase indicator + timer (left)
+      if (screenX >= 12 && screenX <= 290) return { kind: 'turnsTicks' };
+      // turn counter (centered around W/2)
+      if (Math.abs(screenX - W / 2) <= 100) return { kind: 'turnLimit' };
+      // hp
+      if (screenX >= W - 230 && screenX <= W - 130) return { kind: 'hp' };
+      // coin
+      if (screenX >= W - 120 && screenX <= W - 20) return { kind: 'coin' };
+    }
+
+    const hudSlot = this.hitTestHud(screenX, screenY);
+    if (hudSlot >= 0) {
+      if (hudSlot === 0) return { kind: 'bombSlot', bombType: 'rock' };
+      const slot = me?.inventory.slots[hudSlot - 1];
+      if (!slot) return null; // empty slot — no tooltip
+      return { kind: 'bombSlot', bombType: slot.type };
+    }
+
+    // Loot panel item (when standing on a chest/body)
+    const lootIdx = this.hitTestLootPanel(screenX, screenY);
+    if (lootIdx >= 0 && me) {
+      const lootType = this.lootSlotBombType(me, lootIdx);
+      if (lootType) return { kind: 'lootBomb', bombType: lootType };
+    }
+
+    // ---- World tile ----
+    if (!this.mapData || !this.state) return null;
+    const ts = this.mapData.tileSize;
+    const wp = this.cameras.main.getWorldPoint(screenX, screenY);
+    const tx = Math.floor(wp.x / ts);
+    const ty = Math.floor(wp.y / ts);
+    if (tx < 0 || ty < 0 || tx >= this.mapData.width || ty >= this.mapData.height) return null;
+
+    // If a bomb slot is armed (selectedSlot) and we're hovering a tile,
+    // produce a contextual targeting tooltip rather than the world-tile one.
+    if (this.selectedSlot !== null) {
+      const bt: BombType = this.selectedSlot === 0
+        ? 'rock'
+        : (me?.inventory.slots[this.selectedSlot - 1]?.type ?? 'rock');
+      switch (bt) {
+        case 'ender_pearl': return { kind: 'targetTeleport' };
+        case 'fart_escape': return { kind: 'targetSmoke' };
+        case 'flare':       return { kind: 'targetFlare' };
+        default:            return { kind: 'targetThrow', bombType: bt };
+      }
+    }
+
+    // Fog: if the tile is entirely undiscovered, suggest exploring.
+    const fog = this.fogRenderer;
+    if (fog && !fog.isVisible(tx, ty) && !fog.isDiscovered(tx, ty)) {
+      return { kind: 'tileFog' };
+    }
+
+    // Escape hatch
+    for (const e of this.mapData.escapeTiles) {
+      if (e.x === tx && e.y === ty) return { kind: 'tileHatch' };
+    }
+    // Chest
+    for (const c of this.state.chests) {
+      if (c.x === tx && c.y === ty) return { kind: 'tileChest' };
+    }
+    // Body
+    for (const b of this.state.bodies) {
+      if (b.x === tx && b.y === ty) return { kind: 'tileBody' };
+    }
+    // Door
+    for (const d of this.state.doors) {
+      for (const t of d.tiles) {
+        if (t.x === tx && t.y === ty) return { kind: 'tileDoor' };
+      }
+    }
+
+    const tile = this.mapData.grid[ty]?.[tx];
+    const walkable = tile === 0; // TileType.FLOOR
+    if (!walkable) return { kind: 'tileObstacle' };
+
+    // Decals: count which kinds of marks are on this floor tile.
+    const key = `${tx},${ty}`;
+    const hasBlood = this.bloodDecals.has(key);
+    const hasExplosion = this.bombRenderer?.scorchKeys.has(key) ?? false;
+    const hasPearl = this.bombRenderer?.pearlKeys.has(key) ?? false;
+    const decalCount = (hasBlood ? 1 : 0) + (hasExplosion ? 1 : 0) + (hasPearl ? 1 : 0);
+    if (decalCount >= 2) return { kind: 'tileWalkableMess' };
+    if (hasPearl)        return { kind: 'tileWalkablePearl' };
+    if (hasBlood)        return { kind: 'tileWalkableBlood' };
+    if (hasExplosion)    return { kind: 'tileWalkableExplosion' };
+    return { kind: 'tileWalkable' };
+  }
+
   /**
    * Resolve a symbolic HighlightTarget into a screen-space rect. Called by
    * the overlay every frame while a highlight is active — keep the math
@@ -1950,20 +2072,20 @@ export class MatchScene extends Phaser.Scene {
       if (c.x === me.x && c.y === me.y && c.bombs.length > 0) {
         for (const b of c.bombs) {
           lootSlots.push({ type: b.type });
-          if (lootSlots.length >= 4) break;
+          if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
         }
       }
-      if (lootSlots.length >= 4) break;
+      if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
     }
-    if (lootSlots.length < 4) {
+    if (lootSlots.length < INVENTORY_SLOT_COUNT) {
       for (const b of this.state.bodies) {
         if (b.x === me.x && b.y === me.y) {
           for (const bb of b.bombs) {
             lootSlots.push({ type: bb.type });
-            if (lootSlots.length >= 4) break;
+            if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
           }
         }
-        if (lootSlots.length >= 4) break;
+        if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
       }
     }
 
@@ -2097,16 +2219,6 @@ export class MatchScene extends Phaser.Scene {
         .setVisible(false);
       this.slotIcons.push(this.hud(icon));
 
-      // Placeholder name overlay for bombs without dedicated icons.
-      const nameTxt = this.add.text(
-        sx + SLOT_SIZE / 2, trayY + SLOT_SIZE / 2, '',
-        {
-          fontSize: '12px', color: '#ffffff', fontFamily: 'monospace',
-          fontStyle: 'bold', stroke: '#000000', strokeThickness: 3,
-        },
-      ).setOrigin(0.5).setDepth(1002).setVisible(false);
-      this.slotNameTexts.push(this.hud(nameTxt));
-
       const countTxt = this.add.text(sx + SLOT_SIZE / 2, trayY + SLOT_SIZE - 4, '', {
         fontSize: '14px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
       }).setOrigin(0.5, 1).setDepth(1002);
@@ -2202,17 +2314,6 @@ export class MatchScene extends Phaser.Scene {
           icon.setVisible(false);
         }
       }
-      // Placeholder label for bombs with no dedicated icon art.
-      const nameTxt = this.slotNameTexts[i];
-      if (nameTxt) {
-        if (bombType && bombNeedsLabel(bombType)) {
-          nameTxt.setText(bombShortLabel(bombType));
-          nameTxt.setVisible(true);
-        } else {
-          nameTxt.setVisible(false);
-        }
-      }
-
       // Key badge always shows the number; dim it when slot is empty
       this.slotLabelTexts[i].setAlpha(bombType ? 1 : 0.3);
       this.slotCountTexts[i].setText(sub);
@@ -2240,7 +2341,7 @@ export class MatchScene extends Phaser.Scene {
 
     // Loot swap shortcut: clicking an inventory slot while a loot swap is
     // pending triggers the swap instead of entering aim mode.
-    if (this.lootPendingSwap && slotIndex >= 1 && slotIndex <= 4) {
+    if (this.lootPendingSwap && slotIndex >= 1 && slotIndex <= INVENTORY_SLOT_COUNT) {
       this.executeLootSwap(slotIndex);
       return;
     }
@@ -2270,6 +2371,11 @@ export class MatchScene extends Phaser.Scene {
     this.lootPendingSwap = null;
     this.rebuildEntities();
     this.renderHud();
+    // Slot toggle changes the contextual tooltip (e.g. "Throw at this tile" /
+    // "Teleport to this tile"). Re-derive from the current pointer so the
+    // tooltip updates immediately, even if the user used a 1-5 hotkey.
+    const p = this.input.activePointer;
+    this.refreshTooltip(p.x, p.y);
   }
 
   // --- Loot panel ---
@@ -2342,16 +2448,16 @@ export class MatchScene extends Phaser.Scene {
     for (const src of sources) {
       for (const bomb of src.bombs) {
         lootSlots.push({ kind: src.kind, sourceId: src.id, type: bomb.type, count: bomb.count });
-        if (lootSlots.length >= 4) break;
+        if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
       }
-      if (lootSlots.length >= 4) break;
+      if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
     }
 
     const slotStartX = panelX + 10;
     const slotY = panelY + 30;
     const lootSlotSize = SLOT_SIZE;
 
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < INVENTORY_SLOT_COUNT; i++) {
       const sx = slotStartX + i * (lootSlotSize + SLOT_GAP);
       const loot = lootSlots[i];
 
@@ -2376,13 +2482,6 @@ export class MatchScene extends Phaser.Scene {
         sx + lootSlotSize / 2, slotY + 22, 'bomb_icons', bombIconFrame(loot.type),
       ).setDisplaySize(28, 28).setDepth(1012));
       this.lootPanelObjects.push(lootIcon);
-      if (bombNeedsLabel(loot.type)) {
-        const lootLabel = this.hud(this.add.text(
-          sx + lootSlotSize / 2, slotY + 22, bombShortLabel(loot.type),
-          { fontSize: '10px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold', stroke: '#000000', strokeThickness: 3 },
-        ).setOrigin(0.5).setDepth(1013));
-        this.lootPanelObjects.push(lootLabel);
-      }
 
       const countText = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + 42, `x${loot.count}`, {
         fontSize: '12px', color: isPending ? '#ffcc44' : '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
@@ -2404,7 +2503,29 @@ export class MatchScene extends Phaser.Scene {
     this.lootPanelVisible = false;
   }
 
-  /** Hit-test the loot panel. Returns the loot slot index [0..3] or -1. */
+  /** Bomb type at a given loot panel index, in the same flat order
+   *  renderLootPanel uses (chests first, then bodies, capped at 4). */
+  private lootSlotBombType(me: BombermanState, lootIndex: number): BombType | null {
+    if (!this.state) return null;
+    const flat: BombType[] = [];
+    for (const c of this.state.chests) {
+      if (c.x === me.x && c.y === me.y && c.bombs.length > 0) {
+        for (const b of c.bombs) { flat.push(b.type); if (flat.length >= INVENTORY_SLOT_COUNT) break; }
+      }
+      if (flat.length >= INVENTORY_SLOT_COUNT) break;
+    }
+    if (flat.length < INVENTORY_SLOT_COUNT) {
+      for (const b of this.state.bodies) {
+        if (b.x === me.x && b.y === me.y) {
+          for (const bb of b.bombs) { flat.push(bb.type); if (flat.length >= INVENTORY_SLOT_COUNT) break; }
+        }
+        if (flat.length >= INVENTORY_SLOT_COUNT) break;
+      }
+    }
+    return flat[lootIndex] ?? null;
+  }
+
+  /** Hit-test the loot panel. Returns the loot slot index or -1. */
   private hitTestLootPanel(screenX: number, screenY: number): number {
     if (!this.lootPanelVisible) return -1;
     const { width } = this.scale;
@@ -2418,7 +2539,7 @@ export class MatchScene extends Phaser.Scene {
     if (rel < 0) return -1;
     const stride = SLOT_SIZE + SLOT_GAP;
     const idx = Math.floor(rel / stride);
-    if (idx < 0 || idx >= 4) return -1;
+    if (idx < 0 || idx >= INVENTORY_SLOT_COUNT) return -1;
     if (rel - idx * stride > SLOT_SIZE) return -1;
     return idx;
   }
@@ -2434,20 +2555,20 @@ export class MatchScene extends Phaser.Scene {
       if (c.x === me.x && c.y === me.y && c.bombs.length > 0) {
         for (const b of c.bombs) {
           lootSlots.push({ kind: 'chest', sourceId: c.id, type: b.type, count: b.count });
-          if (lootSlots.length >= 4) break;
+          if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
         }
-        if (lootSlots.length >= 4) break;
+        if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
       }
     }
-    if (lootSlots.length < 4) {
+    if (lootSlots.length < INVENTORY_SLOT_COUNT) {
       for (const b of this.state.bodies) {
         if (b.x === me.x && b.y === me.y) {
           for (const bb of b.bombs) {
             lootSlots.push({ kind: 'body', sourceId: b.id, type: bb.type, count: bb.count });
-            if (lootSlots.length >= 4) break;
+            if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
           }
         }
-        if (lootSlots.length >= 4) break;
+        if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
       }
     }
 
@@ -2459,16 +2580,16 @@ export class MatchScene extends Phaser.Scene {
     let targetSlot = -1;
 
     // First: matching slot with room
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < INVENTORY_SLOT_COUNT; i++) {
       const slot = me.inventory.slots[i];
       if (slot && slot.type === loot.type && slot.count < stackLimit) {
-        targetSlot = i + 1; // network convention: 1..4
+        targetSlot = i + 1; // network convention: 1..INVENTORY_SLOT_COUNT
         break;
       }
     }
     // Second: empty slot
     if (targetSlot === -1) {
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < INVENTORY_SLOT_COUNT; i++) {
         if (!me.inventory.slots[i]) {
           targetSlot = i + 1;
           break;

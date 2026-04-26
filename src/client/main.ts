@@ -7,6 +7,7 @@ import { BombsShopScene } from './scenes/BombsShopScene.ts';
 import { MatchScene } from './scenes/MatchScene.ts';
 import { ResultsScene } from './scenes/ResultsScene.ts';
 import { TutorialOverlayScene } from './scenes/TutorialOverlayScene.ts';
+import { TooltipScene } from './scenes/TooltipScene.ts';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -18,7 +19,10 @@ const config: Phaser.Types.Core.GameConfig = {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [BootScene, MainMenuScene, LobbyScene, BombermanShopScene, BombsShopScene, MatchScene, ResultsScene, TutorialOverlayScene],
+  fps: { target: 30, forceSetTimeOut: true },
+  scene: [BootScene, MainMenuScene, LobbyScene, BombermanShopScene, BombsShopScene, MatchScene, ResultsScene, TutorialOverlayScene, TooltipScene],
 };
 
-new Phaser.Game(config);
+const game = new Phaser.Game(config);
+// Dev hook: expose for Playwright/manual testing. Stripped by tree-shake in prod.
+(window as unknown as { __game?: Phaser.Game }).__game = game;

@@ -1,43 +1,48 @@
 /**
  * Bomb icon spritesheet helpers.
  *
- * The `bombs.png` sheet is 80x32, 2 rows × 5 columns of 16x16 icons.
- * Row-major reading order:
- *   0: Rock, 1: Delay, 2: Delay Big, 3: Wide Delay, 4: Delay Tricky,
- *   5: Contact, 6: Banana, 7: Flare, 8: Molotov, 9: Ender Pearl
+ * The `bombs.png` sheet is 256x64 — 2 rows × 8 columns of 32x32 icons,
+ * read row-major (frame 0 = top-left, frame 7 = top-right, frame 8 = row 2 col 1).
+ *
+ * Layout (row, col → frame):
+ *   1,1 (0)  Stone / Rock          2,1 (8)  Contact Bomb
+ *   1,2 (1)  Delay Bomb Big        2,2 (9)  Banana
+ *   1,3 (2)  Wide Delay Bomb       2,3 (10) Flare
+ *   1,4 (3)  — intentionally blank — 2,4 (11) Molotov
+ *   1,5 (4)  Delay Tricky Bomb     2,5 (12) Ender Pearl
+ *   1,6 (5)  Big Huge              2,6 (13) Phosphorus
+ *   1,7 (6)  Flash                 2,7 (14) Motion Detector Flare
+ *   1,8 (7)  Fart Escape           2,8 (15) Cluster
  */
 
 import Phaser from 'phaser';
 import type { BombType } from '@shared/types/bombs.ts';
 
-// Original 10-frame sheet indices. New bombs reuse frames (temp visuals)
-// until the art sheet is expanded.
 const BOMB_ICON_FRAMES: Record<BombType, number> = {
   rock: 0,
-  bomb: 2,          // was delay_big frame
-  bomb_wide: 3,     // was delay_wide frame
+  bomb: 1,
+  bomb_wide: 2,
   delay_tricky: 4,
-  contact: 5,
-  banana: 6,
-  banana_child: 6,
-  flare: 7,
-  molotov: 8,
-  ender_pearl: 9,
-  // Temp placeholders — reuse existing frames until dedicated art is added.
-  fart_escape: 6,           // reuse banana — both are "trickery" bombs
-  motion_detector_flare: 7, // reuse flare
-  flash: 1,                 // reuse small delay frame (previously unused)
-  phosphorus: 8,            // reuse molotov
-  cluster_bomb: 2,          // reuse bomb
-  big_huge: 3,              // reuse wide bomb
+  big_huge: 5,
+  flash: 6,
+  fart_escape: 7,
+  contact: 8,
+  banana: 9,
+  banana_child: 9, // shares banana's icon
+  flare: 10,
+  molotov: 11,
+  ender_pearl: 12,
+  phosphorus: 13,
+  motion_detector_flare: 14,
+  cluster_bomb: 15,
 };
 
 /** Preload the bomb icons spritesheet. Idempotent. */
 export function preloadBombIcons(scene: Phaser.Scene): void {
   if (!scene.textures.exists('bomb_icons')) {
     scene.load.spritesheet('bomb_icons', 'sprites/bombs.png', {
-      frameWidth: 16,
-      frameHeight: 16,
+      frameWidth: 32,
+      frameHeight: 32,
     });
   }
 }
@@ -61,62 +66,4 @@ export function createBombIcon(
   const img = scene.add.image(x, y, 'bomb_icons', bombIconFrame(type));
   img.setDisplaySize(displaySize, displaySize);
   return img;
-}
-
-/**
- * Bomb types that reuse a legacy icon frame as a placeholder (no dedicated
- * art yet). Rendered with a short text label overlaid on top so players can
- * tell them apart until real icons are added.
- */
-export const PLACEHOLDER_ICON_TYPES = new Set<BombType>([
-  'fart_escape',
-  'motion_detector_flare',
-  'flash',
-  'phosphorus',
-  'cluster_bomb',
-  'big_huge',
-]);
-
-/** Short uppercase label drawn over placeholder icons. Keep to 5 chars max. */
-export const BOMB_SHORT_LABELS: Partial<Record<BombType, string>> = {
-  fart_escape: 'FART',
-  motion_detector_flare: 'MDET',
-  flash: 'FLASH',
-  phosphorus: 'PHOS',
-  cluster_bomb: 'CLUS',
-  big_huge: 'HUGE',
-};
-
-/** True if this type should get a text-label overlay on top of its icon. */
-export function bombNeedsLabel(type: BombType): boolean {
-  return PLACEHOLDER_ICON_TYPES.has(type);
-}
-
-/** Short label for a placeholder bomb, or empty string for types with real icons. */
-export function bombShortLabel(type: BombType): string {
-  return BOMB_SHORT_LABELS[type] ?? '';
-}
-
-/**
- * Optionally stamp a short-name label over an icon position. Returns the
- * Text object (so callers can add it to containers / destroy it) or null
- * if the type has a proper icon. Size controls the label font size.
- */
-export function createBombLabelOverlay(
-  scene: Phaser.Scene,
-  x: number,
-  y: number,
-  type: BombType,
-  iconDisplaySize: number,
-): Phaser.GameObjects.Text | null {
-  if (!bombNeedsLabel(type)) return null;
-  const fontPx = Math.max(8, Math.round(iconDisplaySize * 0.32));
-  return scene.add.text(x, y, bombShortLabel(type), {
-    fontSize: `${fontPx}px`,
-    color: '#ffffff',
-    fontFamily: 'monospace',
-    fontStyle: 'bold',
-    stroke: '#000000',
-    strokeThickness: 3,
-  }).setOrigin(0.5);
 }

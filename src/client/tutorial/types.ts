@@ -28,7 +28,7 @@ export type PortraitId = 'char4' | 'char4_angry' | null;
 export type ExpectedAction =
   | { kind: 'moveTo'; x: number; y: number; rushX?: number; rushY?: number }
   | { kind: 'reachTile'; x: number; y: number }
-  | { kind: 'throwAt'; slotIndex: 0 | 1 | 2 | 3 | 4; x: number; y: number; bombType?: BombType }
+  | { kind: 'throwAt'; slotIndex: 0 | 1 | 2 | 3 | 4 | 5; x: number; y: number; bombType?: BombType }
   | { kind: 'idle' }
   | { kind: 'lootBomb'; sourceKind: 'chest' | 'body'; bombType: BombType }
   // Waits for the player to click a bomb slot in the HUD. Satisfied by any
@@ -36,7 +36,7 @@ export type ExpectedAction =
   // Resolves without advancing a turn — selecting a slot is a UI state
   // change, not a gameplay action. Wrong-slot clicks flash the hint like
   // other expected-action mismatches.
-  | { kind: 'selectBomb'; slotIndex?: 0 | 1 | 2 | 3 | 4 };
+  | { kind: 'selectBomb'; slotIndex?: 0 | 1 | 2 | 3 | 4 | 5 };
 
 /**
  * Visual shape of a pulsing highlight. Only honored for world-space targets
@@ -61,7 +61,7 @@ export type HighlightShape = 'box' | 'x' | 'circle';
  */
 export type HighlightTarget =
   | { kind: 'tile'; x: number; y: number; shape?: HighlightShape }
-  | { kind: 'slot'; index: 0 | 1 | 2 | 3 | 4 }
+  | { kind: 'slot'; index: 0 | 1 | 2 | 3 | 4 | 5 }
   | { kind: 'lootPanel' }
   | { kind: 'lootItem'; bombType: BombType }
   | { kind: 'phaseIndicator' }
@@ -172,7 +172,7 @@ export type TutorialStep =
       botId: string;
       /** Action-convention slot: 0 = Rock (always available),
        *  1..4 → `inventory.slots[0..3]`. */
-      slotIndex: 0 | 1 | 2 | 3 | 4;
+      slotIndex: 0 | 1 | 2 | 3 | 4 | 5;
       x: number;
       y: number;
       bombType?: BombType;

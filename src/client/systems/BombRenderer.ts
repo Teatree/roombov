@@ -6,6 +6,21 @@ import { BALANCE } from '@shared/config/balance.ts';
 import { bombIconFrame } from './BombIcons.ts';
 
 /**
+ * Bomb types whose "sitting on the tile" visual is just their inventory icon
+ * scaled to ~80% of a tile. Other types (mines, flares, smoke clouds, the
+ * ender pearl, etc.) keep their hand-drawn shape because the icon is the
+ * thrown object, not the placed effect.
+ */
+const ICON_LANDED_BOMBS = new Set<BombType>([
+  'bomb',
+  'bomb_wide',
+  'delay_tricky',
+  'banana',
+  'flash',
+  'big_huge',
+]);
+
+/**
  * Decal decay — see BALANCE.decalDecay in `src/shared/config/balance.ts`.
  * Returns the opacity multiplier for a decal of a given age (turns since
  * stamp). Full opacity for the first `fullTurns` turns, then linearly
@@ -72,6 +87,10 @@ export class BombRenderer {
    * First explosion on a tile wins; subsequent explosions skip it.
    */
   private decals = new Map<string, Phaser.GameObjects.Graphics>();
+  /** Tile keys with a scorch decal. Maintained alongside `decals` for cheap hover queries. */
+  readonly scorchKeys = new Set<string>();
+  /** Tile keys with a pearl decal. Maintained alongside `decals` for cheap hover queries. */
+  readonly pearlKeys = new Set<string>();
 
   constructor(
     scene: Phaser.Scene,
@@ -453,6 +472,7 @@ export class BombRenderer {
     this.scene.tweens.add({ targets: g, alpha: 0.8, duration: 800, ease: 'Sine.easeIn' });
 
     this.decals.set(key, g);
+    this.scorchKeys.add(key);
   }
 
   /** Small gray dust smudge — Rock impact */
@@ -1253,6 +1273,7 @@ export class BombRenderer {
     g.fillStyle(0x33aa88, 0.5);
     g.fillCircle(cx, cy, ts * 0.08);
     this.decals.set(key, g);
+    this.pearlKeys.add(key);
   }
 
   /**
@@ -1466,6 +1487,8 @@ export class BombRenderer {
     this.mineVisuals.clear();
     this.pendingMineTimers.clear();
     this.decals.clear();
+    this.scorchKeys.clear();
+    this.pearlKeys.clear();
   }
 
   // ---- visual builders ----
@@ -1475,13 +1498,28 @@ export class BombRenderer {
     const cx = bomb.x * ts + ts / 2;
     const cy = bomb.y * ts + ts / 2;
 
-    const g = this.scene.add.graphics();
-    g.setPosition(cx, cy);
+    // Bombs that "land and sit" on the ground use their inventory icon as
+    // the on-tile visual — keeps the icon→landed→explode chain visually
+    // coherent. Other types (placed mines, instant flares, smoke clouds, etc.)
+    // keep their hand-drawn shape from drawBombBody.
+    const useIcon = ICON_LANDED_BOMBS.has(bomb.type);
+
+    // Native bomb_icons frame is 32px. Scale the Image down to ~45% of a
+    // tile via setScale (NOT setDisplaySize) so the pulse tween below can
+    // multiply this base by 0.85..1.05 without clobbering the size.
+    const iconBaseScale = useIcon ? (ts * 0.9) / 32 : 1;
+
+    const g: Phaser.GameObjects.Graphics | Phaser.GameObjects.Image = useIcon
+      ? this.scene.add.image(cx, cy, 'bomb_icons', bombIconFrame(bomb.type))
+      : this.scene.add.graphics().setPosition(cx, cy);
+    g.setScale(iconBaseScale);
     g.setAlpha(0);
     this.layer.add(g);
 
-    const cfg = bombLook(bomb.type);
-    drawBombBody(g, cfg, ts);
+    if (!useIcon) {
+      const cfg = bombLook(bomb.type);
+      drawBombBody(g as Phaser.GameObjects.Graphics, cfg, ts);
+    }
 
     // (Hourglass / clock countdown indicator removed — the pre-detonation
     // shake tween is the sole "about to explode" cue now.)
@@ -1495,7 +1533,7 @@ export class BombRenderer {
 
     const tween = this.scene.tweens.add({
       targets: g,
-      scale: { from: 0.85, to: 1.05 },
+      scale: { from: 0.85 * iconBaseScale, to: 1.05 * iconBaseScale },
       duration: 380,
       yoyo: true,
       repeat: -1,
@@ -1693,7 +1731,7 @@ function bombLook(type: BombType): BombLook {
 }
 
 function drawBombBody(g: Phaser.GameObjects.Graphics, look: BombLook, ts: number): void {
-  const r = ts * 0.32;
+  const r = ts * 0.36;
   g.lineStyle(2, look.stroke, 1);
   g.fillStyle(look.body, 1);
 

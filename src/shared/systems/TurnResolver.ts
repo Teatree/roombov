@@ -26,6 +26,7 @@ import type {
   DroppedBody, MatchState, PlayerAction,
 } from '../types/match.ts';
 import type { BombermanState, BombInventory, BombSlot } from '../types/bomberman.ts';
+import { INVENTORY_SLOT_COUNT } from '../types/bomberman.ts';
 import type {
   BombInstance, FireTile, LightTile, BombType,
   SmokeCloud, Mine, PhosphorusPending, StatusEffect,
@@ -505,7 +506,7 @@ export function resolveTurn(
       let threw = action.kind === 'throw';
       if (threw && action.kind === 'throw') {
         // Determine the bomb type from the slot. Slot 0 = rock (always breaks).
-        if (action.slotIndex >= 1 && action.slotIndex <= 4) {
+        if (action.slotIndex >= 1 && action.slotIndex <= INVENTORY_SLOT_COUNT) {
           const slot = bomberman.inventory.slots[action.slotIndex - 1];
           if (slot && NON_RUSH_BREAKING_BOMBS.has(slot.type)) threw = false;
         }
@@ -1398,7 +1399,7 @@ function tryStashBomb(inventory: BombInventory, type: BombType, count: number): 
   let remaining = count;
 
   // 1. Top up matching slots
-  for (let i = 0; i < 4 && remaining > 0; i++) {
+  for (let i = 0; i < INVENTORY_SLOT_COUNT && remaining > 0; i++) {
     const slot = inventory.slots[i];
     if (!slot || slot.type !== type) continue;
     const room = stackLimit - slot.count;
@@ -1409,7 +1410,7 @@ function tryStashBomb(inventory: BombInventory, type: BombType, count: number): 
   }
 
   // 2. Fill empty slots
-  for (let i = 0; i < 4 && remaining > 0; i++) {
+  for (let i = 0; i < INVENTORY_SLOT_COUNT && remaining > 0; i++) {
     if (inventory.slots[i] != null) continue;
     const take = Math.min(stackLimit, remaining);
     inventory.slots[i] = { type, count: take };
