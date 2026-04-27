@@ -30,6 +30,8 @@ import { resolveTurn } from '../shared/systems/TurnResolver.ts';
 import { createSeededRandom, seededRandInt, seededShuffle } from '../shared/utils/seeded-random.ts';
 import { rollBombLoot, rollTreasureLoot } from '../shared/utils/loot-roll.ts';
 import { mergeTreasures } from '../shared/config/treasures.ts';
+import { createEmptyGamblerStreet } from '../shared/types/gambler-street.ts';
+import { GAMBLER_STREET_GLOBAL } from '../shared/config/gambler-street.ts';
 import { loadMapById } from '../shared/maps/map-loader.ts';
 import type { PlayerStore } from './PlayerStore.ts';
 
@@ -171,6 +173,7 @@ export class MatchRoom {
           }],
           equippedBombermanId: `bot_bm_${i}`,
           bombStockpile: {},
+          gamblerStreet: createEmptyGamblerStreet(Date.now(), GAMBLER_STREET_GLOBAL.slotCount),
         },
       });
     }

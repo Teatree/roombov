@@ -7,6 +7,9 @@
 import type { OwnedBomberman } from './bomberman.ts';
 import type { BombType } from './bombs.ts';
 import type { TreasureBundle } from '../config/treasures.ts';
+import type { GamblerStreetState } from './gambler-street.ts';
+import { createEmptyGamblerStreet } from './gambler-street.ts';
+import { GAMBLER_STREET_GLOBAL } from '../config/gambler-street.ts';
 
 export interface PlayerProfile {
   id: string;
@@ -33,6 +36,12 @@ export interface PlayerProfile {
    * Map from bomb type → count. Used by the Bombs Shop flow.
    */
   bombStockpile: Partial<Record<BombType, number>>;
+  /**
+   * Gambler Street carousel state — five slots, each either an active
+   * gambler or a cooldown countdown. Wall-clock timestamps so the carousel
+   * keeps aging while the player is offline.
+   */
+  gamblerStreet: GamblerStreetState;
 }
 
 export function createEmptyProfile(id: string): PlayerProfile {
@@ -46,5 +55,6 @@ export function createEmptyProfile(id: string): PlayerProfile {
     ownedBombermen: [],
     equippedBombermanId: null,
     bombStockpile: {},
+    gamblerStreet: createEmptyGamblerStreet(now, GAMBLER_STREET_GLOBAL.slotCount),
   };
 }

@@ -882,9 +882,15 @@ export class MatchScene extends Phaser.Scene {
       }
     }
 
+    // When the local player escapes alone we transition before the
+    // server's `match_end` arrives, so `msg` is undefined. Fall back to
+    // the local bomberman's treasure bundle in that case.
+    const myTreasures: TreasureBundle = msg?.treasuresEarned?.[this.myPlayerId ?? '']
+      ?? (me?.treasures ? { ...me.treasures } : {});
+
     this.scene.start('ResultsScene', {
       outcome,
-      treasuresEarned: msg?.treasuresEarned?.[this.myPlayerId ?? ''] ?? {},
+      treasuresEarned: myTreasures,
       turnsPlayed: this.state?.turnNumber ?? 0,
       inventory,
       kills: this.myKills,
@@ -1311,7 +1317,7 @@ export class MatchScene extends Phaser.Scene {
           const amount = bundle[t] ?? 0;
           if (amount > 0) {
             this.spawnTreasurePopup(baseX, baseY, t, amount, stagger);
-            stagger += 80;
+            stagger += 220;
           }
         }
       }
@@ -1319,36 +1325,40 @@ export class MatchScene extends Phaser.Scene {
   }
 
   /** Floating "+N [icon]" treasure popup that rises and fades out. Staggered
-   *  by `delayMs` so multi-type pickups appear in sequence. */
+   *  by `delayMs` so multi-type pickups appear in sequence. The icon and the
+   *  "+N" text render in a single tight container centered over the
+   *  Bomberman so the player sees ONE popup, not a "left icon" + "right
+   *  number" pair. */
   private spawnTreasurePopup(worldX: number, worldY: number, type: TreasureType, amount: number, delayMs: number): void {
-    const POPUP_ICON = 18;
-    const icon = this.add.image(worldX - 14, worldY, TREASURE_TEXTURE_KEY, treasureIconFrame(type))
-      .setDisplaySize(POPUP_ICON, POPUP_ICON)
-      .setDepth(500)
-      .setAlpha(0);
-    const text = this.add.text(worldX + 4, worldY, `+${amount}`, {
+    const POPUP_ICON = 22;
+    const c = this.add.container(worldX, worldY).setDepth(500).setAlpha(0);
+    const icon = this.add.image(0, -8, TREASURE_TEXTURE_KEY, treasureIconFrame(type))
+      .setDisplaySize(POPUP_ICON, POPUP_ICON);
+    const text = this.add.text(0, 12, `+${amount}`, {
       fontSize: '16px',
       color: '#ffd944',
       fontFamily: 'monospace',
       fontStyle: 'bold',
       stroke: '#000000',
       strokeThickness: 3,
-    }).setOrigin(0, 0.5).setDepth(500).setAlpha(0);
+    }).setOrigin(0.5, 0.5);
+    c.add(icon);
+    c.add(text);
 
     this.tweens.add({
-      targets: [icon, text],
+      targets: c,
       alpha: 1,
       duration: 120,
       delay: delayMs,
     });
     this.tweens.add({
-      targets: [icon, text],
+      targets: c,
       y: worldY - 40,
       alpha: 0,
       duration: 1200,
       delay: delayMs + 120,
       ease: 'Cubic.easeOut',
-      onComplete: () => { icon.destroy(); text.destroy(); },
+      onComplete: () => c.destroy(),
     });
   }
 
@@ -2203,6 +2213,7 @@ export class MatchScene extends Phaser.Scene {
       iconScale: 1.0,
       fontSize: 16,
       depth: 1001,
+      pulseOnCount: true,
     });
 
     // Bomb slot tray

@@ -267,8 +267,17 @@ export class BombRenderer {
     const ex = toX * ts + ts / 2;
     const ey = toY * ts + ts / 2;
 
-    const img = this.scene.add.image(sx, sy, 'bomb_icons', bombIconFrame(type));
-    img.setDisplaySize(ts * 0.9, ts * 0.9);
+    // Flares fly as a small white circle instead of the bomb icon — they're
+    // a "thrown light source", not an explosive, so the icon would look
+    // wrong sailing through the air. All other bombs keep the icon-arc.
+    const img = type === 'flare'
+      ? this.scene.add.circle(sx, sy, ts * 0.22, 0xffffff, 1)
+        .setStrokeStyle(2, 0x000000, 0.4) as Phaser.GameObjects.Arc
+      : (() => {
+          const i = this.scene.add.image(sx, sy, 'bomb_icons', bombIconFrame(type));
+          i.setDisplaySize(ts * 0.9, ts * 0.9);
+          return i;
+        })();
     this.layer.add(img);
 
     // Seed initial visibility so bombs starting in fog don't flicker on for
@@ -287,7 +296,9 @@ export class BombRenderer {
       duration,
       ease: 'Linear',
       onUpdate: () => {
-        img.setRotation(img.rotation + 0.15);
+        // Rotation only matters for the bomb icon — a circle looks identical
+        // rotated. Skip the rotation update for flares to avoid no-op work.
+        if (type !== 'flare') img.setRotation(img.rotation + 0.15);
         if (isVisible) {
           const tx = Math.floor(img.x / ts);
           const ty = Math.floor(img.y / ts);

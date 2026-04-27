@@ -9,6 +9,7 @@
 
 import type { PlayerProfile } from '@shared/types/player-profile.ts';
 import type { BombermanShopCycleMsg } from '@shared/types/messages.ts';
+import type { GamblerStreetState } from '@shared/types/gambler-street.ts';
 import { pickRandomUiAnimation, type UiAnimation } from './systems/BombermanAnimations.ts';
 
 type Listener = () => void;
@@ -32,6 +33,7 @@ class Store<T> {
 
 export const ProfileStore = new Store<PlayerProfile>();
 export const BombermanShopStore = new Store<BombermanShopCycleMsg>();
+export const GamblerStreetStore = new Store<GamblerStreetState>();
 
 /**
  * Per-owned-Bomberman UI animation lock. The preview animation (idle/idle3

@@ -1,6 +1,6 @@
 import { io, Socket } from 'socket.io-client';
 import type { ServerToClientEvents, ClientToServerEvents } from '@shared/types/messages.ts';
-import { BombermanShopStore, ProfileStore } from './ClientState.ts';
+import { BombermanShopStore, GamblerStreetStore, ProfileStore } from './ClientState.ts';
 import { NetworkActivity } from './NetworkActivity.ts';
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -60,6 +60,14 @@ export const NetworkManager = {
       socket.on('bombs_catalog', () => consumePending('bombs_catalog'));
       socket.on('shop_result', () => consumePending('shop_result'));
       socket.on('match_listings', () => consumePending('match_listings'));
+      socket.on('gambler_street_state', (msg) => {
+        GamblerStreetStore.set(msg.state);
+        consumePending('gambler_street_state');
+      });
+      socket.on('gambler_street_bet_result', (msg) => {
+        if (msg.ok && msg.state) GamblerStreetStore.set(msg.state);
+        consumePending('gambler_street_bet_result');
+      });
     }
 
     return socket;

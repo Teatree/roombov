@@ -7,6 +7,8 @@ import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import { createEmptyProfile } from '../shared/types/player-profile.ts';
 import { CHARACTER_VARIANTS } from '../shared/types/bomberman.ts';
 import type { BombType } from '../shared/types/bombs.ts';
+import { createEmptyGamblerStreet, type GamblerStreetState } from '../shared/types/gambler-street.ts';
+import { GAMBLER_STREET_GLOBAL } from '../shared/config/gambler-street.ts';
 
 /**
  * Rename map for the Apr-2026 bomb catalog cleanup:
@@ -207,6 +209,14 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
     });
   }
 
+  // Backfill gambler street state for older profiles. The empty state has all
+  // five slots in cooldown ready immediately, so the engine fills them on
+  // first tick — equivalent to "fresh carousel" without a special branch.
+  const gamblerStreet: GamblerStreetState =
+    isValidGamblerStreet(raw.gamblerStreet)
+      ? raw.gamblerStreet
+      : createEmptyGamblerStreet(now, GAMBLER_STREET_GLOBAL.slotCount);
+
   return {
     id: raw.id ?? generatePlayerId(),
     createdAt: raw.createdAt ?? now,
@@ -216,5 +226,12 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
     ownedBombermen: owned,
     equippedBombermanId: raw.equippedBombermanId ?? null,
     bombStockpile: normalizedStockpile as PlayerProfile['bombStockpile'],
+    gamblerStreet,
   };
+}
+
+function isValidGamblerStreet(s: unknown): s is GamblerStreetState {
+  if (!s || typeof s !== 'object') return false;
+  const cast = s as Partial<GamblerStreetState>;
+  return Array.isArray(cast.slots) && typeof cast.nextGamblerSerial === 'number';
 }

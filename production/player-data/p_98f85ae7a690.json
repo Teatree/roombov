@@ -3,7 +3,34 @@
   "createdAt": 1776678029830,
   "updatedAt": 1776678029830,
   "coins": 500,
+  "treasures": {},
   "ownedBombermen": [],
   "equippedBombermanId": null,
-  "bombStockpile": {}
+  "bombStockpile": {},
+  "gamblerStreet": {
+    "slots": [
+      {
+        "kind": "cooldown",
+        "readyAt": 1777330178907
+      },
+      {
+        "kind": "cooldown",
+        "readyAt": 1777330178907
+      },
+      {
+        "kind": "cooldown",
+        "readyAt": 1777330178907
+      },
+      {
+        "kind": "cooldown",
+        "readyAt": 1777330178907
+      },
+      {
+        "kind": "cooldown",
+        "readyAt": 1777330178907
+      }
+    ],
+    "lastTickedAt": 1777330178907,
+    "nextGamblerSerial": 1
+  }
 }

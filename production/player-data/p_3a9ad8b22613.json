@@ -1,12 +1,19 @@
 {
   "id": "p_3a9ad8b22613",
   "createdAt": 1775946762703,
-  "updatedAt": 1777247074429,
-  "coins": 1344,
+  "updatedAt": 1777332548018,
+  "coins": 1365,
   "treasures": {
-    "fish": 1,
-    "books": 2,
-    "grapes": 2
+    "fish": 46,
+    "books": 31,
+    "grapes": 78,
+    "chalice": 34,
+    "jade": 24,
+    "coffee": 30,
+    "bones": 71,
+    "mushrooms": 76,
+    "amulets": 61,
+    "lanterns": 60
   },
   "ownedBombermen": [
     {
@@ -24,19 +31,23 @@
         "slots": [
           {
             "type": "bomb",
-            "count": 5
+            "count": 2
           },
           {
             "type": "ender_pearl",
-            "count": 4
-          },
-          {
-            "type": "flash",
-            "count": 4
+            "count": 3
           },
           {
             "type": "bomb_wide",
             "count": 2
+          },
+          {
+            "type": "flare",
+            "count": 2
+          },
+          {
+            "type": "banana",
+            "count": 3
           }
         ]
       },
@@ -53,5 +64,47 @@
     "big_huge": 2,
     "fart_escape": 2,
     "bomb_wide": 3
+  },
+  "gamblerStreet": {
+    "slots": [
+      {
+        "kind": "gambler",
+        "gambler": {
+          "id": "g_mohtvh9x_p",
+          "name": "Lucía Reyes",
+          "treasureType": "fish",
+          "treasureAmount": 95,
+          "coinReward": 10,
+          "createdAt": 1777332488757,
+          "expiresAt": 1777332683388
+        }
+      },
+      {
+        "kind": "cooldown",
+        "readyAt": 1777332610853
+      },
+      {
+        "kind": "gambler",
+        "gambler": {
+          "id": "g_mohtvp3b_s",
+          "name": "Klaus Engel",
+          "treasureType": "fish",
+          "treasureAmount": 55,
+          "coinReward": 6,
+          "createdAt": 1777332498887,
+          "expiresAt": 1777332744429
+        }
+      },
+      {
+        "kind": "cooldown",
+        "readyAt": 1777332625594
+      },
+      {
+        "kind": "cooldown",
+        "readyAt": 1777332620691
+      }
+    ],
+    "lastTickedAt": 1777332505594,
+    "nextGamblerSerial": 30
   }
 }

@@ -11,6 +11,8 @@ import type { BombType } from './bombs.ts';
 import type { MatchListing, MatchState, PlayerAction } from './match.ts';
 import type { TurnEvent } from '../systems/TurnResolver.ts';
 import type { TreasureBundle } from '../config/treasures.ts';
+import type { BetOutcome, GamblerStreetState } from './gambler-street.ts';
+import type { BetTier } from '../config/gambler-street.ts';
 
 // --- Auth / profile (Step 2) ---
 
@@ -141,6 +143,34 @@ export interface ShopResultMsg {
   message?: string;
 }
 
+// --- Gambler Street ---
+
+/** Client → server: refresh the carousel (tick state to now, return current). */
+export type GamblerStreetRequestMsg = Record<string, never>;
+
+/** Client → server: place a bet on a specific gambler slot. */
+export interface GamblerStreetBetMsg {
+  slotIndex: number;
+  tier: BetTier;
+  pickedHand: 'left' | 'right';
+}
+
+/** Server → client: latest carousel state (after a tick). */
+export interface GamblerStreetStateMsg {
+  state: GamblerStreetState;
+}
+
+/** Server → client: result of a bet attempt. */
+export interface GamblerStreetBetResultMsg {
+  ok: boolean;
+  /** Present on success — drives the reveal animation. */
+  outcome?: BetOutcome;
+  /** Present on success — updated street state. */
+  state?: GamblerStreetState;
+  /** Present on failure — reason string. */
+  reason?: string;
+}
+
 // --- Server → client event map ---
 
 /** Server → client: one of your placed mines just tripped. */
@@ -162,6 +192,8 @@ export interface ServerToClientEvents {
   turn_result: (msg: TurnResultMsg) => void;
   match_end: (msg: MatchEndMsg) => void;
   mine_triggered: (msg: MineTriggeredMsg) => void;
+  gambler_street_state: (msg: GamblerStreetStateMsg) => void;
+  gambler_street_bet_result: (msg: GamblerStreetBetResultMsg) => void;
 }
 
 // --- Client → server event map ---
@@ -181,4 +213,6 @@ export interface ClientToServerEvents {
   leave_match: () => void;
   player_action: (msg: PlayerActionMsg) => void;
   loot_bomb: (msg: LootBombMsg) => void;
+  gambler_street_request: (msg: GamblerStreetRequestMsg) => void;
+  gambler_street_bet: (msg: GamblerStreetBetMsg) => void;
 }

@@ -51,6 +51,8 @@ export class MainMenuScene extends Phaser.Scene {
       x: width - 20,
       y: 20,
       anchor: 'top-right',
+      iconScale: 1.0,
+      fontSize: 16,
     });
 
     this.equippedContainer = this.add.container(width / 2, 260);

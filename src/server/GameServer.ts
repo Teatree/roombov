@@ -1,12 +1,14 @@
 import type { Server, Socket } from 'socket.io';
 import type {
   AuthMsg, BuyBombermanMsg, BuyBombMsg, ClientToServerEvents, EquipBombermanMsg,
-  EquipBombMsg, JoinMatchMsg, LootBombMsg, PlayerActionMsg, ServerToClientEvents, UnequipBombMsg,
+  EquipBombMsg, GamblerStreetBetMsg, JoinMatchMsg, LootBombMsg, PlayerActionMsg,
+  ServerToClientEvents, UnequipBombMsg,
 } from '../shared/types/messages.ts';
 import type { MatchConfig } from '../shared/types/match.ts';
 import { PlayerStore } from './PlayerStore.ts';
 import { BombermanShopService } from './BombermanShopService.ts';
 import { BombsShopService } from './BombsShopService.ts';
+import { GamblerStreetService } from './GamblerStreetService.ts';
 import { MatchScheduler } from './MatchScheduler.ts';
 import { MatchRoom, loadMapForMatch, type MatchRoomParticipant } from './MatchRoom.ts';
 
@@ -24,6 +26,7 @@ export class GameServer {
   private playerStore: PlayerStore;
   private bombermanShop: BombermanShopService;
   private bombsShop: BombsShopService;
+  private gamblerStreet: GamblerStreetService;
   private matchScheduler: MatchScheduler;
   /** active MatchRooms keyed by matchId */
   private matchRooms = new Map<string, MatchRoom>();
@@ -38,6 +41,7 @@ export class GameServer {
       this.io.emit('bomberman_shop_cycle', cycle);
     });
     this.bombsShop = new BombsShopService(playerStore);
+    this.gamblerStreet = new GamblerStreetService(playerStore);
     this.matchScheduler = new MatchScheduler();
 
     this.tickInterval = setInterval(() => this.tickLobby(), 1000);
@@ -59,6 +63,8 @@ export class GameServer {
       socket.on('leave_match', () => this.onLeaveMatch(socket));
       socket.on('player_action', (msg) => this.onPlayerAction(socket, msg));
       socket.on('loot_bomb', (msg) => this.onLootBomb(socket, msg));
+      socket.on('gambler_street_request', () => this.onGamblerStreetRequest(socket));
+      socket.on('gambler_street_bet', (msg) => this.onGamblerStreetBet(socket, msg));
 
       socket.on('disconnect', () => {
         const session = this.sessions.get(socket.id);
@@ -282,6 +288,33 @@ export class GameServer {
     const room = this.matchRooms.get(session.joinedMatchId);
     if (!room) return;
     room.handleLoot(session.playerId, msg);
+  }
+
+  private async onGamblerStreetRequest(socket: TypedSocket): Promise<void> {
+    const profile = this.getProfileForSocket(socket);
+    if (!profile) return;
+    const state = await this.gamblerStreet.refresh(profile);
+    socket.emit('gambler_street_state', { state });
+    // Profile may have changed (lastTickedAt, slot updates) — broadcast so the
+    // ProfileStore on the client also has the latest gamblerStreet snapshot
+    // and the persistent treasure widget stays in sync.
+    socket.emit('profile', { profile });
+  }
+
+  private async onGamblerStreetBet(socket: TypedSocket, msg: GamblerStreetBetMsg): Promise<void> {
+    const profile = this.getProfileForSocket(socket);
+    if (!profile) return;
+    const result = await this.gamblerStreet.bet(profile, msg.slotIndex, msg.tier, msg.pickedHand);
+    if (result.ok) {
+      socket.emit('gambler_street_bet_result', {
+        ok: true,
+        outcome: result.outcome,
+        state: result.state,
+      });
+      socket.emit('profile', { profile });
+    } else {
+      socket.emit('gambler_street_bet_result', { ok: false, reason: result.reason });
+    }
   }
 
   async destroy(): Promise<void> {

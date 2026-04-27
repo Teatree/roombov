@@ -79,28 +79,34 @@ export class ResultsScene extends Phaser.Scene {
     let subtitleY = height * 0.32;
 
     if (r.outcome === 'escaped') {
-      // Treasures earned this match — static widget. Skip the row entirely
-      // when nothing was looted.
+      // Treasures earned this match — horizontal row with the same pulse as
+      // the in-match HUD so a fat haul "thrums" on the results screen too.
       if (hasAnyTreasure(r.treasuresEarned)) {
-        this.add.text(width / 2, subtitleY, 'Treasures collected:', {
-          fontSize: '16px', color: '#aaaaaa', fontFamily: 'monospace',
+        this.add.text(width / 2, subtitleY, 'Treasures Gathered', {
+          fontSize: '18px', color: '#c4a566', fontFamily: 'serif', fontStyle: 'bold',
         }).setOrigin(0.5);
-        subtitleY += 26;
-        // Center the widget by anchoring top-left to (width/2 - approx-w/2).
-        // Use a chunkier icon scale here than the in-match HUD — there's
-        // plenty of space on the results screen.
+        subtitleY += 32;
+
+        // Build the widget centered horizontally. We need to know its width
+        // before placing it, so build it once at (0,0), measure, then
+        // position. The widget's container is repositioned via its options.
+        // Easiest: instantiate, populate, then offset the container.
         const widget = new TreasureListWidget(this, {
-          x: width / 2 - 50,
+          x: 0, // placeholder — corrected below
           y: subtitleY,
           anchor: 'top-left',
-          iconScale: 0.6,
-          rowGap: 6,
-          fontSize: 16,
+          direction: 'horizontal',
+          iconScale: 1.0,
+          rowGap: 14,
+          fontSize: 18,
           staticRender: true,
+          pulseOnCount: true,
         });
         widget.setBundleStatic(r.treasuresEarned);
         const rect = widget.getRect();
-        subtitleY += rect.h + 14;
+        // Re-anchor: shift container so the row is centered on screen.
+        widget.setX(width / 2 - rect.w / 2);
+        subtitleY += rect.h + 16;
       }
 
       // Kills
