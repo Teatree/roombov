@@ -20,24 +20,26 @@ const CARD_WIDTH = 720;
 const CARD_HEIGHT = 140;
 const CARD_GAP = 16;
 
-// Dark/gloomy palette
+// Palette aligned with BombsShop / MainMenu chrome. Cheap/premium bet buttons
+// keep distinct hues because the cool/warm split conveys gameplay risk; both
+// sit in the same dark-navy family as shop buttons so they read as one UI.
 const COLORS = {
-  cardBg: 0x15151c,
-  cardBorder: 0x6b5536,
-  cardBorderHover: 0x8a6e44,
-  cardCooldown: 0x111118,
-  cardCooldownBorder: 0x33333a,
+  cardBg: 0x1a1a2e,
+  cardBorder: 0x556699,
+  cardBorderHover: 0x88aacc,
+  cardCooldown: 0x141420,
+  cardCooldownBorder: 0x333355,
   faceTint: 0xb8a890,
-  textPrimary: '#c4a566',
-  textSecondary: '#8a8175',
-  textDim: '#5a5550',
-  textAmount: '#d6c79a',
-  textTimer: '#a89060',
-  textTimerLow: '#c44848',
-  cheapBtn: 0x2a4a55,
-  cheapBtnHover: 0x3a6e7a,
-  premiumBtn: 0x6b3838,
-  premiumBtnHover: 0x8a4848,
+  textPrimary: '#ffffff',
+  textSecondary: '#888888',
+  textDim: '#666666',
+  textAmount: '#ffd944',
+  textTimer: '#aaaaaa',
+  textTimerLow: '#ff6644',
+  cheapBtn: 0x223844,
+  cheapBtnHover: 0x335566,
+  premiumBtn: 0x442233,
+  premiumBtnHover: 0x664455,
   btnBorder: 0x000000,
 } as const;
 
@@ -85,20 +87,11 @@ export class GamblerStreetScene extends Phaser.Scene {
 
     const { width, height } = this.scale;
 
-    // Background gradient — flat dark color is fine for v1.
-    this.cameras.main.setBackgroundColor('#0d0d14');
-
-    this.titleText = this.add.text(width / 2, 50, 'GAMBLER STREET', {
-      fontSize: '40px',
-      color: '#c4a566',
-      fontFamily: 'serif',
+    this.titleText = this.add.text(width / 2, 40, 'GAMBLER STREET', {
+      fontSize: '32px',
+      color: '#e0e0e0',
+      fontFamily: 'monospace',
       fontStyle: 'bold',
-    }).setOrigin(0.5);
-    this.add.text(width / 2, 90, 'Strangers wager. Will fortune favor you?', {
-      fontSize: '14px',
-      color: COLORS.textDim,
-      fontFamily: 'serif',
-      fontStyle: 'italic',
     }).setOrigin(0.5);
 
     this.coinsText = this.add.text(20, 20, '', {
@@ -118,8 +111,8 @@ export class GamblerStreetScene extends Phaser.Scene {
 
     // List anchor: just below the header. Cards stack DOWN from this point.
     // Reserve a strip at the bottom for the back button.
-    this.listTop = 120;
-    this.listViewportH = Math.max(200, height - this.listTop - 80);
+    this.listTop = 100;
+    this.listViewportH = Math.max(200, height - this.listTop - 60);
 
     // Container holding the gambler cards. Anchored at the top of the
     // visible list area; cards added below it. Container.y is shifted on
@@ -146,16 +139,12 @@ export class GamblerStreetScene extends Phaser.Scene {
       this.cardsContainer.y = this.listTop - this.scrollOffset;
     });
 
-    // Back button — lower-left, consistent with shop screens.
-    const backBtn = this.add.text(24, height - 32, '◄ BACK  (Esc)', {
-      fontSize: '16px',
-      color: '#88aacc',
-      fontFamily: 'monospace',
-      backgroundColor: '#1a1a2e',
-      padding: { x: 12, y: 6 },
+    // Back button — lower-left, matches BombsShop / BombermanShop / Lobby.
+    const backBtn = this.add.text(20, height - 30, '[ < BACK ]', {
+      fontSize: '16px', color: '#888888', fontFamily: 'monospace',
     }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
-    backBtn.on('pointerover', () => backBtn.setColor('#ccddff'));
-    backBtn.on('pointerout', () => backBtn.setColor('#88aacc'));
+    backBtn.on('pointerover', () => backBtn.setColor('#cccccc'));
+    backBtn.on('pointerout', () => backBtn.setColor('#888888'));
     backBtn.on('pointerdown', () => this.scene.start('MainMenuScene'));
 
     // Esc → Main Menu (matches the shop scenes' behavior).
@@ -294,8 +283,7 @@ export class GamblerStreetScene extends Phaser.Scene {
       const txt = this.add.text(0, -8, 'NEW GAMBLER ARRIVES', {
         fontSize: '16px',
         color: COLORS.textSecondary,
-        fontFamily: 'serif',
-        fontStyle: 'italic',
+        fontFamily: 'monospace',
       }).setOrigin(0.5);
       const timer = this.add.text(0, 18, formatTimer(slot, Date.now()), {
         fontSize: '22px',
@@ -323,42 +311,42 @@ export class GamblerStreetScene extends Phaser.Scene {
     // Name
     const nameX = faceX + faceSize / 2 + 18;
     const name = this.add.text(nameX, -CARD_HEIGHT / 2 + 14, g.name, {
-      fontSize: '20px',
+      fontSize: '22px',
       color: COLORS.textPrimary,
-      fontFamily: 'serif',
+      fontFamily: 'monospace',
       fontStyle: 'bold',
     }).setOrigin(0, 0);
     card.add(name);
 
     // Treasure ask line: "WANTS  [icon] N FishName"
-    const askY = -CARD_HEIGHT / 2 + 50;
-    const wantsLabel = this.add.text(nameX, askY, 'WANTS', {
-      fontSize: '12px',
+    const askY = -CARD_HEIGHT / 2 + 56;
+    const wantsLabel = this.add.text(nameX, askY + 4, 'WANTS', {
+      fontSize: '13px',
       color: COLORS.textDim,
       fontFamily: 'monospace',
     }).setOrigin(0, 0);
     card.add(wantsLabel);
 
-    const askIcon = this.add.image(nameX + 60, askY + 8, TREASURE_TEXTURE_KEY, treasureIconFrame(g.treasureType));
-    askIcon.setDisplaySize(20, 20);
+    const askIcon = this.add.image(nameX + 64, askY + 12, TREASURE_TEXTURE_KEY, treasureIconFrame(g.treasureType));
+    askIcon.setDisplaySize(24, 24);
     card.add(askIcon);
 
     const askText = this.add.text(
-      nameX + 78, askY,
+      nameX + 84, askY,
       `${g.treasureAmount} ${TREASURE_DISPLAY_NAMES[g.treasureType]}`,
       {
-        fontSize: '16px',
+        fontSize: '18px',
         color: COLORS.textAmount,
-        fontFamily: 'serif',
+        fontFamily: 'monospace',
         fontStyle: 'bold',
       },
     ).setOrigin(0, 0);
     card.add(askText);
 
     // Reward line
-    const rewardY = askY + 26;
+    const rewardY = askY + 32;
     const rewardLabel = this.add.text(nameX, rewardY, `OFFERS ${g.coinReward} COINS`, {
-      fontSize: '12px',
+      fontSize: '14px',
       color: COLORS.textSecondary,
       fontFamily: 'monospace',
     }).setOrigin(0, 0);
@@ -421,8 +409,8 @@ export class GamblerStreetScene extends Phaser.Scene {
       .setStrokeStyle(1, 0x000000, 0.9);
     c.add(bg);
     const txt = this.add.text(0, 0, label, {
-      fontSize: '14px',
-      color: enabled ? '#e0d4b8' : '#666',
+      fontSize: '16px',
+      color: enabled ? '#ffffff' : '#555566',
       fontFamily: 'monospace',
       fontStyle: 'bold',
     }).setOrigin(0.5);
@@ -487,9 +475,9 @@ function formatTimer(slot: GamblerSlot, now: number): string {
 }
 
 function timerColor(slot: GamblerSlot, now: number): string {
-  if (slot.kind !== 'gambler') return '#888';
+  if (slot.kind !== 'gambler') return '#888888';
   const remaining = slot.gambler.expiresAt - now;
   if (remaining < 30_000) return COLORS.textTimerLow;
-  if (remaining < 60_000) return '#d68855';
+  if (remaining < 60_000) return '#ffaa44';
   return COLORS.textTimer;
 }

@@ -4,11 +4,22 @@ import type { MatchState, PlayerAction } from '@shared/types/match.ts';
 import type { TreasureBundle } from '@shared/config/treasures.ts';
 
 /**
- * Character portrait used in the dialogue panel. Only char4 is used per the
- * brief ("We always use uncolored char4"). Reserved for future variants if
- * we add an angry/excited expression in Phase 12 polish.
+ * Character portrait used in the dialogue panel. The four `char4_*` ids are
+ * the tutorial guide in different expressions; the bare `'char4'` is the
+ * default speaking pose.
+ *
+ * Texture mapping (loaded by TutorialOverlayScene.preload):
+ *   char4               → sprites/tutorial_guy.png
+ *   char4_neutral       → sprites/tutorial_guy_neutral.png
+ *   char4_saw_something → sprites/tutorial_guy_saw_something.png
+ *   char4_surprised     → sprites/tutorial_guy_surprised.png
  */
-export type PortraitId = 'char4' | 'char4_angry' | null;
+export type PortraitId =
+  | 'char4'
+  | 'char4_neutral'
+  | 'char4_saw_something'
+  | 'char4_surprised'
+  | null;
 
 /**
  * Thing the player is expected to do next. The director validates incoming
@@ -198,7 +209,7 @@ export type TutorialStep =
  */
 export interface TutorialHost {
   // Overlay primitives
-  showDialogue(text: string, onAdvance: () => void): void;
+  showDialogue(text: string, onAdvance: () => void, portrait?: PortraitId): void;
   hideDialogue(): void;
   showPause(text: string, onAdvance: () => void): void;
   hidePause(): void;

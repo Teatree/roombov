@@ -60,8 +60,14 @@ spawn is typically `(6, 9)`; the extraction hatch is at `(26, 7)`. You can open
 { kind: 'dialogue', portrait: 'char4', text: 'Click the highlighted tile.' }
 ```
 
-- `portrait` — who's talking. Only `'char4'` (the tutorial guide) is currently
-  wired up. The asset is `public/sprites/tutorial_guy.png`.
+- `portrait` — who's talking. The tutorial guide has four expressions:
+    - `'char4'` — default speaking pose (`sprites/tutorial_guy.png`)
+    - `'char4_neutral'` — calm/listening (`sprites/tutorial_guy_neutral.png`)
+    - `'char4_saw_something'` — alert/curious (`sprites/tutorial_guy_saw_something.png`)
+    - `'char4_surprised'` — shocked/reveal (`sprites/tutorial_guy_surprised.png`)
+
+  Texture is swapped in place when consecutive dialogues use different
+  portraits — no flicker, no rebuild.
 - `text` — what they say. Keep it short; the panel wraps around ~380px.
 - **Blocks** until the player clicks anywhere to advance.
 

@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
 import type { MatchScene } from './MatchScene.ts';
-import type { HighlightShape, HighlightTarget } from '../tutorial/types.ts';
+import type { HighlightShape, HighlightTarget, PortraitId } from '../tutorial/types.ts';
 import type { TutorialMatchBackend } from '../backends/TutorialMatchBackend.ts';
 
 /**
@@ -29,6 +29,18 @@ const DIALOGUE_PANEL_W = 420;
 const DIALOGUE_PANEL_H = 160;
 const DIALOGUE_MARGIN = 20;
 const PORTRAIT_SIZE = 128;
+
+/**
+ * Portrait id → Phaser texture key. The keys mirror the ids so it's obvious
+ * in the network panel which file each portrait is. All four are preloaded
+ * in `preload()` below.
+ */
+const PORTRAIT_TEXTURES: Record<Exclude<PortraitId, null>, string> = {
+  char4: 'tutorial_guy',
+  char4_neutral: 'tutorial_guy_neutral',
+  char4_saw_something: 'tutorial_guy_saw_something',
+  char4_surprised: 'tutorial_guy_surprised',
+};
 
 /**
  * Parallel scene that renders all tutorial-only UI on top of MatchScene.
@@ -79,8 +91,13 @@ export class TutorialOverlayScene extends Phaser.Scene {
     // Defensive: ensure char4 spritesheet is loaded (other scenes may need it
     // if overlay starts first).
     preloadBombermanSpritesheets(this);
-    // Tutorial dialogue portrait — static image, displayed at native size.
+    // Tutorial dialogue portraits — one image per expression. Texture keys
+    // are taken from PORTRAIT_TEXTURES so showDialogue() can swap between
+    // them by portrait id.
     this.load.image('tutorial_guy', 'sprites/tutorial_guy.png');
+    this.load.image('tutorial_guy_neutral', 'sprites/tutorial_guy_neutral.png');
+    this.load.image('tutorial_guy_saw_something', 'sprites/tutorial_guy_saw_something.png');
+    this.load.image('tutorial_guy_surprised', 'sprites/tutorial_guy_surprised.png');
   }
 
   private backend: TutorialMatchBackend | null = null;
@@ -194,12 +211,15 @@ export class TutorialOverlayScene extends Phaser.Scene {
   // ============================================================
 
   /**
-   * Show a dialogue line. Character portrait (close-up char4) + text + footer.
+   * Show a dialogue line. Character portrait + text + footer.
    * `onAdvance` fires when the player clicks to continue. The panel stays
    * open until the director calls `hideDialogue()` or shows a different one.
+   *
+   * `portrait` selects which expression to render. Defaults to `'char4'`
+   * (the original speaking pose) when omitted or null.
    */
-  showDialogue(text: string, onAdvance: () => void): void {
-    this.ensurePortrait();
+  showDialogue(text: string, onAdvance: () => void, portrait?: PortraitId): void {
+    this.ensurePortrait(portrait ?? 'char4');
     this.dialogueText.setText(text);
     this.dialoguePanel.setVisible(true);
     this.enableClickCatcher(onAdvance);
@@ -304,28 +324,37 @@ export class TutorialOverlayScene extends Phaser.Scene {
   // ============================================================
 
   /**
-   * Build the dialogue portrait lazily from the static `tutorial_guy.png`.
-   * Centered inside the PORTRAIT_SIZE frame. If the source art is smaller
-   * than the frame it's drawn at native resolution; if larger, it's scaled
-   * down proportionally to fit — aspect ratio preserved, no cropping.
+   * Build (or swap) the dialogue portrait for `portraitId`. Centered inside
+   * the PORTRAIT_SIZE frame. If the source art is smaller than the frame
+   * it's drawn at native resolution; if larger, it's scaled down
+   * proportionally to fit — aspect ratio preserved, no cropping.
+   *
+   * On subsequent calls, if the portrait id resolves to a different texture
+   * we swap textures and re-fit; same id is a no-op.
    */
-  private ensurePortrait(): void {
-    if (this.dialoguePortrait) return;
-    const image = this.add.image(
-      12 + PORTRAIT_SIZE / 2,
-      12 + PORTRAIT_SIZE / 2,
-      'tutorial_guy',
-    );
-    image.setOrigin(0.5, 0.5);
+  private ensurePortrait(portraitId: Exclude<PortraitId, null>): void {
+    const textureKey = PORTRAIT_TEXTURES[portraitId];
+    if (this.dialoguePortrait && this.dialoguePortrait.texture.key === textureKey) {
+      return;
+    }
+    if (!this.dialoguePortrait) {
+      this.dialoguePortrait = this.add.image(
+        12 + PORTRAIT_SIZE / 2,
+        12 + PORTRAIT_SIZE / 2,
+        textureKey,
+      ).setOrigin(0.5, 0.5);
+      this.dialoguePanel.add(this.dialoguePortrait);
+    } else {
+      this.dialoguePortrait.setScale(1);
+      this.dialoguePortrait.setTexture(textureKey);
+    }
     const inner = PORTRAIT_SIZE - 8;
-    const srcW = image.width;
-    const srcH = image.height;
+    const srcW = this.dialoguePortrait.width;
+    const srcH = this.dialoguePortrait.height;
     if (srcW > inner || srcH > inner) {
       const scale = Math.min(inner / srcW, inner / srcH);
-      image.setScale(scale);
+      this.dialoguePortrait.setScale(scale);
     }
-    this.dialoguePanel.add(image);
-    this.dialoguePortrait = image;
   }
 
   private enableClickCatcher(onAdvance: () => void): void {

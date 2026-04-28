@@ -62,8 +62,8 @@ export class GamblerStreetPopupScene extends Phaser.Scene {
       .setInteractive(); // swallows clicks behind the modal
 
     this.root = this.add.container(width / 2, height / 2);
-    const bg = this.add.rectangle(0, 0, POPUP_W, POPUP_H, 0x18181f, 1)
-      .setStrokeStyle(2, 0x6b5536, 1);
+    const bg = this.add.rectangle(0, 0, POPUP_W, POPUP_H, 0x1a1a2e, 1)
+      .setStrokeStyle(2, 0x556699, 1);
     this.root.add(bg);
 
     const face = this.add.image(0, -POPUP_H / 2 + 130, TUTORIAL_GUY_KEY);
@@ -73,8 +73,8 @@ export class GamblerStreetPopupScene extends Phaser.Scene {
 
     this.titleText = this.add.text(0, 50, 'Which hand?', {
       fontSize: '32px',
-      color: '#c4a566',
-      fontFamily: 'serif',
+      color: '#e0e0e0',
+      fontFamily: 'monospace',
       fontStyle: 'bold',
     }).setOrigin(0.5);
     this.root.add(this.titleText);
@@ -138,7 +138,7 @@ export class GamblerStreetPopupScene extends Phaser.Scene {
     if (!msg.ok || !msg.outcome) {
       // Server refused the bet (insufficient treasure, expired, etc.).
       this.titleText.setText('They walked away.');
-      this.titleText.setColor('#a85454');
+      this.titleText.setColor('#ff6644');
       this.time.delayedCall(2000, () => this.scene.stop());
       return;
     }
@@ -146,12 +146,12 @@ export class GamblerStreetPopupScene extends Phaser.Scene {
     const o = msg.outcome;
     if (o.won) {
       this.titleText.setText('Well done!');
-      this.titleText.setColor('#88c44a');
+      this.titleText.setColor('#44ff88');
       this.showWinSubtitle(o.coinsGained);
       this.fireConfetti('gold');
     } else {
       this.titleText.setText('Better luck next time, chum.');
-      this.titleText.setColor('#c44848');
+      this.titleText.setColor('#ff6644');
       this.titleText.setFontSize(24);
       this.fireConfetti('grey');
     }
@@ -171,13 +171,13 @@ export class GamblerStreetPopupScene extends Phaser.Scene {
   private showWinSubtitle(coins: number): void {
     const prefix = this.add.text(0, 100, 'You won ', {
       fontSize: '22px',
-      color: '#e0d4b8',
-      fontFamily: 'serif',
+      color: '#e0e0e0',
+      fontFamily: 'monospace',
     }).setOrigin(1, 0.5);
     const won = this.add.text(0, 100, `${coins} coins`, {
       fontSize: '22px',
       color: '#ffd944',
-      fontFamily: 'serif',
+      fontFamily: 'monospace',
       fontStyle: 'bold',
     }).setOrigin(0, 0.5);
     // Center the pair around x=0: both meet at x = (prefix.w - won.w) / 2.
@@ -250,22 +250,28 @@ export class GamblerStreetPopupScene extends Phaser.Scene {
     const c = this.add.container(x, y);
     const w = 160;
     const h = 56;
-    const bg = this.add.rectangle(0, 0, w, h, 0x2a4a55, 1)
+    const bg = this.add.rectangle(0, 0, w, h, 0x222244, 1)
       .setStrokeStyle(1, 0x000000, 0.9);
     c.add(bg);
     const txt = this.add.text(0, 0, label, {
-      fontSize: '20px',
-      color: '#e0d4b8',
+      fontSize: '22px',
+      color: '#44aaff',
       fontFamily: 'monospace',
       fontStyle: 'bold',
     }).setOrigin(0.5);
     c.add(txt);
 
     bg.setInteractive({ useHandCursor: true });
-    bg.on('pointerover', () => bg.setFillStyle(0x3a6e7a, 1));
-    bg.on('pointerout', () => bg.setFillStyle(0x2a4a55, 1));
+    bg.on('pointerover', () => {
+      bg.setFillStyle(0x334466, 1);
+      txt.setColor('#88ccff');
+    });
+    bg.on('pointerout', () => {
+      bg.setFillStyle(0x222244, 1);
+      txt.setColor('#44aaff');
+    });
     bg.on('pointerdown', () => {
-      bg.setFillStyle(0x2a4a55, 1);
+      bg.setFillStyle(0x222244, 1);
       onClick();
     });
     return c;

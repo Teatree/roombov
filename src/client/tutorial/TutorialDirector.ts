@@ -239,7 +239,7 @@ export class TutorialDirector {
           host.hideDialogue();
           this.cursor++;
           this.advance();
-        });
+        }, step.portrait);
         return true;
 
       case 'pause':
