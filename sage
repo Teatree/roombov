@@ -1,0 +1,119 @@
+warning: in the working copy of 'src/client/scenes/MatchScene.ts', CRLF will be replaced by LF the next time Git touches it
+[1mdiff --git a/production/player-data/p_3a9ad8b22613.json b/production/player-data/p_3a9ad8b22613.json[m
+[1mindex a01569f..d05b354 100644[m
+[1m--- a/production/player-data/p_3a9ad8b22613.json[m
+[1m+++ b/production/player-data/p_3a9ad8b22613.json[m
+[36m@@ -1,18 +1,19 @@[m
+ {[m
+   "id": "p_3a9ad8b22613",[m
+   "createdAt": 1775946762703,[m
+[31m-  "updatedAt": 1777417665767,[m
+[31m-  "coins": 1400,[m
+[32m+[m[32m  "updatedAt": 1777759998958,[m
+[32m+[m[32m  "coins": 1424,[m
+   "treasures": {[m
+[31m-    "fish": 79,[m
+[31m-    "books": 76,[m
+[31m-    "grapes": 123,[m
+[31m-    "jade": 27,[m
+[31m-    "coffee": 65,[m
+[31m-    "bones": 81,[m
+[31m-    "mushrooms": 46,[m
+[31m-    "amulets": 76,[m
+[31m-    "lanterns": 59[m
+[32m+[m[32m    "fish": 86,[m
+[32m+[m[32m    "books": 138,[m
+[32m+[m[32m    "grapes": 153,[m
+[32m+[m[32m    "jade": 112,[m
+[32m+[m[32m    "coffee": 104,[m
+[32m+[m[32m    "bones": 143,[m
+[32m+[m[32m    "mushrooms": 115,[m
+[32m+[m[32m    "amulets": 30,[m
+[32m+[m[32m    "lanterns": 82,[m
+[32m+[m[32m    "chalice": 23[m
+   },[m
+   "ownedBombermen": [[m
+     {[m
+[36m@@ -29,24 +30,24 @@[m
+       "inventory": {[m
+         "slots": [[m
+           {[m
+[31m-            "type": "bomb_wide",[m
+[31m-            "count": 4[m
+[32m+[m[32m            "type": "bomb",[m
+[32m+[m[32m            "count": 5[m
+           },[m
+           {[m
+             "type": "ender_pearl",[m
+             "count": 5[m
+           },[m
+           {[m
+[31m-            "type": "bomb_wide",[m
+[31m-            "count": 4[m
+[32m+[m[32m            "type": "banana",[m
+[32m+[m[32m            "count": 5[m
+           },[m
+           {[m
+[31m-            "type": "fart_escape",[m
+[32m+[m[32m            "type": "delay_tricky",[m
+             "count": 5[m
+           },[m
+           {[m
+             "type": "flare",[m
+[31m-            "count": 2[m
+[32m+[m[32m            "count": 3[m
+           }[m
+         ][m
+       },[m
+[36m@@ -69,65 +70,57 @@[m
+       {[m
+         "kind": "gambler",[m
+         "gambler": {[m
+[31m-          "id": "g_moj8ij5i_1i",[m
+[31m-          "name": "Adèle Charpentier",[m
+[31m-          "treasureType": "bones",[m
+[31m-          "treasureAmount": 20,[m
+[31m-          "coinReward": 2,[m
+[31m-          "createdAt": 1777417545078,[m
+[31m-          "expiresAt": 1777420220890[m
+[32m+[m[32m          "id": "g_moouo9o4_1x",[m
+[32m+[m[32m          "name": "Hilda Brandt",[m
+[32m+[m[32m          "treasureType": "jade",[m
+[32m+[m[32m          "treasureAmount": 10,[m
+[32m+[m[32m          "coinReward": 6,[m
+[32m+[m[32m          "createdAt": 1777757095156,[m
+[32m+[m[32m          "expiresAt": 1777760481444[m
+         }[m
+       },[m
+       {[m
+         "kind": "gambler",[m
+         "gambler": {[m
+[31m-          "id": "g_moj8ij5i_1j",[m
+[31m-          "name": "Cyril Pemberton",[m
+[31m-          "treasureType": "books",[m
+[32m+[m[32m          "id": "g_moouo9o4_1y",[m
+[32m+[m[32m          "name": "Rafael Mendoza",[m
+[32m+[m[32m          "treasureType": "fish",[m
+           "treasureAmount": 20,[m
+[31m-          "coinReward": 5,[m
+[31m-          "createdAt": 1777417545078,[m
+[31m-          "expiresAt": 1777421111300[m
+[32m+[m[32m          "coinReward": 2,[m
+[32m+[m[32m          "createdAt": 1777757095156,[m
+[32m+[m[32m          "expiresAt": 1777759995647[m
+         }[m
+       },[m
+       {[m
+         "kind": "gambler",[m
+         "gambler": {[m
+[31m-          "id": "g_moj8l49z_1m",[m
+[31m-          "name": "Diego Vargas",[m
+[31m-          "treasureType": "mushrooms",[m
+[31m-          "treasureAmount": 15,[m
+[31m-          "coinReward": 5,[m
+[31m-          "createdAt": 1777417665767,[m
+[31m-          "expiresAt": 1777420187058[m
+[32m+[m[32m          "id": "g_moouo9o4_1z",[m
+[32m+[m[32m          "name": "Camille Dubois",[m
+[32m+[m[32m          "treasureType": "bones",[m
+[32m+[m[32m          "treasureAmount": 2

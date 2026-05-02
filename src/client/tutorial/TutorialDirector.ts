@@ -376,6 +376,7 @@ export class TutorialDirector {
           }
           s.bombermen.push({
             playerId: step.botId,
+            isBot: true,
             bombermanId: `bot-${step.botId}`,
             colors: { shirt: 0x884444, pants: 0x442222, hair: 0x221111 },
             tint: step.tint ?? 0xffffff,

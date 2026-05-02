@@ -316,7 +316,7 @@ export class TutorialMatchBackend implements MatchBackend {
   private buildHost(): TutorialHost {
     const overlay = this.overlay!;
     return {
-      showDialogue: (text, onAdvance) => overlay.showDialogue(text, onAdvance),
+      showDialogue: (text, onAdvance, portrait) => overlay.showDialogue(text, onAdvance, portrait),
       hideDialogue: () => overlay.hideDialogue(),
       showPause: (text, onAdvance) => overlay.showPause(text, onAdvance),
       hidePause: () => overlay.hidePause(),
@@ -431,6 +431,7 @@ export class TutorialMatchBackend implements MatchBackend {
     const spawn = map.spawns[0] ?? { x: 0, y: 0, id: 0 };
     const player: BombermanState = {
       playerId: TUTORIAL_PLAYER_ID,
+      isBot: false,
       bombermanId: 'tutorial-char4',
       colors: { shirt: 0xffffff, pants: 0xffffff, hair: 0xffffff },
       tint: 0xffffff, // uncolored char4 per brief

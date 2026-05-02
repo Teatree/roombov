@@ -159,7 +159,7 @@ export type TurnEvent =
   | { kind: 'bomb_triggered'; bombId: string; type: BombType; x: number; y: number; tiles: Tile[] }
   | { kind: 'damaged'; playerId: string; hpRemaining: number }
   | { kind: 'died'; playerId: string; x: number; y: number; killerId: string | null }
-  | { kind: 'escaped'; playerId: string }
+  | { kind: 'escaped'; playerId: string; treasures: TreasureBundle }
   | { kind: 'treasures_collected'; playerId: string; treasures: TreasureBundle }
   | { kind: 'body_looted'; playerId: string; bodyId: string; treasures: TreasureBundle }
   | { kind: 'teleport'; playerId: string; fromX: number; fromY: number; toX: number; toY: number }
@@ -431,9 +431,13 @@ export function resolveTurn(
   for (const bomberman of actors) {
     if (!bomberman.alive) continue;
 
+    // Bots ignore treasures entirely — they neither open chests nor loot
+    // bodies, leaving the haul intact for any human who walks over later.
+    const canCollectTreasure = !bomberman.isBot;
+
     // Chest treasures — auto-collect on walk-over; also marks chest as opened
     const chest = state.chests.find(c => c.x === bomberman.x && c.y === bomberman.y);
-    if (chest) {
+    if (chest && canCollectTreasure) {
       if (hasAnyTreasure(chest.treasures)) {
         const picked: TreasureBundle = { ...chest.treasures };
         mergeTreasures(bomberman.treasures, picked);
@@ -444,14 +448,16 @@ export function resolveTurn(
     }
 
     // Body treasures — auto-transfer on walk-over (bombs are looted manually via loot panel)
-    const bodyIdx = state.bodies.findIndex(b => b.x === bomberman.x && b.y === bomberman.y);
-    if (bodyIdx >= 0) {
-      const body = state.bodies[bodyIdx];
-      if (hasAnyTreasure(body.treasures)) {
-        const picked: TreasureBundle = { ...body.treasures };
-        mergeTreasures(bomberman.treasures, picked);
-        events.push({ kind: 'body_looted', playerId: bomberman.playerId, bodyId: body.id, treasures: picked });
-        body.treasures = {};
+    if (canCollectTreasure) {
+      const bodyIdx = state.bodies.findIndex(b => b.x === bomberman.x && b.y === bomberman.y);
+      if (bodyIdx >= 0) {
+        const body = state.bodies[bodyIdx];
+        if (hasAnyTreasure(body.treasures)) {
+          const picked: TreasureBundle = { ...body.treasures };
+          mergeTreasures(bomberman.treasures, picked);
+          events.push({ kind: 'body_looted', playerId: bomberman.playerId, bodyId: body.id, treasures: picked });
+          body.treasures = {};
+        }
       }
     }
 
@@ -1353,7 +1359,7 @@ export function resolveTurn(
   // --- 10. Escapes (remove from future action but keep in list for scoring) ---
   for (const b of state.bombermen) {
     if (b.alive && b.escaped) {
-      events.push({ kind: 'escaped', playerId: b.playerId });
+      events.push({ kind: 'escaped', playerId: b.playerId, treasures: { ...b.treasures } });
     }
   }
 

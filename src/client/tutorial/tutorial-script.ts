@@ -35,13 +35,11 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
 
   // --- Beat 0: HUD Primer -------------------------------------------------
   { kind: 'highlight', target: { kind: 'timer' } },
-  { kind: 'dialogue', portrait: 'char4', text: 'Every Action Requires a Turn.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Every Action Requires a Turn.' },
   { kind: 'highlight', target: { kind: 'hp' } },
-  { kind: 'dialogue', portrait: 'char4', text: 'Your HP. Do not lose it.' },
-  { kind: 'highlight', target: { kind: 'treasureList' } },
-  { kind: 'dialogue', portrait: 'char4', text: 'Treasures. You keep these after extraction. Cash them in at Gambler Street.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Your HP. Do not lose it.' },
   { kind: 'highlight', target: { kind: 'bombTray' } },
-  { kind: 'dialogue', portrait: 'char4', text: 'Four bomb slots. Loot to fill them.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Four bomb slots. Loot to fill them.' },
   { kind: 'clearHighlight' },
 
   // --- Beat 1: Movement ---------------------------------------------------
@@ -51,17 +49,17 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   // bomberman has actually reached (9, 10). OOC Rush stays suppressed so
   // the walk is exactly four single-tile turns.
   { kind: 'setBlockMovement', blocked: false },
-  { kind: 'dialogue', portrait: 'char4', text: 'To move click on walkable tiles.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'To move click on walkable tiles.' },
   { kind: 'highlight', target: { kind: 'tile', x: 8, y: 11, shape: 'circle' } },
   { kind: 'waitForAction', expected: { kind: 'reachTile', x: 8, y: 11 } },
   { kind: 'clearHighlight' },
-  { kind: 'dialogue', portrait: 'char4', text: 'Good Job.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Good Job.' },
 
   // --- Beat 2: Practice Throw (Rock slot) --------------------------------
   // Player is at (9, 10). Rock slot (0) is always filled. Throw at (10, 9).
   { kind: 'panCamera', focus: { x: 9, y: 9 }, durationMs: 500 },
   { kind: 'dialogue', portrait: 'char4', text: 'Now let us do some throwing' },
-  { kind: 'dialogue', portrait: 'char4', text: 'You always have a rock on you, select it' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'You always have a rock on you, select it' },
   // Lock movement so a stray floor click during the "click the rock slot"
   // beat doesn't BFS-walk the player off the teaching tile.
   { kind: 'setBlockMovement', blocked: true },
@@ -74,7 +72,7 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   { kind: 'highlight', target: { kind: 'tile', x: 9, y: 9, shape: 'x' } },
   { kind: 'waitForAction', expected: { kind: 'throwAt', slotIndex: 0, x: 9, y: 9 } },
   { kind: 'clearHighlight' },
-  { kind: 'dialogue', portrait: 'char4', text: "Yeah you killed the shit out of that target" },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: "Yeah you killed the shit out of that target" },
   { kind: 'dialogue', portrait: 'char4', text: "Now let's find some real bomb!" },
 
   // --- Beat 3: Chest Loot ------------------------------------------------
@@ -92,20 +90,20 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
     ],
   },
   { kind: 'panCamera', focus: { x: 10, y: 10 }, durationMs: 500 },
-  { kind: 'dialogue', portrait: 'char4', text: 'Chest. Walk onto it and loot it!' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Chest. Walk onto it and loot it!' },
   { kind: 'highlight', target: { kind: 'tile', x: 10, y: 10, shape: 'circle' } },
   // Click the chest tile — the client BFS-walks there over two turns.
   { kind: 'waitForAction', expected: { kind: 'reachTile', x: 10, y: 10 } },
   { kind: 'clearHighlight' },
-  { kind: 'dialogue', portrait: 'char4', text: 'Grab the Flare.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Grab the Flare.' },
   { kind: 'highlight', target: { kind: 'lootItem', bombType: 'flare' } },
   { kind: 'waitForAction', expected: { kind: 'lootBomb', sourceKind: 'chest', bombType: 'flare' } },
   { kind: 'clearHighlight' },
-  { kind: 'dialogue', portrait: 'char4', text: 'And the Bomb.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'And the Bomb.' },
   { kind: 'highlight', target: { kind: 'lootItem', bombType: 'bomb' } },
   { kind: 'waitForAction', expected: { kind: 'lootBomb', sourceKind: 'chest', bombType: 'bomb' } },
   { kind: 'clearHighlight' },
-  { kind: 'dialogue', portrait: 'char4', text: 'Good job, notice that the treasures get picked up automatically' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Good job, notice that the treasures get picked up automatically' },
   { kind: 'highlight', target: { kind: 'treasureList' } },
 
   // --- Beat 4: Flare + Bomb kill (Bot1 at (17, 10)) ----------------------
@@ -119,7 +117,7 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
     hp: 1,
   },
   { kind: 'panCamera', focus: { x: 14, y: 10 }, durationMs: 600 },
-  { kind: 'dialogue', portrait: 'char4', text: 'Test the Flares. Light up this area' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Test the Flares. Light up this area' },
   // Flare target is one tile LEFT of the enemy (16, 10) so the flare
   // lights the enemy tile without landing on top of it.
   { kind: 'highlight', target: { kind: 'slot', index: 1 } },
@@ -132,7 +130,7 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   { kind: 'clearHighlight' },
   // Enemy revealed — pop an exclamation over the bot.
   { kind: 'flashExclamation', x: 17, y: 10 },
-  { kind: 'dialogue', portrait: 'char4', text: 'Holy Mother of Jesus! What a surprise, there is an enemy RIGHT FKN THERE! Kill em' },
+  { kind: 'dialogue', portrait: 'char4_surprised', text: 'Holy Mother of Jesus! What a surprise, there is an enemy RIGHT FKN THERE! Kill em' },
   { kind: 'highlight', target: { kind: 'slot', index: 2 } },
   { kind: 'highlight', target: { kind: 'tile', x: 17, y: 11, shape: 'x' } },
   { kind: 'setBotAction', botId: 'B1', action: { kind: 'idle' } },
@@ -144,7 +142,7 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   // Hold after the explosion so the bot's death animation can finish
   // before 'Down.' fires (~1s on top of the normal turn timing).
   { kind: 'promptIdle', text: 'Some Bombs take a turn to blow up', delayAfterMs: 1000 },
-  { kind: 'dialogue', portrait: 'char4', text: 'Down.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Down.' },
 
   // --- Beat 5: Dodge -----------------------------------------------------
   // B2 is spawned far east (26, 8) so it stays outside the player's LOS
@@ -163,8 +161,8 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
     inventory: [{ slot: 0, type: 'ender_pearl', count: 1 }],
   },
   { kind: 'panCamera', focus: 'player', durationMs: 500 },
-  { kind: 'dialogue', portrait: 'char4', text: 'This is how we fight out here.' },
-  { kind: 'dialogue', portrait: 'char4', text: 'But sometimes you have to dodge as well.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'This is how we fight out here.' },
+  { kind: 'dialogue', portrait: 'char4_surprised', text: 'But sometimes you have to dodge as well.' },
 
   // Camera snaps east to suggest the bomb is flying in from the dark.
   // Nothing is actually shown at that tile — B2 is further out, outside
@@ -191,8 +189,8 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   { kind: 'autoIdleTurn', delayBeforeMs: 100, delayAfterMs: 300 },
   // Pan back over the bomb tile toward the player — simulates the arc.
   { kind: 'panCamera', focus: 'player', durationMs: 600 },
-  { kind: 'dialogue', portrait: 'char4', text: "Don't panic, that bomb will take a turn to explode." },
-  { kind: 'dialogue', portrait: 'char4', text: 'Just move one tile down.' },
+  { kind: 'dialogue', portrait: 'char4_saw_something', text: "Don't panic, that bomb will take a turn to explode." },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Just move one tile down.' },
   { kind: 'highlight', target: { kind: 'tile', x: 10, y: 11, shape: 'circle' } },
   // Single-tile move south. On resolve, bomb explodes at (11, 10); player
   // at (10, 11) is outside the plus pattern.
@@ -200,7 +198,7 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   { kind: 'clearHighlight' },
   // Wait for the explosion + dust to settle before reacting.
   { kind: 'autoIdleTurn', delayBeforeMs: 100, delayAfterMs: 100 },
-  { kind: 'dialogue', portrait: 'char4', text: 'That was a close one!' },
+  { kind: 'dialogue', portrait: 'char4_surprised', text: 'That was a close one!' },
 
   // --- Beat 6: Ambush ----------------------------------------------------
   // Player walks to (18, 9) and hides. Trap arms on the next idle turn,
@@ -209,7 +207,7 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   // silently drops it, no movement). On the step to (19, 10), B2 is
   // Chebyshev-1 from player at (18, 9) and the step-in melee counter
   // fires inside the same turn. B2 dies at (19, 10); body drops there.
-  { kind: 'dialogue', portrait: 'char4', text: "But now we don't have any bombs left and we don't know exactly where the Enemy is!" },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: "But now we don't have any bombs left and we don't know exactly where the Enemy is!" },
   { kind: 'dialogue', portrait: 'char4', text: "Let's try to ambush them." },
   // OOC Rush on for the walk-to-trap so the player experiences rushing.
   // With the new LOS-capped OOC rule, B2 at (23, 10) is outside the
@@ -255,8 +253,8 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   // autoIdleTurn.
   { kind: 'autoIdleTurn', delayBeforeMs: 400, delayAfterMs: 500 },
 
-  { kind: 'dialogue', portrait: 'char4', text: 'By Standing still you activate AMBUSH MODE.' },
-  { kind: 'dialogue', portrait: 'char4', text: 'Now if anyone comes close, you will have an element of surprise!' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'By Standing still you activate AMBUSH MODE.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Now if anyone comes close, you will have an element of surprise!' },
   { kind: 'dialogue', portrait: 'char4', text: 'Just you wait...' },
 
   // B2 walks (22, 8) → (21, 8) → (20, 8) → (19, 9) over three auto-idle
@@ -285,11 +283,11 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   // Body drops at (19, 10) where B2 died. Player walks there, loots the
   // ender_pearl, then throws it 2 tiles south of the Escape Hatch (26, 7)
   // to teleport near the extraction point.
-  { kind: 'dialogue', portrait: 'char4', text: "Let's see what that fool had on him." },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: "Let's see what that fool had on him." },
   { kind: 'highlight', target: { kind: 'tile', x: 19, y: 9, shape: 'circle' } },
   { kind: 'waitForAction', expected: { kind: 'reachTile', x: 19, y: 9 } },
   { kind: 'clearHighlight' },
-  { kind: 'dialogue', portrait: 'char4', text: 'Aw sweet, an Ender Pearl! Grab it' },
+  { kind: 'dialogue', portrait: 'char4_saw_something', text: 'Aw sweet, an Ender Pearl! Grab it' },
   { kind: 'highlight', target: { kind: 'lootItem', bombType: 'ender_pearl' } },
   { kind: 'waitForAction', expected: { kind: 'lootBomb', sourceKind: 'body', bombType: 'ender_pearl' } },
   { kind: 'clearHighlight' },
@@ -308,7 +306,7 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
       [slots[1], slots[idx]] = [slots[idx], slots[1]];
     },
   },
-  { kind: 'dialogue', portrait: 'char4', text: "Nice let's test it out!" },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: "Nice let's test it out!" },
   // Target (26, 9): two tiles south of the hatch at (26, 7). Ender Pearl
   // teleports the thrower to the target tile, so the player ends up at
   // (26, 9) — Beat 7 then walks them the remaining two tiles north.
@@ -319,8 +317,8 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
     expected: { kind: 'throwAt', slotIndex: 2, x: 25, y: 8, bombType: 'ender_pearl' },
   },
   { kind: 'clearHighlight' },
-  { kind: 'dialogue', portrait: 'char4', text: "Use Ender Pearls if you ever need to Escape" },
-  { kind: 'dialogue', portrait: 'char4', text: "Now, let's GTFO." },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: "Use Ender Pearls if you ever need to Escape" },
+  { kind: 'dialogue', portrait: 'char4_surprised', text: "Now, let's GTFO." },
 
   // --- Beat 7: Escape ----------------------------------------------------
   // Unlock the camera the moment we invite the player back to the stick.
@@ -329,18 +327,18 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   // Skip the long walk from the ambush corner to the hatch — drop the
   // player right next to it so the escape beat stays punchy.
   { kind: 'panCamera', focus: { x: 25, y: 5 }, durationMs: 900 },
-  { kind: 'dialogue', portrait: 'char4', text: 'That is the hatch. Walk onto it, then wait one turn.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'That is the hatch. Walk onto it, then wait one turn.' },
   { kind: 'highlight', target: { kind: 'tile', x: 25, y: 5, shape: 'circle' } },
   // Click the hatch — client BFS-walks there.
   { kind: 'waitForAction', expected: { kind: 'reachTile', x: 25, y: 5 } },
-  { kind: 'dialogue', portrait: 'char4', text: 'On the hatch. Now wait one turn.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'On the hatch. Now wait one turn.' },
   { kind: 'waitForAction', expected: { kind: 'idle' } },
   { kind: 'clearHighlight' },
-  { kind: 'dialogue', portrait: 'char4', text: 'Extracted. You keep everything you carried.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Extracted. You keep everything you carried.' },
 
   // --- Epilogue ----------------------------------------------------------
-  { kind: 'dialogue', portrait: 'char4', text: 'You have learned: move, loot, throw, dodge, trap, scavenge, escape.' },
-  { kind: 'dialogue', portrait: 'char4', text: 'Real matches add three more players and fog of war. Same rules.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'You have learned: move, loot, throw, dodge, trap, scavenge, escape.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Real matches add three more players and fog of war. Same rules.' },
   { kind: 'pause', text: 'Tutorial complete. Click to return to the menu.' },
   { kind: 'endTutorial', message: 'Tutorial Finished' },
 ];

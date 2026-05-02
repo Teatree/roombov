@@ -110,6 +110,9 @@ export interface OwnedBomberman {
 export interface BombermanState {
   /** Socket / player id this Bomberman is controlled by. */
   playerId: string;
+  /** True if this Bomberman is controlled by a bot (no real socket). Used to
+   *  exclude bots from treasure collection — bots do not loot chests or bodies. */
+  isBot: boolean;
   /** The OwnedBomberman id at the time of match start. */
   bombermanId: string;
   colors: CosmeticColors;

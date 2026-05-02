@@ -29,6 +29,7 @@ import {
   type TreasureBundle,
   TREASURE_TYPES,
   TREASURE_DISPLAY_NAMES,
+  hasAnyTreasure,
 } from '@shared/config/treasures.ts';
 import type { MatchEndMsg } from '@shared/types/messages.ts';
 
@@ -105,6 +106,18 @@ export class MatchScene extends Phaser.Scene {
    *  the room-wide `match_end` broadcast, which only fires once everyone
    *  else is also out. */
   private myEscapeAt: number | null = null;
+  /** Treasures snapshot captured from the local player's `escaped` event.
+   *  The server drains `bm.treasures` on escape (to avoid double-credit at
+   *  finalize), so by the time `transitionToResults` reads `me.treasures`
+   *  it's already empty. Snapshotting here preserves the haul for the
+   *  Results screen. */
+  private myEscapeTreasures: TreasureBundle | null = null;
+  /** Running tally of treasures the LOCAL player has picked up this match.
+   *  Accumulated client-side from every `treasures_collected` / `body_looted`
+   *  event that names the local player. Used as the bulletproof fallback for
+   *  the Results screen — independent of any server snapshot, network
+   *  ordering, or `match_end` payload. */
+  private myTreasureTally: TreasureBundle = {};
   private myKills = 0;
   private myKillerName: string | null = null;
   private tiledInfo: ReturnType<typeof preloadTiledMap> = null;
@@ -282,6 +295,8 @@ export class MatchScene extends Phaser.Scene {
     this.cameraDragging = false;
     this.myDeathAt = null;
     this.myEscapeAt = null;
+    this.myEscapeTreasures = null;
+    this.myTreasureTally = {};
     this.myKills = 0;
     this.myKillerName = null;
     this.escapeSprites = [];
@@ -872,20 +887,30 @@ export class MatchScene extends Phaser.Scene {
     }
 
     // Collect inventory summary for escaped players
-    const inventory: Array<{ name: string; count: number }> = [];
+    const inventory: Array<{ type: BombType; name: string; count: number }> = [];
     if (me && escaped) {
       for (const slot of me.inventory.slots) {
         if (slot) {
           const def = BOMB_CATALOG[slot.type];
-          inventory.push({ name: def.name, count: slot.count });
+          inventory.push({ type: slot.type, name: def.name, count: slot.count });
         }
       }
     }
 
-    // When the local player escapes alone we transition before the
-    // server's `match_end` arrives, so `msg` is undefined. Fall back to
-    // the local bomberman's treasure bundle in that case.
-    const myTreasures: TreasureBundle = msg?.treasuresEarned?.[this.myPlayerId ?? '']
+    // Treasure source priority — first non-empty wins. The client-side tally
+    // is the primary source because we accumulate it from `treasures_collected`
+    // / `body_looted` events as they arrive, so it cannot be lost to any
+    // server-side drain or message ordering issue:
+    //  1. `myTreasureTally` — what we actually saw the player pick up.
+    //  2. `match_end` payload — server's authoritative bundle.
+    //  3. `myEscapeTreasures` — snapshot from the `escaped` event payload.
+    //  4. `me.treasures` — current state (only valid when nothing has drained,
+    //     e.g. tutorial backend).
+    const fromMatchEnd = msg?.treasuresEarned?.[this.myPlayerId ?? ''];
+    const myTreasures: TreasureBundle =
+      (hasAnyTreasure(this.myTreasureTally) ? { ...this.myTreasureTally } : null)
+      ?? (fromMatchEnd && hasAnyTreasure(fromMatchEnd) ? { ...fromMatchEnd } : null)
+      ?? (this.myEscapeTreasures && hasAnyTreasure(this.myEscapeTreasures) ? { ...this.myEscapeTreasures } : null)
       ?? (me?.treasures ? { ...me.treasures } : {});
 
     this.scene.start('ResultsScene', {
@@ -1255,6 +1280,7 @@ export class MatchScene extends Phaser.Scene {
       if ((ev.playerId as string) !== this.myPlayerId) continue;
       if (this.myEscapeAt !== null || this.myDeathAt !== null) break;
       this.myEscapeAt = Date.now();
+      this.myEscapeTreasures = { ...((ev as { treasures?: TreasureBundle }).treasures ?? {}) };
       this.inputMode = { kind: 'idle' };
       this.lootPendingSwap = null;
       const escapeDelay = BALANCE.match.transitionPhaseSeconds * 1000 + 500;
@@ -1306,6 +1332,15 @@ export class MatchScene extends Phaser.Scene {
           playerId = ev.playerId as string;
         }
         if (!bundle || !playerId) continue;
+        // Accumulate into the local-player tally. This is the bulletproof
+        // source for the Results screen — we own these numbers client-side
+        // and never lose them to a server-side drain.
+        if (playerId === this.myPlayerId) {
+          for (const t of TREASURE_TYPES) {
+            const n = bundle[t] ?? 0;
+            if (n > 0) this.myTreasureTally[t] = (this.myTreasureTally[t] ?? 0) + n;
+          }
+        }
         const bm = this.state?.bombermen.find(b => b.playerId === playerId);
         if (!bm) continue;
         const visible = bm.playerId === this.myPlayerId || (this.fogRenderer?.isVisible(bm.x, bm.y) ?? false);

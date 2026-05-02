@@ -1,18 +1,19 @@
 {
   "id": "p_3a9ad8b22613",
   "createdAt": 1775946762703,
-  "updatedAt": 1777417665767,
-  "coins": 1400,
+  "updatedAt": 1777761493031,
+  "coins": 1424,
   "treasures": {
-    "fish": 79,
-    "books": 76,
-    "grapes": 123,
-    "jade": 27,
-    "coffee": 65,
-    "bones": 81,
-    "mushrooms": 46,
-    "amulets": 76,
-    "lanterns": 59
+    "fish": 101,
+    "books": 191,
+    "grapes": 153,
+    "jade": 142,
+    "coffee": 113,
+    "bones": 158,
+    "mushrooms": 160,
+    "amulets": 83,
+    "lanterns": 142,
+    "chalice": 68
   },
   "ownedBombermen": [
     {
@@ -29,24 +30,24 @@
       "inventory": {
         "slots": [
           {
-            "type": "bomb_wide",
-            "count": 4
+            "type": "bomb",
+            "count": 5
           },
           {
             "type": "ender_pearl",
             "count": 5
           },
           {
-            "type": "bomb_wide",
-            "count": 4
-          },
-          {
-            "type": "fart_escape",
+            "type": "banana",
             "count": 5
           },
           {
-            "type": "flare",
+            "type": "flash",
             "count": 2
+          },
+          {
+            "type": "cluster_bomb",
+            "count": 1
           }
         ]
       },
@@ -69,65 +70,65 @@
       {
         "kind": "gambler",
         "gambler": {
-          "id": "g_moj8ij5i_1i",
+          "id": "g_moowuw68_22",
+          "name": "Hilda Brandt",
+          "treasureType": "fish",
+          "treasureAmount": 20,
+          "coinReward": 2,
+          "createdAt": 1777760763488,
+          "expiresAt": 1777764177380
+        }
+      },
+      {
+        "kind": "gambler",
+        "gambler": {
+          "id": "g_moowuw68_23",
+          "name": "Edmund Ashford",
+          "treasureType": "amulets",
+          "treasureAmount": 8,
+          "coinReward": 8,
+          "createdAt": 1777760763488,
+          "expiresAt": 1777763625265
+        }
+      },
+      {
+        "kind": "gambler",
+        "gambler": {
+          "id": "g_moowuw68_24",
           "name": "Adèle Charpentier",
           "treasureType": "bones",
-          "treasureAmount": 20,
-          "coinReward": 2,
-          "createdAt": 1777417545078,
-          "expiresAt": 1777420220890
-        }
-      },
-      {
-        "kind": "gambler",
-        "gambler": {
-          "id": "g_moj8ij5i_1j",
-          "name": "Cyril Pemberton",
-          "treasureType": "books",
-          "treasureAmount": 20,
+          "treasureAmount": 40,
           "coinReward": 5,
-          "createdAt": 1777417545078,
-          "expiresAt": 1777421111300
+          "createdAt": 1777760763488,
+          "expiresAt": 1777763850285
         }
       },
       {
         "kind": "gambler",
         "gambler": {
-          "id": "g_moj8l49z_1m",
-          "name": "Diego Vargas",
-          "treasureType": "mushrooms",
+          "id": "g_moowujcw_21",
+          "name": "Giulia Ricci",
+          "treasureType": "coffee",
           "treasureAmount": 15,
-          "coinReward": 5,
-          "createdAt": 1777417665767,
-          "expiresAt": 1777420187058
-        }
-      },
-      {
-        "kind": "gambler",
-        "gambler": {
-          "id": "g_moj8ij5i_1k",
-          "name": "Octave Laurent",
-          "treasureType": "mushrooms",
-          "treasureAmount": 10,
           "coinReward": 3,
-          "createdAt": 1777417545078,
-          "expiresAt": 1777420768683
+          "createdAt": 1777760746880,
+          "expiresAt": 1777762870032
         }
       },
       {
         "kind": "gambler",
         "gambler": {
-          "id": "g_moj8ij5i_1l",
-          "name": "Lucía Reyes",
-          "treasureType": "bones",
+          "id": "g_moowuw68_25",
+          "name": "Carmen Bravo",
+          "treasureType": "fish",
           "treasureAmount": 20,
           "coinReward": 2,
-          "createdAt": 1777417545078,
-          "expiresAt": 1777420080325
+          "createdAt": 1777760763488,
+          "expiresAt": 1777764244467
         }
       }
     ],
-    "lastTickedAt": 1777417665767,
-    "nextGamblerSerial": 59
+    "lastTickedAt": 1777760763488,
+    "nextGamblerSerial": 78
   }
 }

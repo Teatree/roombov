@@ -29,7 +29,7 @@ import { TIER_CONFIG } from '../shared/config/bomberman-tiers.ts';
 import { resolveTurn } from '../shared/systems/TurnResolver.ts';
 import { createSeededRandom, seededRandInt, seededShuffle } from '../shared/utils/seeded-random.ts';
 import { rollBombLoot, rollTreasureLoot } from '../shared/utils/loot-roll.ts';
-import { mergeTreasures } from '../shared/config/treasures.ts';
+import { mergeTreasures, type TreasureBundle } from '../shared/config/treasures.ts';
 import { createEmptyGamblerStreet } from '../shared/types/gambler-street.ts';
 import { GAMBLER_STREET_GLOBAL } from '../shared/config/gambler-street.ts';
 import { loadMapById } from '../shared/maps/map-loader.ts';
@@ -54,6 +54,10 @@ export class MatchRoom {
   private phaseTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingActions = new Map<string, PlayerAction>();
   private bots: BotPlayer[] = [];
+  /** Snapshot of each escaped Bomberman's treasures, captured **before** the
+   *  drain in the escape handler. Used by `match_end` to ship the haul to
+   *  every client (the live `b.treasures` is empty by then). */
+  private escapedTreasureSnapshots = new Map<string, TreasureBundle>();
   private onEnd: () => void;
 
   constructor(
@@ -205,6 +209,7 @@ export class MatchRoom {
       const equipped = p.profile.ownedBombermen.find(b => b.id === p.profile.equippedBombermanId);
       return {
         playerId: p.playerId,
+        isBot: p.socketId === null,
         bombermanId: equipped?.id ?? 'none',
         colors: equipped?.colors ?? { shirt: 0x888888, pants: 0x444444, hair: 0x222222 },
         tint: equipped?.tint ?? 0xffffff,
@@ -458,6 +463,9 @@ export class MatchRoom {
       const bm = this.state.bombermen.find(b => b.playerId === escapedPlayerId);
       if (!bm) continue;
       const ownedBomberman = profile.ownedBombermen.find(ob => ob.id === bm.bombermanId);
+      // Snapshot treasures BEFORE the drain so `match_end` can still report the
+      // haul to clients (`b.treasures` is empty after this point).
+      this.escapedTreasureSnapshots.set(escapedPlayerId, { ...bm.treasures });
       mergeTreasures(profile.treasures, bm.treasures);
       // Drain so finalize() doesn't double-count if the match ends this turn.
       bm.treasures = {};
@@ -576,11 +584,17 @@ export class MatchRoom {
       }
     }
 
+    // Per-player treasures: prefer the pre-drain snapshot for escapees (live
+    // `b.treasures` is wiped at escape time); fall back to current state for
+    // anyone who didn't escape (dead/turn-limit).
     this.io.to(this.id).emit('match_end', {
       endReason: this.state.endReason ?? 'all_dead',
       escapedPlayerIds: this.state.escapedPlayerIds ?? [],
       treasuresEarned: Object.fromEntries(
-        this.state.bombermen.map(b => [b.playerId, { ...b.treasures }]),
+        this.state.bombermen.map(b => [
+          b.playerId,
+          { ...(this.escapedTreasureSnapshots.get(b.playerId) ?? b.treasures) },
+        ]),
       ),
     });
 
