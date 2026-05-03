@@ -1343,8 +1343,7 @@ export class MatchScene extends Phaser.Scene {
         }
         const bm = this.state?.bombermen.find(b => b.playerId === playerId);
         if (!bm) continue;
-        const visible = bm.playerId === this.myPlayerId || (this.fogRenderer?.isVisible(bm.x, bm.y) ?? false);
-        if (!visible) continue;
+        if (bm.playerId !== this.myPlayerId) continue;
         const baseX = bm.x * ts + ts / 2;
         const baseY = bm.y * ts + ts / 2 - ts * 0.5;
         let stagger = 0;
@@ -1379,6 +1378,7 @@ export class MatchScene extends Phaser.Scene {
     }).setOrigin(0.5, 0.5);
     c.add(icon);
     c.add(text);
+    if (this.hudCamera) this.hudCamera.ignore(c);
 
     this.tweens.add({
       targets: c,

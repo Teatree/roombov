@@ -1,19 +1,19 @@
 {
   "id": "p_3a9ad8b22613",
   "createdAt": 1775946762703,
-  "updatedAt": 1777761493031,
+  "updatedAt": 1777836936037,
   "coins": 1424,
   "treasures": {
-    "fish": 101,
-    "books": 191,
-    "grapes": 153,
-    "jade": 142,
-    "coffee": 113,
-    "bones": 158,
-    "mushrooms": 160,
-    "amulets": 83,
-    "lanterns": 142,
-    "chalice": 68
+    "fish": 169,
+    "books": 206,
+    "grapes": 201,
+    "jade": 211,
+    "coffee": 151,
+    "bones": 174,
+    "mushrooms": 199,
+    "amulets": 159,
+    "lanterns": 240,
+    "chalice": 176
   },
   "ownedBombermen": [
     {
@@ -30,7 +30,7 @@
       "inventory": {
         "slots": [
           {
-            "type": "bomb",
+            "type": "bomb_wide",
             "count": 5
           },
           {
@@ -38,16 +38,16 @@
             "count": 5
           },
           {
-            "type": "banana",
-            "count": 5
+            "type": "delay_tricky",
+            "count": 3
           },
           {
             "type": "flash",
             "count": 2
           },
           {
-            "type": "cluster_bomb",
-            "count": 1
+            "type": "flare",
+            "count": 4
           }
         ]
       },
