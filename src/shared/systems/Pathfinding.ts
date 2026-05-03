@@ -27,9 +27,14 @@ export function findPath(
   endX: number,
   endY: number,
   map: MapData,
+  /** Extra impassable tiles (e.g. active Shield Walls). */
+  blockedTiles?: Set<string>,
 ): PathTile[] {
   if (startX === endX && startY === endY) return [];
-  if (!isWalkable(map, endX, endY)) return [];
+  const blocked = blockedTiles ?? new Set<string>();
+  const passable = (x: number, y: number): boolean =>
+    isWalkable(map, x, y) && !blocked.has(`${x},${y}`);
+  if (!passable(endX, endY)) return [];
 
   const visited = new Set<string>();
   const parent = new Map<string, { x: number; y: number }>();
@@ -46,7 +51,7 @@ export function findPath(
     for (const [dx, dy] of DIRS) {
       const nx = cur.x + dx;
       const ny = cur.y + dy;
-      if (!isWalkable(map, nx, ny)) continue;
+      if (!passable(nx, ny)) continue;
       const k = key(nx, ny);
       if (visited.has(k)) continue;
       visited.add(k);

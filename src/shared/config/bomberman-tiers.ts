@@ -45,6 +45,7 @@ export const TIER_CONFIG: Record<BombermanTier, TierConfig> = {
       ender_pearl: 100,
       fart_escape: 100,
       flare: 100,
+      shield: 100,
     },
   },
   paid: {
@@ -64,6 +65,7 @@ export const TIER_CONFIG: Record<BombermanTier, TierConfig> = {
       fart_escape: 100,
       motion_detector_flare: 40,
       flare: 100,
+      shield: 100,
     },
   },
   paid_expensive: {
@@ -86,6 +88,7 @@ export const TIER_CONFIG: Record<BombermanTier, TierConfig> = {
       phosphorus: 10,
       cluster_bomb: 10,
       big_huge: 10,
+      shield: 100,
     },
   },
 };

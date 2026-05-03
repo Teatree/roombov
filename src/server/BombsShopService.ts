@@ -16,6 +16,7 @@
 import type { BombType } from '../shared/types/bombs.ts';
 import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import type { OwnedBomberman } from '../shared/types/bomberman.ts';
+import { INVENTORY_SLOT_COUNT } from '../shared/types/bomberman.ts';
 import { BOMB_CATALOG, PURCHASABLE_BOMBS } from '../shared/config/bombs.ts';
 import { BALANCE } from '../shared/config/balance.ts';
 import type { PlayerStore } from './PlayerStore.ts';
@@ -81,7 +82,7 @@ export class BombsShopService {
     requestedQty: number,
   ): Promise<BombsShopResult> {
     if (!PURCHASABLE_BOMBS.includes(type)) return { ok: false, reason: 'not_purchasable' };
-    if (slotIndex < 0 || slotIndex > 3) return { ok: false, reason: 'slot_out_of_range' };
+    if (slotIndex < 0 || slotIndex >= INVENTORY_SLOT_COUNT) return { ok: false, reason: 'slot_out_of_range' };
     if (!profile.equippedBombermanId) return { ok: false, reason: 'no_equipped_bomberman' };
 
     const bomberman = this.getEquipped(profile);
@@ -122,7 +123,7 @@ export class BombsShopService {
    * Remove a bomb slot back into the stockpile. Used for unequip.
    */
   async unequipSlot(profile: PlayerProfile, slotIndex: number): Promise<BombsShopResult> {
-    if (slotIndex < 0 || slotIndex > 3) return { ok: false, reason: 'slot_out_of_range' };
+    if (slotIndex < 0 || slotIndex >= INVENTORY_SLOT_COUNT) return { ok: false, reason: 'slot_out_of_range' };
     const bomberman = this.getEquipped(profile);
     if (!bomberman) return { ok: false, reason: 'no_equipped_bomberman' };
 

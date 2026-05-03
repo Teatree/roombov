@@ -34,9 +34,9 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     type: 'bomb_wide',
     name: 'Wide Bomb',
     fuseTurns: 2,
-    behavior: { kind: 'explode', shape: { kind: 'circle', radius: 2 } },
+    behavior: { kind: 'explode', shape: { kind: 'circle', radius: 2, rayCast: true } },
     price: 60,
-    description: '5x5 area blast. Takes 2 turns to explode.',
+    description: '5x5 area blast (rays from centre — walls block). Takes 2 turns to explode.',
   },
   delay_tricky: {
     type: 'delay_tricky',
@@ -174,9 +174,21 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     type: 'big_huge',
     name: 'Big Huge',
     fuseTurns: 2,
-    behavior: { kind: 'explode', shape: { kind: 'circle', radius: 4 } },
+    behavior: { kind: 'explode', shape: { kind: 'circle', radius: 5, rayCast: true } },
     price: 1,
-    description: 'SUPER BOMB. 9x9 circle blast. Takes 2 turns to explode.',
+    description: 'SUPER BOMB. 11x11 circle blast (rays from centre — walls block). Takes 2 turns to explode.',
+  },
+  shield: {
+    type: 'shield',
+    name: 'Shield Bomb',
+    fuseTurns: 0,
+    behavior: {
+      kind: 'shield_wall',
+      shape: { kind: 'plus', radius: 1 },
+      durationTurns: BALANCE.bombs.shieldDurationTurns,
+    },
+    price: 1,
+    description: 'Spawns a + shield wall on impact. Blocks movement and explosions for 3 turns. Pushes anyone in the way out (no damage).',
   },
 };
 
@@ -196,6 +208,7 @@ export const PURCHASABLE_BOMBS: BombType[] = [
   'phosphorus',
   'cluster_bomb',
   'big_huge',
+  'shield',
 ];
 
 /**

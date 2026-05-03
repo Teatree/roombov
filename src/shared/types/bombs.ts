@@ -28,7 +28,8 @@ export type BombType =
   | 'flash'
   | 'phosphorus'
   | 'cluster_bomb'
-  | 'big_huge';
+  | 'big_huge'
+  | 'shield';
 
 /**
  * Shape primitives used by BombResolver to compute the affected tile set.
@@ -42,7 +43,17 @@ export type BombShape =
   | { kind: 'single' }
   | { kind: 'plus'; radius: number }
   | { kind: 'diag'; radius: number }
-  | { kind: 'circle'; radius: number };
+  | {
+      kind: 'circle';
+      radius: number;
+      /**
+       * When true, fill the disc by ray-casting from the centre to every
+       * candidate tile (LoS rule) — explosions can no longer wrap around
+       * corners. When false (default), the disc fills via 8-neighbour BFS
+       * flood — used for utility coverage like light, smoke, and stun.
+       */
+      rayCast?: boolean;
+    };
 
 /** What a bomb does when it "triggers" (either on impact or fuse expiry). */
 export type BombBehavior =
@@ -78,7 +89,15 @@ export type BombBehavior =
   /**
    * Arm a motion-detector mine in place. Used by Motion Detector Flare.
    */
-  | { kind: 'place_mine'; mineKind: MineKind; lifetimeTurns: number; detectionRadius: number };
+  | { kind: 'place_mine'; mineKind: MineKind; lifetimeTurns: number; detectionRadius: number }
+  /**
+   * Spawn a Shield Wall in `shape` around the landing tile. Wall blocks
+   * movement, explosions, and LoS for `durationTurns` (counting from the
+   * turn AFTER placement). Pushes Bombermen and unexploded bombs out of
+   * occupied tiles, suppresses fires, and resolves before all other bomb
+   * effects (including Ender Pearl). Used by Shield.
+   */
+  | { kind: 'shield_wall'; shape: BombShape; durationTurns: number };
 
 /** Distinct mine kinds — render differently and trigger with different rules. */
 export type MineKind = 'motion_detector' | 'cluster';
@@ -178,3 +197,27 @@ export interface PhosphorusPending {
 /** A status effect active on a bomberman. */
 export type StatusEffect =
   | { kind: 'stunned'; turnsRemaining: number; sourceId?: string };
+
+/**
+ * A Shield Wall placed on the map by a Shield Bomb. Each tile in `tiles`
+ * acts as an obstacle: blocks movement, blocks LoS, blocks explosion rays,
+ * and bombs thrown onto it slide off to the nearest walkable. On expiry,
+ * a ShieldShard decal is left on each tile (cosmetic only).
+ */
+export interface ShieldWall {
+  id: string;
+  ownerId: string;
+  /** Centre tile (the bomb's landing tile). */
+  centerX: number;
+  centerY: number;
+  tiles: Array<{ x: number; y: number }>;
+  /** Turns remaining until shatter. Decremented at end-of-turn. */
+  turnsRemaining: number;
+}
+
+/** Persistent floor decal left after a ShieldWall shatters. Cosmetic only. */
+export interface ShieldShard {
+  id: string;
+  x: number;
+  y: number;
+}

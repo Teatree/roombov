@@ -476,6 +476,8 @@ export class TutorialMatchBackend implements MatchBackend {
       smokeClouds: [],
       mines: [],
       phosphorusPending: [],
+      shieldWalls: [],
+      shieldShards: [],
     };
   }
 }

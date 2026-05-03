@@ -25,6 +25,8 @@ export class FogRenderer {
   private externalReveals = new Set<string>();
   /** Tiles of currently-closed doors. LOS treats these as blockers. */
   private closedDoorTiles = new Set<string>();
+  /** Tiles occupied by active Shield Walls. LOS treats these as blockers. */
+  private shieldWallTiles = new Set<string>();
   /**
    * When true, LoS computation is suppressed — the player sees no newly-
    * visible tiles this update. Everything falls back to 'seen-dim' (if
@@ -60,6 +62,18 @@ export class FogRenderer {
     this.closedDoorTiles.clear();
     for (const t of tiles) {
       this.closedDoorTiles.add(`${t.x},${t.y}`);
+    }
+  }
+
+  /**
+   * Update the set of tiles occupied by active Shield Walls. LOS rays treat
+   * these tiles as walls — call on every match_state with the current
+   * shield wall footprints. Shattered/expired walls should be omitted.
+   */
+  setShieldWallTiles(tiles: Array<{ x: number; y: number }>): void {
+    this.shieldWallTiles.clear();
+    for (const t of tiles) {
+      this.shieldWallTiles.add(`${t.x},${t.y}`);
     }
   }
 
@@ -100,7 +114,7 @@ export class FogRenderer {
 
           const toPx = tx * ts + ts / 2;
           const toPy = ty * ts + ts / 2;
-          if (hasLineOfSight(fromPx, fromPy, toPx, toPy, this.mapData.grid, ts, this.closedDoorTiles)) {
+          if (hasLineOfSight(fromPx, fromPy, toPx, toPy, this.mapData.grid, ts, this.closedDoorTiles, this.shieldWallTiles)) {
             this.state.set(`${tx},${ty}`, 'visible');
           }
         }

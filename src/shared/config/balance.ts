@@ -94,6 +94,8 @@ export const BALANCE = {
     clusterMineCount: 25,
     /** Client-only: whether bombs visibly shake on the turn before detonation. */
     shakePreDetonation: true,
+    /** Shield Bomb: how many full turns the wall stands AFTER the placement turn. */
+    shieldDurationTurns: 3,
   },
   bots: {
     /** Max bots that can be added to a single match. */

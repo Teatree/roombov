@@ -282,6 +282,8 @@ export class MatchRoom {
       bombs: [],
       fireTiles: [],
       lightTiles: [],
+      shieldWalls: [],
+      shieldShards: [],
       flares: [],
       bloodTiles: [],
       escapeTiles: this.map.escapeTiles.map(t => ({ x: t.x, y: t.y })),

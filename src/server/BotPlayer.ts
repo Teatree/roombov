@@ -14,6 +14,7 @@ import type { BombermanState } from '../shared/types/bomberman.ts';
 import { INVENTORY_SLOT_COUNT } from '../shared/types/bomberman.ts';
 import type { BombType, BombInstance } from '../shared/types/bombs.ts';
 import type { MapData } from '../shared/types/map.ts';
+import { TileType } from '../shared/types/map.ts';
 import type { LootBombMsg } from '../shared/types/messages.ts';
 import { findPath } from '../shared/systems/Pathfinding.ts';
 import { hasLineOfSight } from '../shared/systems/LineOfSight.ts';
@@ -429,7 +430,11 @@ export class BotPlayer {
       if (!shape) continue;
       const tiles = shapeTiles(shape, bomb.x, bomb.y, map);
       if (tiles.some(t => t.x === me.x && t.y === me.y)) {
-        // In danger! Move to a safe adjacent tile (avoid fire too).
+        // In danger! First preference: throw a Shield Bomb at the bomb to
+        // block its explosion (per spec — defensive shield use). If we don't
+        // have a shield or shielding would trap us, fall back to moveAway.
+        const shieldAction = this.maybeDefensiveShield(me, state, map, bomb);
+        if (shieldAction) return shieldAction;
         return this.moveAway(me, bomb.x, bomb.y, map, state);
       }
     }
@@ -438,6 +443,48 @@ export class BotPlayer {
       return this.randomMove(me, state, map);
     }
     return null;
+  }
+
+  /**
+   * Defensive Shield throw: aim at an incoming bomb's tile to wall it off.
+   * Returns null if we don't have a Shield Bomb, if the throw would put us
+   * inside the wall (we'd get pushed), or if the resulting wall would leave
+   * us with no walkable neighbors (self-trap).
+   */
+  private maybeDefensiveShield(
+    me: BombermanState,
+    state: MatchState,
+    map: MapData,
+    bomb: BombInstance,
+  ): PlayerAction | null {
+    void state;
+    const shieldSlot = this.findSlotWithType(me, 'shield');
+    if (shieldSlot < 0) return null;
+    // Wall footprint: + radius 1 around the bomb.
+    const wallTiles = new Set<string>([
+      `${bomb.x},${bomb.y}`,
+      `${bomb.x + 1},${bomb.y}`,
+      `${bomb.x - 1},${bomb.y}`,
+      `${bomb.x},${bomb.y + 1}`,
+      `${bomb.x},${bomb.y - 1}`,
+    ]);
+    // Refuse if we'd be inside the wall (would get pushed — uncertain destination).
+    if (wallTiles.has(`${me.x},${me.y}`)) return null;
+    // Self-trap check: at least one walkable neighbor not inside the wall.
+    let hasEscape = false;
+    for (let dy = -1; dy <= 1 && !hasEscape; dy++) {
+      for (let dx = -1; dx <= 1 && !hasEscape; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = me.x + dx;
+        const ny = me.y + dy;
+        if (nx < 0 || ny < 0 || nx >= map.width || ny >= map.height) continue;
+        if (map.grid[ny]?.[nx] !== TileType.FLOOR) continue;
+        if (wallTiles.has(`${nx},${ny}`)) continue;
+        hasEscape = true;
+      }
+    }
+    if (!hasEscape) return null;
+    return { kind: 'throw', slotIndex: shieldSlot, x: bomb.x, y: bomb.y };
   }
 
   private moveAway(me: BombermanState, dangerX: number, dangerY: number, map: MapData, state?: MatchState): PlayerAction {

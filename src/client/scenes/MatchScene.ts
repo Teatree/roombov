@@ -24,6 +24,7 @@ import { BALANCE } from '@shared/config/balance.ts';
 import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
 import { preloadTreasureIcons, TREASURE_TEXTURE_KEY, treasureIconFrame } from '../systems/TreasureIcons.ts';
 import { TreasureListWidget } from '../systems/TreasureListWidget.ts';
+import { ShieldRenderer } from '../systems/ShieldRenderer.ts';
 import {
   type TreasureType,
   type TreasureBundle,
@@ -68,6 +69,9 @@ export class MatchScene extends Phaser.Scene {
   private mapData: MapData | null = null;
   private mapRenderer: MapRenderer | null = null;
   private fogRenderer: FogRenderer | null = null;
+  private shieldRenderer: ShieldRenderer | null = null;
+  private shieldLayer!: Phaser.GameObjects.Container;
+  private shieldShardLayer!: Phaser.GameObjects.Container;
   private bombRenderer: BombRenderer | null = null;
   private state: MatchState | null = null;
   private myPlayerId: string | null = null;
@@ -369,9 +373,14 @@ export class MatchScene extends Phaser.Scene {
     // Decals are split into 3 containers so blood > pearl > scorch ordering is enforced.
     this.scorchDecalLayer = this.add.container(0, 0).setDepth(20);
     this.pearlDecalLayer = this.add.container(0, 0).setDepth(22);
+    // Shield Wall shards: persistent floor decals from shattered Shield Bombs.
+    this.shieldShardLayer = this.add.container(0, 0).setDepth(23);
     this.bloodDecalLayer = this.add.container(0, 0).setDepth(25);
     // Corpses get their own layer so bombs (depth 35) render on top of them per spec.
     this.corpseLayer = this.add.container(0, 0).setDepth(28);
+    // Active Shield Walls render between corpses and bombs — they're solid
+    // tile-level obstacles.
+    this.shieldLayer = this.add.container(0, 0).setDepth(32);
     // Bombs render above corpses/decals, below fog.
     this.bombLayer = this.add.container(0, 0).setDepth(35);
     // Alive Bombermen render above fog — managed visibility via setVisible.
@@ -394,6 +403,7 @@ export class MatchScene extends Phaser.Scene {
       this.bombLayer, this.scorchDecalLayer, this.pearlDecalLayer, this.bloodDecalLayer,
       this.corpseLayer, this.explosionLayer, this.entitiesLayer, this.bombermanLayer,
       this.effectsLayer, this.highlightGraphics, this.pathGraphics,
+      this.shieldLayer, this.shieldShardLayer,
     ]);
 
     this.buildHud();
@@ -532,6 +542,8 @@ export class MatchScene extends Phaser.Scene {
     this.mapRenderer = null;
     this.fogRenderer?.destroy();
     this.fogRenderer = null;
+    this.shieldRenderer?.destroy();
+    this.shieldRenderer = null;
     this.bombRenderer?.destroy();
     this.bombRenderer = null;
     this.bombermanSpriteSystem?.destroy();
@@ -680,6 +692,15 @@ export class MatchScene extends Phaser.Scene {
         if (this.hudCamera) this.fogRenderer.ignoreFromCamera(this.hudCamera);
         this.bombRenderer?.destroy();
         this.bombRenderer = new BombRenderer(this, this.bombLayer, this.explosionLayer, this.scorchDecalLayer, this.pearlDecalLayer, this.mapData.tileSize);
+        this.shieldRenderer?.destroy();
+        this.shieldRenderer = new ShieldRenderer({
+          scene: this,
+          wallLayer: this.shieldLayer,
+          vfxLayer: this.explosionLayer,
+          decalLayer: this.shieldShardLayer,
+          hudCamera: this.hudCamera,
+          tileSize: this.mapData.tileSize,
+        });
         this.bombermanSpriteSystem?.destroy();
         this.bombermanSpriteSystem = new BombermanSpriteSystem(this, this.bombermanLayer, this.corpseLayer, this.mapData.tileSize);
         if (this.hudCamera) this.bombermanSpriteSystem.ignoreFromCamera(this.hudCamera);
@@ -741,6 +762,12 @@ export class MatchScene extends Phaser.Scene {
         for (const t of d.tiles) closedDoorTiles.push({ x: t.x, y: t.y });
       }
       this.fogRenderer.setClosedDoorTiles(closedDoorTiles);
+      // Active Shield Walls also block LoS like solid walls.
+      const shieldWallTiles: Array<{ x: number; y: number }> = [];
+      for (const w of state.shieldWalls ?? []) {
+        for (const t of w.tiles) shieldWallTiles.push({ x: t.x, y: t.y });
+      }
+      this.fogRenderer.setShieldWallTiles(shieldWallTiles);
       // Suppress LoS when the local bomberman is inside any smoke cloud —
       // per design, the smoked player only sees their own tile plus the
       // seen-dim map they already discovered. Also hoists bomb graphics
@@ -1186,6 +1213,42 @@ export class MatchScene extends Phaser.Scene {
       });
     }
 
+    // Shield Bomb pass: push vfx + wall spawn + wall break.
+    //   shield_pushed: yellow puff at origin/destination + light-gray decal,
+    //                  parallels the Ender Pearl teleport flow.
+    //   shield_wall_spawned: slam-in animation per tile (handled in syncWalls
+    //                  too, so we only need to play the bomberman-snap if a
+    //                  bomberman was pushed AS the wall formed — already
+    //                  handled by the shield_pushed branch below).
+    //   shield_wall_broken: visual fade-out (state already drained the wall).
+    for (const ev of events) {
+      if (ev.kind === 'shield_pushed') {
+        const fromX = ev.fromX as number;
+        const fromY = ev.fromY as number;
+        const toX = ev.toX as number;
+        const toY = ev.toY as number;
+        const puffDuration = explosionStartMs;
+        const playerId = (ev as { playerId?: string }).playerId;
+        this.time.delayedCall(explosionStartMs, () => {
+          if (playerId) {
+            this.bombermanSpriteSystem?.applyTeleportEvent(playerId, toX, toY);
+          }
+          this.shieldRenderer?.spawnPushPuff(fromX, fromY, puffDuration);
+          this.shieldRenderer?.spawnPushPuff(toX, toY, puffDuration);
+        });
+        this.time.delayedCall(explosionStartMs + puffDuration, () => {
+          this.shieldRenderer?.stampPushDecal(fromX, fromY);
+          this.shieldRenderer?.stampPushDecal(toX, toY);
+        });
+      } else if (ev.kind === 'shield_wall_broken') {
+        const wallId = ev.wallId as string;
+        const tiles = ev.tiles as Array<{ x: number; y: number }>;
+        const shardIds = (ev as { shardIds?: string[] }).shardIds ?? [];
+        this.shieldRenderer?.breakWall(wallId, tiles, shardIds);
+      }
+      // shield_wall_spawned: handled by syncWalls() called every state tick.
+    }
+
     // Door-opened events: Beat 3 ("Action Reaction"). Deferred to the 2/3
     // mark so a door opened BY an explosion visibly reacts to the blast
     // rather than animating at turn start. Proximity-triggered opens (a
@@ -1443,6 +1506,21 @@ export class MatchScene extends Phaser.Scene {
 
     // Sync chest open state from server → local sprite permanence
     this.updateChests();
+
+    // Sync Shield Walls + shards from server state, then apply per-tile fog
+    // visibility. Walls are LoS-gated; shards are persistent (always visible
+    // once revealed — handled inside the renderer).
+    if (this.shieldRenderer && this.state) {
+      this.shieldRenderer.syncWalls(this.state.shieldWalls ?? []);
+      this.shieldRenderer.syncShards(this.state.shieldShards ?? []);
+      this.shieldRenderer.applyFogVisibility(
+        // Walls: LoS-only (smoke does NOT reveal walls per spec).
+        (x, y) => this.fogRenderer?.isVisible(x, y) ?? false,
+        // Shards: discovered (LoS now OR previously seen) — same rule as
+        // bomb scorch decals. Tiles never spotted stay hidden.
+        (x, y) => this.fogRenderer?.isDiscovered(x, y) ?? false,
+      );
+    }
 
     // Dropped bodies no longer need a separate indicator — the corpse sprite
     // in corpseLayer already communicates "something is here to loot". The
@@ -2382,7 +2460,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private renderBombSlots(me: BombermanState): void {
-    // Slot layout: 0 = Rock (infinite), 1..4 = custom inventory[0..3]
+    // Slot layout: 0 = Rock (infinite), 1..INVENTORY_SLOT_COUNT = custom inventory[0..N-1]
     for (let i = 0; i < SLOT_COUNT; i++) {
       let sub = '';
       let bombType: import('@shared/types/bombs.ts').BombType | null = null;
@@ -2440,7 +2518,7 @@ export class MatchScene extends Phaser.Scene {
       return;
     }
 
-    // Slot 0 is Rock (always available), slots 1..4 map to inventory.slots[0..3]
+    // Slot 0 is Rock (always available), slots 1..INVENTORY_SLOT_COUNT map to inventory.slots[0..N-1]
     let hasBomb = false;
     if (slotIndex === 0) {
       hasBomb = true;

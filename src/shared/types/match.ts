@@ -9,6 +9,7 @@ import type { BombermanState } from './bomberman.ts';
 import type {
   BombInstance, BombType, FireTile, LightTile,
   SmokeCloud, Mine, PhosphorusPending,
+  ShieldWall, ShieldShard,
 } from './bombs.ts';
 import type { TreasureBundle } from '../config/treasures.ts';
 
@@ -118,6 +119,10 @@ export interface MatchState {
   mines: Mine[];
   /** Deferred Phosphorus fire spawns (impact turn records; next turn spawns fire tiles). */
   phosphorusPending: PhosphorusPending[];
+  /** Active Shield Walls. Each tile in `tiles` blocks movement, LoS, and explosion rays. */
+  shieldWalls: ShieldWall[];
+  /** Persistent floor decals left after ShieldWalls shatter. Cosmetic only. */
+  shieldShards: ShieldShard[];
   /**
    * Tiles with blood splatter left by bleeding Bombermen. Purely cosmetic.
    */

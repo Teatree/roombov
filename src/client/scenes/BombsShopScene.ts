@@ -334,8 +334,8 @@ export class BombsShopScene extends Phaser.Scene {
         }
       }
 
-      // Fixed Rock slot (slot 5)
-      const rockY = slotsStartY + 4 * (slotH + 6);
+      // Fixed Rock slot — sits below the INVENTORY_SLOT_COUNT custom slots.
+      const rockY = slotsStartY + INVENTORY_SLOT_COUNT * (slotH + 6);
       const rockBg = this.add.graphics();
       rockBg.fillStyle(0x2a2a1e, 0.9);
       rockBg.fillRoundedRect(col3X, rockY, colWidth, slotH, 4);
@@ -345,7 +345,7 @@ export class BombsShopScene extends Phaser.Scene {
       const rockIcon = this.add.image(col3X + 26, rockY + slotH / 2, 'bomb_icons', bombIconFrame('rock'))
         .setDisplaySize(28, 28);
       eqCol.add(rockIcon);
-      eqCol.add(this.add.text(col3X + 46, rockY + 10, 'SLOT 5: Rock', {
+      eqCol.add(this.add.text(col3X + 46, rockY + 10, `SLOT ${INVENTORY_SLOT_COUNT + 1}: Rock`, {
         fontSize: '12px', color: '#ccaa88', fontFamily: 'monospace', fontStyle: 'bold',
       }));
       eqCol.add(this.add.text(col3X + 46, rockY + 26, 'infinite (fallback)', {

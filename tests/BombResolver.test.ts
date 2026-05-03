@@ -343,12 +343,12 @@ describe('resolveBombTrigger', () => {
     });
   });
 
-  describe('big_huge (circle x4)', () => {
-    it('test_big_huge_circle_radius_4_hits_81_tiles', () => {
-      // Arrange / Act
+  describe('big_huge (circle x5, rayCast)', () => {
+    it('test_big_huge_circle_radius_5_open_map_hits_121_tiles', () => {
+      // Arrange / Act — open map, rayCast disc fills the full 11x11 bounding box.
       const r = resolveBombTrigger('big_huge', 15, 15, map);
-      // Assert: 9x9 = 81 tiles
-      expect(r.damageTiles).toHaveLength(81);
+      // Assert: 11x11 = 121 tiles
+      expect(r.damageTiles).toHaveLength(121);
     });
   });
 

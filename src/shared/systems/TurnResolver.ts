@@ -48,11 +48,15 @@ let bodyIdCounter = 0;
 let smokeIdCounter = 0;
 let mineIdCounter = 0;
 let phosphorusIdCounter = 0;
+let shieldIdCounter = 0;
+let shardIdCounter = 0;
 function nextBombId(): string { return `b${++bombIdCounter}`; }
 function nextBodyId(): string { return `body${++bodyIdCounter}`; }
 function nextSmokeId(): string { return `smoke${++smokeIdCounter}`; }
 function nextMineId(): string { return `mine${++mineIdCounter}`; }
 function nextPhosphorusId(): string { return `phos${++phosphorusIdCounter}`; }
+function nextShieldId(): string { return `shield${++shieldIdCounter}`; }
+function nextShardId(): string { return `shard${++shardIdCounter}`; }
 
 /** True when the bomberman's current tile is inside any active smoke cloud. */
 function isInsideSmoke(state: MatchState, x: number, y: number): boolean {
@@ -101,6 +105,8 @@ function cloneState(s: MatchState): MatchState {
     smokeClouds: (s.smokeClouds ?? []).map(c => ({ ...c, tiles: c.tiles.map(t => ({ ...t })) })),
     mines: (s.mines ?? []).map(m => ({ ...m })),
     phosphorusPending: (s.phosphorusPending ?? []).map(p => ({ ...p })),
+    shieldWalls: (s.shieldWalls ?? []).map(w => ({ ...w, tiles: w.tiles.map(t => ({ ...t })) })),
+    shieldShards: (s.shieldShards ?? []).map(d => ({ ...d })),
   };
 }
 
@@ -114,6 +120,55 @@ function isWalkable(map: MapData, x: number, y: number): boolean {
   const row = map.grid[y];
   if (!row) return false;
   return row[x] === TileType.FLOOR;
+}
+
+/** True if any active Shield Wall covers (x, y). */
+function isShieldWallAt(state: MatchState, x: number, y: number): boolean {
+  for (const w of state.shieldWalls ?? []) {
+    for (const t of w.tiles) {
+      if (t.x === x && t.y === y) return true;
+    }
+  }
+  return false;
+}
+
+/** isWalkable + not blocked by an active Shield Wall. */
+function isPassable(state: MatchState, map: MapData, x: number, y: number): boolean {
+  return isWalkable(map, x, y) && !isShieldWallAt(state, x, y);
+}
+
+/**
+ * BFS outward to find the nearest tile satisfying `isOk`. Walks through any
+ * tile (walls included) looking for an OK destination. Used for shield-push
+ * fallbacks where we MUST find somewhere to put the displaced thing.
+ */
+function nearestWhere(
+  map: MapData,
+  sx: number,
+  sy: number,
+  isOk: (x: number, y: number) => boolean,
+): { x: number; y: number } | null {
+  if (isOk(sx, sy)) return { x: sx, y: sy };
+  const visited = new Set<string>();
+  const queue: Array<{ x: number; y: number }> = [{ x: sx, y: sy }];
+  visited.add(`${sx},${sy}`);
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = cur.x + dx;
+        const ny = cur.y + dy;
+        const key = `${nx},${ny}`;
+        if (visited.has(key)) continue;
+        visited.add(key);
+        if (nx < 0 || ny < 0 || nx >= map.width || ny >= map.height) continue;
+        if (isOk(nx, ny)) return { x: nx, y: ny };
+        queue.push({ x: nx, y: ny });
+      }
+    }
+  }
+  return null;
 }
 
 /** BFS outward from (sx, sy) to find the nearest walkable tile. Returns null if none found. */
@@ -183,7 +238,18 @@ export type TurnEvent =
    *                  when set, the Attack3 animation is timed to the
    *                  attacker's walk midpoint rather than walk end.
    */
-  | { kind: 'melee_attack'; attackerId: string; victimId: string; killed: boolean; intermediate?: { x: number; y: number } };
+  | { kind: 'melee_attack'; attackerId: string; victimId: string; killed: boolean; intermediate?: { x: number; y: number } }
+  /** A Shield Wall has just been spawned. `tiles` are all + tiles (centre included). */
+  | { kind: 'shield_wall_spawned'; wallId: string; ownerId: string; centerX: number; centerY: number; tiles: Tile[] }
+  /** A Shield Wall has shattered (turnsRemaining hit 0). Decals are spawned at each tile.
+   *  `shardIds[i]` is the id of the shard placed at `tiles[i]`. */
+  | { kind: 'shield_wall_broken'; wallId: string; tiles: Tile[]; shardIds: string[] }
+  /**
+   * A Shield Wall pushed a Bomberman or unexploded bomb out of an occupied tile.
+   * Subject is a bomberman if `playerId` is set, otherwise a bomb (`bombId`).
+   * Drives the yellow-teleport vfx + light-gray decal on the client.
+   */
+  | { kind: 'shield_pushed'; wallId: string; playerId?: string; bombId?: string; fromX: number; fromY: number; toX: number; toY: number };
 
 export function resolveTurn(
   prev: MatchState,
@@ -282,12 +348,18 @@ export function resolveTurn(
     if (d.opened) continue;
     for (const t of d.tiles) meleeClosedDoors.add(`${t.x},${t.y}`);
   }
+  // Shield walls also block sight for melee detection (they're solid obstacles).
+  // Shields placed THIS turn happen later in step 5; here we only see prior-turn walls.
+  const meleeShieldTiles = new Set<string>();
+  for (const w of state.shieldWalls ?? []) {
+    for (const t of w.tiles) meleeShieldTiles.add(`${t.x},${t.y}`);
+  }
   const mts = map.tileSize;
   const canSeeTile = (fromX: number, fromY: number, toX: number, toY: number): boolean => {
     return hasLineOfSight(
       fromX * mts + mts / 2, fromY * mts + mts / 2,
       toX * mts + mts / 2, toY * mts + mts / 2,
-      map.grid, mts, meleeClosedDoors,
+      map.grid, mts, meleeClosedDoors, meleeShieldTiles,
     );
   };
   if (trapModeBombermen.length >= 2) {
@@ -339,7 +411,7 @@ export function resolveTurn(
 
     // First move: must be adjacent (Chebyshev 1)
     const dist1 = chebyshevDistance(bomberman.x, bomberman.y, action.x, action.y);
-    if (dist1 === 1 && isWalkable(map, action.x, action.y)) {
+    if (dist1 === 1 && isPassable(state, map, action.x, action.y)) {
       const fromX = bomberman.x;
       const fromY = bomberman.y;
       bomberman.x = action.x;
@@ -354,7 +426,7 @@ export function resolveTurn(
       if (BALANCE.match.rush.enabled && bomberman.rushActive &&
           action.rushX !== undefined && action.rushY !== undefined) {
         const dist2 = chebyshevDistance(bomberman.x, bomberman.y, action.rushX, action.rushY);
-        if (dist2 === 1 && isWalkable(map, action.rushX, action.rushY)) {
+        if (dist2 === 1 && isPassable(state, map, action.rushX, action.rushY)) {
           const from2X = bomberman.x;
           const from2Y = bomberman.y;
           bomberman.x = action.rushX;
@@ -466,22 +538,23 @@ export function resolveTurn(
     // turn of the bomberman standing idle on the hatch tile.
   }
 
-  // Door proximity: open doors when any alive Bomberman stands directly IN
-  // FRONT of the door — axis-adjacent on one of its two front tiles. The
-  // front tiles are:
-  //   - Vertical door (tiles stacked along y): the two tiles with the
-  //     largest y values (the bottom pair). Trigger tiles are
-  //     (x-1, y) and (x+1, y) for each front tile — two to the left, two
-  //     to the right. Tiles above or below the door do NOT trigger.
-  //   - Horizontal door (tiles along x, expected length 2): both tiles.
-  //     Trigger tiles are (x, y-1) and (x, y+1) for each — two above,
-  //     two below.
+  // Door proximity: open doors when any alive Bomberman stands ON the door
+  // OR directly IN FRONT/BEHIND it — axis-adjacent on one of its two front
+  // tiles. The trigger set is:
+  //   - Every door tile itself (closed doors are walkable per current map
+  //     semantics, so a player walking ONTO a door opens it).
+  //   - Vertical door (tiles stacked along y): the bottom pair's east/west
+  //     neighbours — two to the left, two to the right.
+  //   - Horizontal door (tiles along x, expected length 2): both tiles'
+  //     north/south neighbours — two above, two below.
   // Corner/diagonal tiles are deliberately excluded. Explosions that
   // overlap door tiles still open them (handled in the bomb-burst step).
   for (const door of state.doors ?? []) {
     if (door.opened) continue;
     if (door.tiles.length === 0) continue;
     const triggers: Array<{ x: number; y: number }> = [];
+    // Door tiles themselves trigger.
+    for (const t of door.tiles) triggers.push({ x: t.x, y: t.y });
     if (door.orientation === 'vertical') {
       // Bottom 2 tiles (largest y) are the front; trigger on their east/west
       // neighbours only. Guard short doors by taking all tiles.
@@ -539,6 +612,10 @@ export function resolveTurn(
         if (d.opened) continue;
         for (const t of d.tiles) closedDoorsForLos.add(`${t.x},${t.y}`);
       }
+      const shieldTilesForLos = new Set<string>();
+      for (const w of state.shieldWalls ?? []) {
+        for (const t of w.tiles) shieldTilesForLos.add(`${t.x},${t.y}`);
+      }
       // Inside smoke → enemy proximity doesn't break rush (per design).
       // Enemy "nearby" means mutual LOS — both Bombermen must be able to
       // see each other. LOS geometry is symmetric, so checking one side is
@@ -554,7 +631,7 @@ export function resolveTurn(
         return hasLineOfSight(
           bomberman.x * ts + ts / 2, bomberman.y * ts + ts / 2,
           other.x * ts + ts / 2, other.y * ts + ts / 2,
-          map.grid, ts, closedDoorsForLos,
+          map.grid, ts, closedDoorsForLos, shieldTilesForLos,
         );
       });
       // Bomb landed nearby: same rule — only cancel OOC for bombs the
@@ -567,7 +644,7 @@ export function resolveTurn(
         return hasLineOfSight(
           bomberman.x * ts + ts / 2, bomberman.y * ts + ts / 2,
           bomb.x * ts + ts / 2, bomb.y * ts + ts / 2,
-          map.grid, ts, closedDoorsForLos,
+          map.grid, ts, closedDoorsForLos, shieldTilesForLos,
         );
       });
       if (enemyNearby || threw || bombNearby) {
@@ -597,7 +674,7 @@ export function resolveTurn(
 
     // Slot layout (UI + network):
     //   0         → Rock (infinite, free)
-    //   1,2,3,4   → inventory.slots[0..3] (custom bombs)
+    //   1..N     → inventory.slots[0..N-1] (custom bombs, N = INVENTORY_SLOT_COUNT)
     let bombType: BombType | null = null;
 
     if (action.slotIndex === 0) {
@@ -640,7 +717,11 @@ export function resolveTurn(
         if (door.opened) continue;
         for (const t of door.tiles) closedDoorTiles.add(`${t.x},${t.y}`);
       }
-      const smokeTiles = shapeTiles(smokeShape, originX, originY, map, closedDoorTiles);
+      const fartShieldWallSet = new Set<string>();
+      for (const w of state.shieldWalls ?? []) {
+        for (const t of w.tiles) fartShieldWallSet.add(`${t.x},${t.y}`);
+      }
+      const smokeTiles = shapeTiles(smokeShape, originX, originY, map, closedDoorTiles, fartShieldWallSet);
       const cloud: SmokeCloud = {
         id: nextSmokeId(),
         ownerId: bomberman.playerId,
@@ -661,14 +742,19 @@ export function resolveTurn(
         ownerId: bomberman.playerId,
       });
 
-      // Pathfind toward target; walk 2 tiles along it.
-      const fullPath = findPath(originX, originY, action.x, action.y, map);
+      // Pathfind toward target; walk 2 tiles along it. Treat active Shield
+      // Walls as blocked so the route goes around them.
+      const fartShieldTiles = new Set<string>();
+      for (const w of state.shieldWalls ?? []) {
+        for (const t of w.tiles) fartShieldTiles.add(`${t.x},${t.y}`);
+      }
+      const fullPath = findPath(originX, originY, action.x, action.y, map, fartShieldTiles);
       const walkTiles = Math.min(BALANCE.bombs.fartEscapeMoveTiles, fullPath.length);
       let curX = originX;
       let curY = originY;
       for (let i = 0; i < walkTiles; i++) {
         const step = fullPath[i];
-        if (!isWalkable(map, step.x, step.y)) break;
+        if (!isPassable(state, map, step.x, step.y)) break;
         events.push({
           kind: 'moved',
           playerId: bomberman.playerId,
@@ -703,15 +789,28 @@ export function resolveTurn(
       continue; // Skip pushing a BombInstance
     }
 
+    // Slide-off rule: if the target tile carries an active Shield Wall,
+    // any incoming bomb (including motion detectors and the regular landing
+    // path below) re-targets to the nearest passable tile. Applies uniformly
+    // to all bomb types per the Shield Bomb spec.
+    let landX = action.x;
+    let landY = action.y;
+    if (isShieldWallAt(state, landX, landY)) {
+      const slid = nearestWhere(map, landX, landY, (x, y) => isPassable(state, map, x, y));
+      if (!slid) continue; // no passable tile anywhere — fizzle (shouldn't happen on real maps)
+      landX = slid.x;
+      landY = slid.y;
+    }
+
     // Motion Detector Flare special flow: arm as a dormant mine, no BombInstance.
     if (bombType === 'motion_detector_flare') {
-      if (!isWalkable(map, action.x, action.y)) continue;
+      if (!isWalkable(map, landX, landY)) continue;
       const mine: Mine = {
         id: nextMineId(),
         kind: 'motion_detector',
         ownerId: bomberman.playerId,
-        x: action.x,
-        y: action.y,
+        x: landX,
+        y: landY,
         lifetimeRemaining: BALANCE.bombs.motionDetectorLifetime,
         detectionRadius: BALANCE.bombs.motionDetectorRadius,
       };
@@ -731,8 +830,8 @@ export function resolveTurn(
         type: 'motion_detector_flare',
         fromX: bomberman.x,
         fromY: bomberman.y,
-        x: action.x,
-        y: action.y,
+        x: landX,
+        y: landY,
       });
       continue;
     }
@@ -741,8 +840,8 @@ export function resolveTurn(
       id: nextBombId(),
       type: bombType,
       ownerId: bomberman.playerId,
-      x: action.x,
-      y: action.y,
+      x: landX,
+      y: landY,
       fuseRemaining: def.fuseTurns,
     };
     state.bombs.push(bomb);
@@ -753,8 +852,8 @@ export function resolveTurn(
       type: bombType,
       fromX: bomberman.x,
       fromY: bomberman.y,
-      x: action.x,
-      y: action.y,
+      x: landX,
+      y: landY,
     });
   }
 
@@ -770,6 +869,16 @@ export function resolveTurn(
     }
     return set;
   };
+  /** Active shield wall tiles. Recomputed each call so a wall placed earlier
+   *  this turn (e.g. shield resolves before another bomb in the same toResolve
+   *  loop) blocks the later bomb's explosion rays. */
+  const buildShieldWallTiles = (): Set<string> => {
+    const set = new Set<string>();
+    for (const w of state.shieldWalls ?? []) {
+      for (const t of w.tiles) set.add(`${t.x},${t.y}`);
+    }
+    return set;
+  };
 
   const damagedThisTurn = new Set<string>();
   /** Tracks who last damaged each player (for kill attribution). */
@@ -779,6 +888,8 @@ export function resolveTurn(
   const minesToTrigger = new Map<string, string | null>();
 
   // --- 3.5. Phosphorus pending: spawn deferred fire tiles from last turn. ---
+  //   Shield walls suppress these silently — if a wall is up over a tile,
+  //   the would-be phosphorus fire just doesn't spawn there.
   // Consumes ALL pending entries and creates fire tiles. Standing-on-fire damage
   // is applied later in step 6 by the existing mechanism.
   if (state.phosphorusPending.length > 0) {
@@ -786,7 +897,7 @@ export function resolveTurn(
       for (const off of PHOSPHORUS_FIRE_OFFSETS) {
         const tx = pending.originX + off.dx;
         const ty = pending.originY + off.dy;
-        if (!isWalkable(map, tx, ty)) continue;
+        if (!isPassable(state, map, tx, ty)) continue;
         state.fireTiles.push({
           x: tx,
           y: ty,
@@ -809,13 +920,22 @@ export function resolveTurn(
       bomb.fuseRemaining -= 1;
     }
   }
-  // Ender pearls resolve first — teleport the thrower out of danger
-  // before any explosions deal damage. Without this, a player who throws
-  // a pearl the same turn a bomb kills them would die before teleporting.
+  // Resolution-order priority (lower = resolves first):
+  //   0  Shield Bomb   — places wall + pushes BMs/bombs before anything explodes
+  //                      (per spec, even precedes Ender Pearl, because the
+  //                      shield can displace the pearl-thrower)
+  //   1  Ender Pearl   — teleports the thrower out of danger before damage
+  //   2  All others    — FIFO
+  // Multiple shields tie-break by ownerId (string compare) for determinism;
+  // each shield's push uses state AFTER previous shields placed their tiles.
   toResolve.sort((a, b) => {
-    const aP = a.type === 'ender_pearl' ? 0 : 1;
-    const bP = b.type === 'ender_pearl' ? 0 : 1;
-    return aP - bP;
+    const prio = (b: BombInstance): number =>
+      b.type === 'shield' ? 0 : b.type === 'ender_pearl' ? 1 : 2;
+    const ap = prio(a);
+    const bp = prio(b);
+    if (ap !== bp) return ap - bp;
+    if (ap === 0) return a.ownerId.localeCompare(b.ownerId);
+    return 0;
   });
 
   while (toResolve.length > 0) {
@@ -823,17 +943,156 @@ export function resolveTurn(
     if (triggeredBombIds.has(bomb.id)) continue;
     triggeredBombIds.add(bomb.id);
 
+    // Shield Bomb: place a + Shield Wall around the landing tile, push BMs and
+    // unexploded bombs out of the wall tiles, suppress fires under the wall,
+    // and emit shield_pushed events for client vfx. Resolves first in
+    // toResolve so that subsequent in-turn explosions ALREADY see the wall as
+    // an obstacle (LoS, walkability, ray-stopping all flow from
+    // state.shieldWalls).
+    if (bomb.type === 'shield') {
+      const beh = BOMB_CATALOG[bomb.type].behavior;
+      if (beh.kind !== 'shield_wall') {
+        events.push({ kind: 'bomb_triggered', bombId: bomb.id, type: bomb.type, x: bomb.x, y: bomb.y, tiles: [] });
+        continue;
+      }
+      // Compute footprint (uses regular shape rules; obeys level walls only).
+      // Closed doors do NOT stop the wall — the wall stands ON TOP of doors,
+      // chests, hatches, fires per spec. We pass an empty closed-door set.
+      const wallTiles = shapeTiles(beh.shape, bomb.x, bomb.y, map, new Set<string>());
+      // Filter: skip tiles already covered by another active shield (so two
+      // simultaneous shields don't double-stack on shared tiles).
+      const ownedTiles = wallTiles.filter(t => !isShieldWallAt(state, t.x, t.y));
+      if (ownedTiles.length === 0) {
+        // Entirely overlapping with existing wall — emit trigger event and skip.
+        events.push({ kind: 'bomb_triggered', bombId: bomb.id, type: bomb.type, x: bomb.x, y: bomb.y, tiles: [] });
+        continue;
+      }
+      const ownedSet = new Set(ownedTiles.map(t => `${t.x},${t.y}`));
+
+      // 1. Push Bombermen out of newly-occupied tiles.
+      //    Order: deterministic by playerId so simultaneous pushes don't
+      //    conflict on the "nearest passable, not on another BM" search.
+      const sortedBMs = [...state.bombermen]
+        .filter(b => b.alive && !b.escaped && ownedSet.has(`${b.x},${b.y}`))
+        .sort((a, b) => a.playerId.localeCompare(b.playerId));
+      // Track tiles BMs have moved to so the next push doesn't pick the same tile.
+      const claimedByPushedBM = new Set<string>();
+      for (const bm of sortedBMs) {
+        const occupiedByBM = new Set<string>();
+        for (const other of state.bombermen) {
+          if (other === bm) continue;
+          if (!other.alive || other.escaped) continue;
+          occupiedByBM.add(`${other.x},${other.y}`);
+        }
+        const target = nearestWhere(map, bm.x, bm.y, (x, y) => {
+          if (!isWalkable(map, x, y)) return false;
+          if (ownedSet.has(`${x},${y}`)) return false; // not into the new wall
+          if (isShieldWallAt(state, x, y)) return false;
+          if (occupiedByBM.has(`${x},${y}`)) return false;
+          if (claimedByPushedBM.has(`${x},${y}`)) return false;
+          return true;
+        });
+        if (!target) continue; // pathologically no walkable tile anywhere
+        const fromX = bm.x;
+        const fromY = bm.y;
+        bm.x = target.x;
+        bm.y = target.y;
+        bm.teleportedThisTurn = true; // same protection as Ender Pearl
+        claimedByPushedBM.add(`${target.x},${target.y}`);
+        events.push({
+          kind: 'shield_pushed',
+          wallId: '', // filled in after wall id is allocated
+          playerId: bm.playerId,
+          fromX, fromY, toX: target.x, toY: target.y,
+        });
+      }
+
+      // 2. Push unexploded bombs out — bombs CAN land on tiles occupied by BMs.
+      for (const other of state.bombs) {
+        if (other.id === bomb.id) continue; // skip the shield itself
+        if (!ownedSet.has(`${other.x},${other.y}`)) continue;
+        const target = nearestWhere(map, other.x, other.y, (x, y) => {
+          if (!isWalkable(map, x, y)) return false;
+          if (ownedSet.has(`${x},${y}`)) return false;
+          if (isShieldWallAt(state, x, y)) return false;
+          return true;
+        });
+        if (!target) continue;
+        const fromX = other.x;
+        const fromY = other.y;
+        other.x = target.x;
+        other.y = target.y;
+        events.push({
+          kind: 'shield_pushed',
+          wallId: '',
+          bombId: other.id,
+          fromX, fromY, toX: target.x, toY: target.y,
+        });
+      }
+
+      // 3. Extinguish any fire tiles under the wall.
+      state.fireTiles = state.fireTiles.filter(f => !ownedSet.has(`${f.x},${f.y}`));
+
+      // 4. Spawn the wall.
+      const wallId = nextShieldId();
+      state.shieldWalls.push({
+        id: wallId,
+        ownerId: bomb.ownerId,
+        centerX: bomb.x,
+        centerY: bomb.y,
+        tiles: ownedTiles.map(t => ({ x: t.x, y: t.y })),
+        // +1 because end-of-turn aging step decrements; net = `durationTurns`
+        // full turns of standing (NOT counting placement turn).
+        turnsRemaining: beh.durationTurns + 1,
+      });
+      // Backfill wallId on the pushed events so client can group them.
+      for (let i = events.length - 1; i >= 0; i--) {
+        const e = events[i];
+        if (e.kind === 'shield_pushed' && e.wallId === '') {
+          e.wallId = wallId;
+        } else if (e.kind === 'shield_wall_spawned') {
+          break;
+        }
+      }
+      events.push({
+        kind: 'shield_wall_spawned',
+        wallId,
+        ownerId: bomb.ownerId,
+        centerX: bomb.x,
+        centerY: bomb.y,
+        tiles: ownedTiles.map(t => ({ x: t.x, y: t.y })),
+      });
+      // Emit a bomb_triggered for animation/cleanup parity with other bombs.
+      events.push({ kind: 'bomb_triggered', bombId: bomb.id, type: bomb.type, x: bomb.x, y: bomb.y, tiles: [] });
+
+      // 5. Cancel any cached path that now passes through the wall. If the
+      //    final tile WAS the wall, just truncate; otherwise drop the path
+      //    entirely (next-turn movement input will rebuild it).
+      for (const bm of state.bombermen) {
+        if (!bm.queuedPath || bm.queuedPath.length === 0) continue;
+        const idx = bm.queuedPath.findIndex(t => ownedSet.has(`${t.x},${t.y}`));
+        if (idx === -1) continue;
+        const last = bm.queuedPath.length - 1;
+        if (idx === last && idx > 0) {
+          bm.queuedPath = bm.queuedPath.slice(0, last);
+        } else {
+          bm.queuedPath = undefined;
+        }
+      }
+      continue;
+    }
+
     // Ender Pearl: teleport the thrower to the landing tile (or nearest
     // walkable tile if the target is an obstacle). Handled before the fizzle
     // check because the pearl explicitly shifts to a valid tile instead of
-    // fizzling.
+    // fizzling. Treats active Shield Walls as obstacles.
     if (bomb.type === 'ender_pearl') {
       let destX = bomb.x;
       let destY = bomb.y;
-      if (!isWalkable(map, destX, destY)) {
-        const alt = nearestWalkable(map, destX, destY);
+      if (!isPassable(state, map, destX, destY)) {
+        const alt = nearestWhere(map, destX, destY, (x, y) => isPassable(state, map, x, y));
         if (alt) { destX = alt.x; destY = alt.y; }
-        // If no walkable tile exists at all, pearl fizzles (shouldn't happen on real maps)
+        // If no passable tile exists at all, pearl fizzles (shouldn't happen on real maps)
         else {
           events.push({ kind: 'bomb_triggered', bombId: bomb.id, type: bomb.type, x: bomb.x, y: bomb.y, tiles: [] });
           continue;
@@ -865,7 +1124,8 @@ export function resolveTurn(
     }
 
     const closedDoorTiles = buildClosedDoorTiles();
-    const trigger = resolveBombTrigger(bomb.type, bomb.x, bomb.y, map, closedDoorTiles);
+    const shieldWallTilesSet = buildShieldWallTiles();
+    const trigger = resolveBombTrigger(bomb.type, bomb.x, bomb.y, map, closedDoorTiles, shieldWallTilesSet);
 
     // Open any closed doors hit by the explosion. Light-only tiles (Flare)
     // do NOT open doors — flares illuminate without applying force, so a
@@ -989,7 +1249,7 @@ export function resolveTurn(
         const standOn = state.bombermen.find(b => b.alive && !b.escaped && b.x === mx && b.y === my);
         if (standOn) {
           // Immediate plus-r1 explosion at this tile.
-          const tiles = shapeTiles({ kind: 'plus', radius: 1 }, mx, my, map, buildClosedDoorTiles());
+          const tiles = shapeTiles({ kind: 'plus', radius: 1 }, mx, my, map, buildClosedDoorTiles(), buildShieldWallTiles());
           events.push({
             kind: 'mine_triggered',
             mineId: `cluster_imm_${i}`,
@@ -1048,9 +1308,11 @@ export function resolveTurn(
       }
     }
 
-    // Scatter → spawn child bombs immediately; fuseTurns decides if they resolve now or next turn
+    // Scatter → spawn child bombs immediately; fuseTurns decides if they resolve now or next turn.
+    // Skip tiles covered by an active Shield Wall (children "slide off" same as a regular throw —
+    // and since the parent already ticked, we just drop those children silently).
     for (const spawn of trigger.scatterSpawns) {
-      if (!isWalkable(map, spawn.x, spawn.y)) continue;
+      if (!isPassable(state, map, spawn.x, spawn.y)) continue;
       const childDef = BOMB_CATALOG[spawn.type];
       const child: BombInstance = {
         id: nextBombId(),
@@ -1115,6 +1377,7 @@ export function resolveTurn(
       // Closed doors block the sensor beam the same as walls.
       const radius = mine.detectionRadius ?? BALANCE.bombs.motionDetectorRadius;
       const closedDoorsForMine = buildClosedDoorTiles();
+      const shieldTilesForMine = buildShieldWallTiles();
       const detected = state.bombermen.find(b => {
         if (!b.alive || b.escaped) return false;
         if (b.playerId === mine.ownerId) return false;
@@ -1122,7 +1385,7 @@ export function resolveTurn(
         return hasLineOfSight(
           mine.x * ts + ts / 2, mine.y * ts + ts / 2,
           b.x * ts + ts / 2, b.y * ts + ts / 2,
-          map.grid, ts, closedDoorsForMine,
+          map.grid, ts, closedDoorsForMine, shieldTilesForMine,
         );
       });
       if (detected) {
@@ -1175,7 +1438,7 @@ export function resolveTurn(
         kind: 'motion_detector',
       });
     } else if (mine.kind === 'cluster') {
-      tiles = shapeTiles({ kind: 'plus', radius: 1 }, mine.x, mine.y, map, buildClosedDoorTiles());
+      tiles = shapeTiles({ kind: 'plus', radius: 1 }, mine.x, mine.y, map, buildClosedDoorTiles(), buildShieldWallTiles());
       for (const t of tiles) {
         for (const b of state.bombermen) {
           if (!b.alive || b.escaped) continue;
@@ -1259,6 +1522,31 @@ export function resolveTurn(
       return true;
     });
   for (const id of expiredCloudIds) events.push({ kind: 'smoke_expired', cloudId: id });
+
+  // --- 7d. Age Shield Walls. Decrement turnsRemaining; on reach-0, shatter:
+  //     emit shield_wall_broken and persist a ShieldShard at each tile.
+  //     Shards are cosmetic-only floor decals (no gameplay effect).
+  const survivingWalls: typeof state.shieldWalls = [];
+  for (const wall of state.shieldWalls ?? []) {
+    const next = wall.turnsRemaining - 1;
+    if (next <= 0) {
+      const shardIds: string[] = [];
+      for (const t of wall.tiles) {
+        const id = nextShardId();
+        state.shieldShards.push({ id, x: t.x, y: t.y });
+        shardIds.push(id);
+      }
+      events.push({
+        kind: 'shield_wall_broken',
+        wallId: wall.id,
+        tiles: wall.tiles.map(t => ({ x: t.x, y: t.y })),
+        shardIds,
+      });
+    } else {
+      survivingWalls.push({ ...wall, turnsRemaining: next });
+    }
+  }
+  state.shieldWalls = survivingWalls;
 
   // --- 7c. Age status effects (Stunned, etc.) ---
   for (const b of state.bombermen) {

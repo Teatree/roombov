@@ -31,6 +31,8 @@ export function hasLineOfSight(
   grid: TileType[][],
   tileSize: number,
   closedDoorTiles?: Set<string>,
+  /** Extra tiles that block sight just like a wall. Used for active Shield Walls. */
+  blockingTiles?: Set<string>,
 ): boolean {
   const startTx = Math.floor(x1 / tileSize);
   const startTy = Math.floor(y1 / tileSize);
@@ -46,6 +48,7 @@ export function hasLineOfSight(
     const t = grid[cy]?.[cx];
     if (t === TileType.WALL || t === TileType.FURNITURE) return true;
     if (closedDoorTiles && closedDoorTiles.has(`${cx},${cy}`)) return true;
+    if (blockingTiles && blockingTiles.has(`${cx},${cy}`)) return true;
     return false;
   };
 

@@ -1738,6 +1738,7 @@ function bombLook(type: BombType): BombLook {
     case 'phosphorus':    return { body: 0x442211, stroke: 0xff7755, accent: 0xffffee, glyph: 'P', shape: 'bottle' };
     case 'cluster_bomb':  return { body: 0x221122, stroke: 0x887799, accent: 0xffcc44, glyph: 'K', shape: 'circle' };
     case 'big_huge':      return { body: 0x110011, stroke: 0xffaa44, accent: 0xff6622, glyph: 'H', shape: 'circle' };
+    case 'shield':        return { body: 0xddbb55, stroke: 0x665522, accent: 0xfff0aa, glyph: 'S', shape: 'diamond' };
   }
 }
 

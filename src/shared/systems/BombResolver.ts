@@ -12,6 +12,7 @@
 import type { BombDef, BombShape, BombType, MineKind } from '../types/bombs.ts';
 import { BOMB_CATALOG } from '../config/bombs.ts';
 import { TileType, type MapData } from '../types/map.ts';
+import { hasLineOfSight } from './LineOfSight.ts';
 
 export interface Tile {
   x: number;
@@ -39,6 +40,7 @@ function isFloor(map: MapData, x: number, y: number): boolean {
 export function shapeTiles(
   shape: BombShape, cx: number, cy: number, map: MapData,
   closedDoorTiles: Set<string> = new Set(),
+  shieldWallTiles: Set<string> = new Set(),
 ): Tile[] {
   const seen = new Set<string>();
   const out: Tile[] = [];
@@ -51,12 +53,14 @@ export function shapeTiles(
 
   // Walk a ray one step at a time, stopping at walls. Closed door tiles are
   // included in the blast (the explosion reaches them) but the ray stops
-  // there — it doesn't pass through.
+  // there — it doesn't pass through. Shield walls FULLY block: the wall tile
+  // is excluded from the blast and the ray stops before it.
   const castRay = (dx: number, dy: number, radius: number): void => {
     for (let r = 1; r <= radius; r++) {
       const nx = cx + dx * r;
       const ny = cy + dy * r;
       if (!isFloor(map, nx, ny)) return;
+      if (shieldWallTiles.has(`${nx},${ny}`)) return; // full block, no damage
       push(nx, ny);
       if (closedDoorTiles.has(`${nx},${ny}`)) return; // include but stop
     }
@@ -84,27 +88,56 @@ export function shapeTiles(
       break;
 
     case 'circle': {
-      // BFS flood with 8-neighbor expansion up to the Chebyshev radius.
-      // Walls block propagation, so tiles "behind" walls are excluded even
-      // though they'd be inside the raw geometric disc.
       push(cx, cy);
-      type QEntry = { x: number; y: number; d: number };
-      const queue: QEntry[] = [{ x: cx, y: cy, d: 0 }];
-      while (queue.length > 0) {
-        const cur = queue.shift()!;
-        if (cur.d >= shape.radius) continue;
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
+      if (shape.rayCast) {
+        // Damage explosion: each candidate tile in the disc must have a clear
+        // ray from the centre (LoS rule). Walls, closed doors, and shield
+        // walls block. Stops the blast from wrapping around corners — the
+        // explosion is geometrically a disc, not a flood.
+        const ts = map.tileSize;
+        const fromPx = cx * ts + ts / 2;
+        const fromPy = cy * ts + ts / 2;
+        for (let dy = -shape.radius; dy <= shape.radius; dy++) {
+          for (let dx = -shape.radius; dx <= shape.radius; dx++) {
             if (dx === 0 && dy === 0) continue;
-            const nx = cur.x + dx;
-            const ny = cur.y + dy;
-            const key = `${nx},${ny}`;
-            if (seen.has(key)) continue;
+            if (Math.max(Math.abs(dx), Math.abs(dy)) > shape.radius) continue;
+            const nx = cx + dx;
+            const ny = cy + dy;
             if (!isFloor(map, nx, ny)) continue;
-            push(nx, ny);
-            // Closed doors: include tile but don't expand past them
-            if (closedDoorTiles.has(`${nx},${ny}`)) continue;
-            queue.push({ x: nx, y: ny, d: cur.d + 1 });
+            if (shieldWallTiles.has(`${nx},${ny}`)) continue;
+            const toPx = nx * ts + ts / 2;
+            const toPy = ny * ts + ts / 2;
+            if (hasLineOfSight(fromPx, fromPy, toPx, toPy, map.grid, ts, closedDoorTiles, shieldWallTiles)) {
+              push(nx, ny);
+            }
+          }
+        }
+      } else {
+        // BFS flood with 8-neighbor expansion up to the Chebyshev radius.
+        // Walls block propagation, so tiles "behind" walls are excluded even
+        // though they'd be inside the raw geometric disc. Used for utility
+        // coverage (light, smoke, stun) where corner-wrap reads as natural
+        // diffusion rather than a physics-defying explosion.
+        type QEntry = { x: number; y: number; d: number };
+        const queue: QEntry[] = [{ x: cx, y: cy, d: 0 }];
+        while (queue.length > 0) {
+          const cur = queue.shift()!;
+          if (cur.d >= shape.radius) continue;
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              const nx = cur.x + dx;
+              const ny = cur.y + dy;
+              const key = `${nx},${ny}`;
+              if (seen.has(key)) continue;
+              if (!isFloor(map, nx, ny)) continue;
+              // Shield walls: full block — exclude the tile, don't expand.
+              if (shieldWallTiles.has(`${nx},${ny}`)) continue;
+              push(nx, ny);
+              // Closed doors: include tile but don't expand past them
+              if (closedDoorTiles.has(`${nx},${ny}`)) continue;
+              queue.push({ x: nx, y: ny, d: cur.d + 1 });
+            }
           }
         }
       }
@@ -169,6 +202,7 @@ export interface BombTriggerResult {
 export function resolveBombTrigger(
   type: BombType, cx: number, cy: number, map: MapData,
   closedDoorTiles: Set<string> = new Set(),
+  shieldWallTiles: Set<string> = new Set(),
 ): BombTriggerResult {
   const def: BombDef = BOMB_CATALOG[type];
   const result: BombTriggerResult = {
@@ -184,11 +218,11 @@ export function resolveBombTrigger(
 
   switch (def.behavior.kind) {
     case 'explode':
-      result.damageTiles = shapeTiles(def.behavior.shape, cx, cy, map, closedDoorTiles);
+      result.damageTiles = shapeTiles(def.behavior.shape, cx, cy, map, closedDoorTiles, shieldWallTiles);
       break;
 
     case 'fire': {
-      const tiles = shapeTiles(def.behavior.shape, cx, cy, map, closedDoorTiles);
+      const tiles = shapeTiles(def.behavior.shape, cx, cy, map, closedDoorTiles, shieldWallTiles);
       result.fireTiles = tiles;
       result.fireDuration = def.behavior.durationTurns;
       // Molotov also deals immediate damage to Bombermen on the landing tiles
@@ -198,7 +232,7 @@ export function resolveBombTrigger(
     }
 
     case 'light':
-      result.lightTiles = shapeTiles(def.behavior.shape, cx, cy, map, closedDoorTiles);
+      result.lightTiles = shapeTiles(def.behavior.shape, cx, cy, map, closedDoorTiles, shieldWallTiles);
       result.lightDuration = def.behavior.durationTurns;
       break;
 
@@ -218,13 +252,13 @@ export function resolveBombTrigger(
 
     case 'stun_explode': {
       // Flash: NO damage, only stun. The shape defines the stun area.
-      result.stunTiles = shapeTiles(def.behavior.shape, cx, cy, map, closedDoorTiles);
+      result.stunTiles = shapeTiles(def.behavior.shape, cx, cy, map, closedDoorTiles, shieldWallTiles);
       result.stunTurns = def.behavior.stunTurns;
       break;
     }
 
     case 'phosphorus_seed': {
-      result.lightTiles = shapeTiles(def.behavior.revealShape, cx, cy, map, closedDoorTiles);
+      result.lightTiles = shapeTiles(def.behavior.revealShape, cx, cy, map, closedDoorTiles, shieldWallTiles);
       result.lightDuration = def.behavior.revealTurns;
       result.lightKind = 'phosphorus';
       result.phosphorusSeed = {
@@ -241,7 +275,7 @@ export function resolveBombTrigger(
     }
 
     case 'smoke': {
-      const tiles = shapeTiles(def.behavior.shape, cx, cy, map, closedDoorTiles);
+      const tiles = shapeTiles(def.behavior.shape, cx, cy, map, closedDoorTiles, shieldWallTiles);
       const radius = def.behavior.shape.kind === 'circle' ? def.behavior.shape.radius : 0;
       result.smokeSpawn = {
         tiles,
@@ -259,6 +293,10 @@ export function resolveBombTrigger(
       };
       break;
     }
+
+    case 'shield_wall':
+      // Shield Bomb is fully handled in TurnResolver — no tiles to compute here.
+      break;
   }
 
   return result;

@@ -35,6 +35,7 @@ const BOMB_ICON_FRAMES: Record<BombType, number> = {
   phosphorus: 13,
   motion_detector_flare: 14,
   cluster_bomb: 15,
+  shield: 3,
 };
 
 /** Preload the bomb icons spritesheet. Idempotent. */
