@@ -1,22 +1,55 @@
 {
   "id": "p_3a9ad8b22613",
   "createdAt": 1775946762703,
-  "updatedAt": 1777852102382,
-  "coins": 1455,
+  "updatedAt": 1777898803890,
+  "coins": 1480,
   "treasures": {
-    "fish": 205,
+    "fish": 175,
     "books": 244,
     "grapes": 270,
     "jade": 210,
-    "coffee": 210,
-    "bones": 208,
+    "coffee": 110,
+    "bones": 78,
     "mushrooms": 291,
     "amulets": 313,
     "lanterns": 308,
-    "chalice": 172
+    "chalice": 126
   },
-  "ownedBombermen": [],
-  "equippedBombermanId": null,
+  "ownedBombermen": [
+    {
+      "id": "owned_p_3a9ad8b22613_1777898739835_4n7v",
+      "name": "Ryan",
+      "tier": "free",
+      "colors": {
+        "shirt": 10502871,
+        "pants": 2656867,
+        "hair": 4829748
+      },
+      "tint": 11108829,
+      "character": "char3",
+      "inventory": {
+        "slots": [
+          {
+            "type": "delay_tricky",
+            "count": 4
+          },
+          {
+            "type": "fart_escape",
+            "count": 4
+          },
+          {
+            "type": "flash",
+            "count": 2
+          },
+          null,
+          null
+        ]
+      },
+      "purchasedAt": 1777898739835,
+      "sourceTemplateId": "cycle_1777898738290_0_free"
+    }
+  ],
+  "equippedBombermanId": "owned_p_3a9ad8b22613_1777898739835_4n7v",
   "bombStockpile": {
     "flare": 10,
     "delay_tricky": 11,
@@ -29,67 +62,27 @@
   "gamblerStreet": {
     "slots": [
       {
-        "kind": "gambler",
-        "gambler": {
-          "id": "g_moqeqmin_2g",
-          "name": "Sofia Gallo",
-          "treasureType": "books",
-          "treasureAmount": 30,
-          "coinReward": 8,
-          "createdAt": 1777851263615,
-          "expiresAt": 1777853871340
-        }
+        "kind": "cooldown",
+        "readyAt": 1777898902275
       },
       {
-        "kind": "gambler",
-        "gambler": {
-          "id": "g_moqeqmin_2h",
-          "name": "Lucía Reyes",
-          "treasureType": "fish",
-          "treasureAmount": 35,
-          "coinReward": 4,
-          "createdAt": 1777851263615,
-          "expiresAt": 1777854798125
-        }
+        "kind": "cooldown",
+        "readyAt": 1777898907514
       },
       {
-        "kind": "gambler",
-        "gambler": {
-          "id": "g_moqeqeh9_2d",
-          "name": "Erika Müller",
-          "treasureType": "fish",
-          "treasureAmount": 40,
-          "coinReward": 4,
-          "createdAt": 1777851253197,
-          "expiresAt": 1777853796817
-        }
+        "kind": "cooldown",
+        "readyAt": 1777898912882
       },
       {
-        "kind": "gambler",
-        "gambler": {
-          "id": "g_moqeqeh9_2e",
-          "name": "Jean-Luc Moreau",
-          "treasureType": "chalice",
-          "treasureAmount": 23,
-          "coinReward": 12,
-          "createdAt": 1777851253197,
-          "expiresAt": 1777854640960
-        }
+        "kind": "cooldown",
+        "readyAt": 1777898918959
       },
       {
-        "kind": "gambler",
-        "gambler": {
-          "id": "g_moqeqeh9_2f",
-          "name": "Diego Vargas",
-          "treasureType": "amulets",
-          "treasureAmount": 70,
-          "coinReward": 58,
-          "createdAt": 1777851253197,
-          "expiresAt": 1777853709916
-        }
+        "kind": "cooldown",
+        "readyAt": 1777898923890
       }
     ],
-    "lastTickedAt": 1777851263615,
-    "nextGamblerSerial": 90
+    "lastTickedAt": 1777898803890,
+    "nextGamblerSerial": 95
   }
 }

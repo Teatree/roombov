@@ -1,0 +1,126 @@
+{
+  "id": "p_d54d355a2f08",
+  "createdAt": 1777895533792,
+  "updatedAt": 1777895778390,
+  "coins": 500,
+  "treasures": {
+    "fish": 47,
+    "chalice": 30,
+    "jade": 53,
+    "books": 60,
+    "coffee": 15,
+    "grapes": 68,
+    "lanterns": 68,
+    "bones": 60,
+    "mushrooms": 69,
+    "amulets": 30
+  },
+  "ownedBombermen": [
+    {
+      "id": "owned_p_d54d355a2f08_1777895549097_vk18",
+      "name": "Duffy",
+      "tier": "free",
+      "colors": {
+        "shirt": 4380485,
+        "pants": 2655370,
+        "hair": 5878324
+      },
+      "tint": 14584782,
+      "character": "char6",
+      "inventory": {
+        "slots": [
+          {
+            "type": "bomb_wide",
+            "count": 5
+          },
+          {
+            "type": "bomb",
+            "count": 5
+          },
+          {
+            "type": "ender_pearl",
+            "count": 5
+          },
+          {
+            "type": "shield",
+            "count": 5
+          },
+          {
+            "type": "flare",
+            "count": 5
+          }
+        ]
+      },
+      "purchasedAt": 1777895549097,
+      "sourceTemplateId": "cycle_1777895548432_0_free"
+    }
+  ],
+  "equippedBombermanId": "owned_p_d54d355a2f08_1777895549097_vk18",
+  "bombStockpile": {},
+  "gamblerStreet": {
+    "slots": [
+      {
+        "kind": "gambler",
+        "gambler": {
+          "id": "g_mor53j1d_1",
+          "name": "Sofia Gallo",
+          "treasureType": "chalice",
+          "treasureAmount": 12,
+          "coinReward": 6,
+          "createdAt": 1777895535649,
+          "expiresAt": 1777897981183
+        }
+      },
+      {
+        "kind": "gambler",
+        "gambler": {
+          "id": "g_mor53j1d_2",
+          "name": "Beatrice Holloway",
+          "treasureType": "chalice",
+          "treasureAmount": 30,
+          "coinReward": 15,
+          "createdAt": 1777895535649,
+          "expiresAt": 1777897921377
+        }
+      },
+      {
+        "kind": "gambler",
+        "gambler": {
+          "id": "g_mor53j1d_3",
+          "name": "Étienne Garnier",
+          "treasureType": "jade",
+          "treasureAmount": 25,
+          "coinReward": 15,
+          "createdAt": 1777895535649,
+          "expiresAt": 1777897544336
+        }
+      },
+      {
+        "kind": "gambler",
+        "gambler": {
+          "id": "g_mor53j1d_4",
+          "name": "Camille Dubois",
+          "treasureType": "grapes",
+          "treasureAmount": 45,
+          "coinReward": 9,
+          "createdAt": 1777895535649,
+          "expiresAt": 1777898267983
+        }
+      },
+      {
+        "kind": "gambler",
+        "gambler": {
+          "id": "g_mor53j1d_5",
+          "name": "Hilda Brandt",
+          "treasureType": "books",
+          "treasureAmount": 30,
+          "coinReward": 8,
+          "createdAt": 1777895535649,
+          "expiresAt": 1777897900822
+        }
+      }
+    ],
+    "lastTickedAt": 1777895535649,
+    "nextGamblerSerial": 6
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "id": "p_cc4f3a86a527",
+  "createdAt": 1777893386898,
+  "updatedAt": 1777893386948,
+  "coins": 500,
+  "treasures": {},
+  "ownedBombermen": [],
+  "equippedBombermanId": null,
+  "bombStockpile": {},
+  "gamblerStreet": {
+    "slots": [
+      {
+        "kind": "gambler",
+        "gambler": {
+          "id": "g_mor3th38_1",
+          "name": "Klaus Engel",
+          "treasureType": "fish",
+          "treasureAmount": 70,
+          "coinReward": 7,
+          "createdAt": 1777893386948,
+          "expiresAt": 1777895508306
+        }
+      },
+      {
+        "kind": "gambler",
+        "gambler": {
+          "id": "g_mor3th38_2",
+          "name": "Greta Hartmann",
+          "treasureType": "chalice",
+          "treasureAmount": 12,
+          "coinReward": 6,
+          "createdAt": 1777893386948,
+          "expiresAt": 1777896893614
+        }
+      },
+      {
+        "kind": "gambler",
+        "gambler": {
+          "id": "g_mor3th38_3",
+          "name": "Bianca Marino",
+          "treasureType": "mushrooms",
+          "treasureAmount": 20,
+          "coinReward": 6,
+          "createdAt": 1777893386948,
+          "expiresAt": 1777896305811
+        }
+      },
+      {
+        "kind": "gambler",
+        "gambler": {
+          "id": "g_mor3th38_4",
+          "name": "Vito Esposito",
+          "treasureType": "grapes",
+          "treasureAmount": 40,
+          "coinReward": 8,
+          "createdAt": 1777893386948,
+          "expiresAt": 1777895483671
+        }
+      },
+      {
+        "kind": "gambler",
+        "gambler": {
+          "id": "g_mor3th38_5",
+          "name": "Konrad Holz",
+          "treasureType": "mushrooms",
+          "treasureAmount": 10,
+          "coinReward": 3,
+          "createdAt": 1777893386948,
+          "expiresAt": 1777896317631
+        }
+      }
+    ],
+    "lastTickedAt": 1777893386948,
+    "nextGamblerSerial": 6
+  }
+}
