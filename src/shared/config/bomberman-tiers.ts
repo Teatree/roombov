@@ -17,12 +17,16 @@ import type { BombType } from '../types/bombs.ts';
 import type { BombermanTier } from '../types/bomberman.ts';
 
 export interface TierConfig {
-  /** How many bomb units (total, across the 4 slots) the Bomberman starts with. */
+  /** How many custom inventory slots this tier carries (excludes the fixed
+   *  Rock). Total visible loadout = customSlots + 1. */
+  customSlots: number;
+  /** Per-slot stack-size range. Each Bomberman in this tier rolls a value
+   *  uniformly inside [min, max] inclusive at shop time. */
+  stackSizeRange: [number, number];
+  /** How many bomb units (total, across all slots) the Bomberman starts with. */
   totalBombs: number;
-  /** Max number of unique bomb types (slots used). Capped by INVENTORY_SLOT_COUNT. */
+  /** Max number of unique bomb types (slots used). Capped by `customSlots`. */
   maxUniqueSlots: number;
-  /** Price range in coins (inclusive). Rounded to the nearest 5. */
-  priceRange: [number, number];
   /**
    * Relative weight of each purchasable bomb type when rolling the starting
    * inventory. Missing entries are treated as 0.
@@ -32,10 +36,11 @@ export interface TierConfig {
 
 export const TIER_CONFIG: Record<BombermanTier, TierConfig> = {
   free: {
+    customSlots: 4,
+    stackSizeRange: [4, 5],
     /** 3 unique slots, 10 bombs total */
     totalBombs: 10,
     maxUniqueSlots: 3,
-    priceRange: [0, 0],
     weights: {
       bomb: 100,
       bomb_wide: 100,
@@ -49,10 +54,11 @@ export const TIER_CONFIG: Record<BombermanTier, TierConfig> = {
     },
   },
   paid: {
+    customSlots: 5,
+    stackSizeRange: [6, 7],
     /** 4 unique slots, 14 bombs total */
     totalBombs: 14,
     maxUniqueSlots: 4,
-    priceRange: [100, 200],
     weights: {
       bomb: 100,
       bomb_wide: 100,
@@ -69,10 +75,11 @@ export const TIER_CONFIG: Record<BombermanTier, TierConfig> = {
     },
   },
   paid_expensive: {
+    customSlots: 6,
+    stackSizeRange: [8, 10],
     /** 4 unique slots, 16 bombs total */
     totalBombs: 16,
     maxUniqueSlots: 4,
-    priceRange: [250, 300],
     weights: {
       bomb: 100,
       bomb_wide: 100,
@@ -93,6 +100,41 @@ export const TIER_CONFIG: Record<BombermanTier, TierConfig> = {
   },
 };
 
+/**
+ * Pricing formula coefficients. Bomberman shop price is computed from rolled
+ * stats + the seeded starting inventory. Tweak these to retune the soft
+ * economy without touching code.
+ *
+ *   slotCost  = max(0, totalSlots - SLOT_THRESHOLD) × COIN_PER_EXTRA_SLOT
+ *   stackCost = max(0, stackSize  - STACK_THRESHOLD) × COIN_PER_EXTRA_STACK
+ *   bombCost  = Σ (slot.count × BOMB_CATALOG[slot.type].price) × BOMB_COST_RATIO
+ *   price     = round-to-nearest-5( slotCost + stackCost + bombCost )
+ *
+ * Free tier is special-cased at 0 regardless of inventory so the entry-level
+ * Bomberman stays accessible to brand-new players.
+ */
+export const BOMBERMAN_PRICING = {
+  slotThreshold: 5,
+  coinPerExtraSlot: 50,
+  stackThreshold: 5,
+  coinPerExtraStack: 25,
+  bombCostRatio: 0.30,
+  roundToNearest: 5,
+} as const;
+
+/**
+ * Migration helper — gives a deterministic mid-tier value for legacy owned
+ * Bombermen that pre-date the per-tier stats system. Free → 4/5, Paid → 5/7,
+ * Expensive → 6/9. PlayerStore calls this when backfilling missing fields.
+ */
+export function defaultStatsForTier(tier: BombermanTier): { maxCustomSlots: number; stackSize: number } {
+  const cfg = TIER_CONFIG[tier];
+  const [min, max] = cfg.stackSizeRange;
+  // Midpoint, rounded up so even ranges favor the player a touch.
+  const stackSize = Math.ceil((min + max) / 2);
+  return { maxCustomSlots: cfg.customSlots, stackSize };
+}
+
 /** Composition of a single shop cycle. */
 export const SHOP_CYCLE_COMPOSITION: { tier: BombermanTier; count: number }[] = [
   { tier: 'free', count: 2 },
@@ -100,5 +142,7 @@ export const SHOP_CYCLE_COMPOSITION: { tier: BombermanTier; count: number }[] = 
   { tier: 'paid_expensive', count: 1 },
 ];
 
-/** 10-minute cycle as per the brief. */
-export const SHOP_CYCLE_DURATION_MS = 10 * 60 * 1000;
+/** 2-minute per-player cycle. Each profile carries its own shop state and
+ *  ticks forward on wall-clock time, so the carousel feels live regardless
+ *  of how long the player was away. */
+export const SHOP_CYCLE_DURATION_MS = 2 * 60 * 1000;

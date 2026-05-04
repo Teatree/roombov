@@ -3,7 +3,12 @@ import type {
 } from './types.ts';
 import type { MatchState, PlayerAction } from '@shared/types/match.ts';
 import { TUTORIAL_PLAYER_ID } from '../backends/TutorialMatchBackend.ts';
-import { INVENTORY_SLOT_COUNT } from '@shared/types/bomberman.ts';
+import { defaultStatsForTier } from '@shared/config/bomberman-tiers.ts';
+
+// Tutorial bots match the player's tier (Free) so the cards in the loadout
+// strip line up visually. If a future tutorial step needs a "tougher" bot,
+// switch this to `defaultStatsForTier('paid_expensive')`.
+const TUTORIAL_BOT_STATS = defaultStatsForTier('free');
 
 /**
  * Walks a TutorialStep[] top to bottom. For each step it either performs an
@@ -370,9 +375,11 @@ export class TutorialDirector {
       case 'spawnBot':
         host.mutateState(s => {
           const slots: Array<{ type: import('@shared/types/bombs.ts').BombType; count: number } | null> =
-            new Array(INVENTORY_SLOT_COUNT).fill(null);
+            new Array(TUTORIAL_BOT_STATS.maxCustomSlots).fill(null);
           for (const item of step.inventory ?? []) {
-            slots[item.slot] = { type: item.type, count: item.count };
+            if (item.slot >= 0 && item.slot < slots.length) {
+              slots[item.slot] = { type: item.type, count: item.count };
+            }
           }
           s.bombermen.push({
             playerId: step.botId,
@@ -386,6 +393,8 @@ export class TutorialDirector {
             hp: step.hp ?? 2,
             alive: true,
             treasures: {},
+            maxCustomSlots: TUTORIAL_BOT_STATS.maxCustomSlots,
+            stackSize: TUTORIAL_BOT_STATS.stackSize,
             inventory: { slots },
             bleedingTurns: 0,
             escaped: false,
@@ -409,7 +418,7 @@ export class TutorialDirector {
         // Action convention: slotIndex 0 = rock (no inventory entry),
         // 1..4 → inventory.slots[0..3]. autoEquip only makes sense for the
         // inventory slots; rock is always available on every bomberman.
-        if (autoEquip && bombType && step.slotIndex >= 1 && step.slotIndex <= INVENTORY_SLOT_COUNT) {
+        if (autoEquip && bombType && step.slotIndex >= 1 && step.slotIndex <= TUTORIAL_BOT_STATS.maxCustomSlots) {
           const invIdx = step.slotIndex - 1;
           host.mutateState(s => {
             const bot = s.bombermen.find(b => b.playerId === step.botId);

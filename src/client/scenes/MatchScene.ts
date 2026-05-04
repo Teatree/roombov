@@ -17,7 +17,7 @@ import { findPath, type PathTile } from '@shared/systems/Pathfinding.ts';
 import type { MapData } from '@shared/types/map.ts';
 import type { MatchState } from '@shared/types/match.ts';
 import type { BombermanState } from '@shared/types/bomberman.ts';
-import { INVENTORY_SLOT_COUNT } from '@shared/types/bomberman.ts';
+import { defaultStatsForTier } from '@shared/config/bomberman-tiers.ts';
 import type { BombType } from '@shared/types/bombs.ts';
 import { BOMB_CATALOG } from '@shared/config/bombs.ts';
 import { BALANCE } from '@shared/config/balance.ts';
@@ -48,7 +48,13 @@ type InputMode =
 
 const SLOT_SIZE = 64;
 const SLOT_GAP = 8;
-const SLOT_COUNT = 1 + INVENTORY_SLOT_COUNT; // Rock + custom inventory
+// Slot count is per-Bomberman now (tier-driven). Use `localTotalSlotCount`
+// in instance methods. The `_LOCAL_FALLBACK_*` constants below are used
+// before the local Bomberman is known (e.g., scene init, before first state).
+const FREE_TIER_DEFAULT = defaultStatsForTier('free');
+const LOCAL_FALLBACK_CUSTOM_SLOTS = FREE_TIER_DEFAULT.maxCustomSlots;
+const LOCAL_FALLBACK_TOTAL_SLOTS = 1 + LOCAL_FALLBACK_CUSTOM_SLOTS;
+const LOCAL_FALLBACK_STACK_SIZE = FREE_TIER_DEFAULT.stackSize;
 
 /**
  * Active match scene.
@@ -511,15 +517,16 @@ export class MatchScene extends Phaser.Scene {
       this.cameras.main.setZoom(next);
     });
 
-    // Keyboard shortcuts 1-5 for the bomb slots
+    // Keyboard shortcuts for the bomb slots — bound up to the hard upper
+    // bound of slot count (Rock + MAX_INVENTORY_SLOT_COUNT custom = 7).
+    // `onSlotClicked` no-ops on indices that don't exist for the current
+    // Bomberman, so it's safe to wire all of them unconditionally.
     const kb = this.input.keyboard;
     if (kb) {
-      kb.on('keydown-ONE', () => this.onSlotClicked(0));
-      kb.on('keydown-TWO', () => this.onSlotClicked(1));
-      kb.on('keydown-THREE', () => this.onSlotClicked(2));
-      kb.on('keydown-FOUR', () => this.onSlotClicked(3));
-      kb.on('keydown-FIVE', () => this.onSlotClicked(4));
-      kb.on('keydown-SIX', () => this.onSlotClicked(5));
+      const digitKeys = ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN'];
+      for (let i = 0; i < digitKeys.length; i++) {
+        kb.on(`keydown-${digitKeys[i]}`, () => this.onSlotClicked(i));
+      }
       kb.on('keydown-ESC', () => {
         this.inputMode = { kind: 'idle' };
         this.sendAction({ kind: 'idle' });
@@ -1464,6 +1471,22 @@ export class MatchScene extends Phaser.Scene {
     return this.state?.bombermen.find(b => b.playerId === this.myPlayerId) ?? null;
   }
 
+  /** Custom slot count for the local player (tier-driven). Falls back to the
+   *  Free-tier default before the local Bomberman is known. */
+  private localCustomSlotCount(): number {
+    return this.myBomberman()?.maxCustomSlots ?? LOCAL_FALLBACK_CUSTOM_SLOTS;
+  }
+
+  /** Total HUD slot count (Rock + custom) for the local player. */
+  private localTotalSlotCount(): number {
+    return 1 + this.localCustomSlotCount();
+  }
+
+  /** Per-slot stack cap for the local player. */
+  private localStackSize(): number {
+    return this.myBomberman()?.stackSize ?? LOCAL_FALLBACK_STACK_SIZE;
+  }
+
   /**
    * Apply the decal-decay alpha curve to every blood decal. Call on each
    * turn boundary; pairs with BombRenderer.applyDecalDecay which handles
@@ -2191,12 +2214,12 @@ export class MatchScene extends Phaser.Scene {
       }
       case 'bombTray': {
         // 5 slots of SLOT_SIZE (64) + 4 gaps of SLOT_GAP (8), bottom-centered.
-        const totalW = SLOT_COUNT * SLOT_SIZE + (SLOT_COUNT - 1) * SLOT_GAP;
+        const totalW = this.localTotalSlotCount() * SLOT_SIZE + (this.localTotalSlotCount() - 1) * SLOT_GAP;
         return { x: (W - totalW) / 2, y: H - SLOT_SIZE - 16, w: totalW, h: SLOT_SIZE, space: 'hud' };
       }
       case 'slot': {
         const i = target.index ?? 0;
-        const totalW = SLOT_COUNT * SLOT_SIZE + (SLOT_COUNT - 1) * SLOT_GAP;
+        const totalW = this.localTotalSlotCount() * SLOT_SIZE + (this.localTotalSlotCount() - 1) * SLOT_GAP;
         const trayX = (W - totalW) / 2;
         return {
           x: trayX + i * (SLOT_SIZE + SLOT_GAP),
@@ -2234,20 +2257,20 @@ export class MatchScene extends Phaser.Scene {
       if (c.x === me.x && c.y === me.y && c.bombs.length > 0) {
         for (const b of c.bombs) {
           lootSlots.push({ type: b.type });
-          if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
+          if (lootSlots.length >= this.localCustomSlotCount()) break;
         }
       }
-      if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
+      if (lootSlots.length >= this.localCustomSlotCount()) break;
     }
-    if (lootSlots.length < INVENTORY_SLOT_COUNT) {
+    if (lootSlots.length < this.localCustomSlotCount()) {
       for (const b of this.state.bodies) {
         if (b.x === me.x && b.y === me.y) {
           for (const bb of b.bombs) {
             lootSlots.push({ type: bb.type });
-            if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
+            if (lootSlots.length >= this.localCustomSlotCount()) break;
           }
         }
-        if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
+        if (lootSlots.length >= this.localCustomSlotCount()) break;
       }
     }
 
@@ -2255,7 +2278,7 @@ export class MatchScene extends Phaser.Scene {
     if (idx < 0) return null;
 
     const W = this.scale.width;
-    const panelWidth = SLOT_COUNT * SLOT_SIZE + (SLOT_COUNT - 1) * SLOT_GAP + 20;
+    const panelWidth = this.localTotalSlotCount() * SLOT_SIZE + (this.localTotalSlotCount() - 1) * SLOT_GAP + 20;
     const panelX = (W - panelWidth) / 2;
     const slotStartX = panelX + 10;
     return {
@@ -2279,6 +2302,11 @@ export class MatchScene extends Phaser.Scene {
 
   private hudTrayX = 0;
   private hudTrayY = 0;
+  private hudTrayBg: Phaser.GameObjects.Graphics | null = null;
+  /** Slot count we last built the tray for. When the local Bomberman's
+   *  `maxCustomSlots` arrives or changes (re-equip mid-scene, late state
+   *  arrival), we rebuild the tray to match. */
+  private lastBuiltSlotCount = -1;
   private hudObjects: Phaser.GameObjects.GameObject[] = [];
 
   /** Tag an object as HUD-only: visible on hudCamera, hidden from main cam. */
@@ -2329,8 +2357,43 @@ export class MatchScene extends Phaser.Scene {
       pulseOnCount: true,
     });
 
-    // Bomb slot tray
-    const trayWidth = SLOT_COUNT * SLOT_SIZE + (SLOT_COUNT - 1) * SLOT_GAP;
+    // Slot tray is built lazily — at this point the local Bomberman state
+    // hasn't arrived yet so we don't know `maxCustomSlots`. `renderHud`
+    // calls `rebuildSlotTrayIfNeeded()` once state is in.
+  }
+
+  /**
+   * Build (or rebuild) the bomb slot tray to match the local Bomberman's
+   * `maxCustomSlots`. Idempotent — only does work when the count changes.
+   * The tray BG, stun overlay, melee icon, and all per-slot rects/icons/
+   * labels are recreated together because they're all sized off the count.
+   */
+  private rebuildSlotTrayIfNeeded(): void {
+    const count = this.localTotalSlotCount();
+    if (count === this.lastBuiltSlotCount) return;
+
+    // Tear down any prior tray bits.
+    this.hudTrayBg?.destroy();
+    this.hudTrayBg = null;
+    this.stunHudOverlay?.destroy();
+    this.stunHudOverlay = null;
+    this.stunHudLabel?.destroy();
+    this.stunHudLabel = null;
+    this.meleeHudIcon?.destroy();
+    this.meleeHudIcon = null;
+    for (const r of this.slotRects) r.destroy();
+    for (const t of this.slotLabelTexts) t.destroy();
+    for (const i of this.slotIcons) i.destroy();
+    for (const t of this.slotCountTexts) t.destroy();
+    for (const g of this.slotHighlights) g.destroy();
+    this.slotRects = [];
+    this.slotLabelTexts = [];
+    this.slotIcons = [];
+    this.slotCountTexts = [];
+    this.slotHighlights = [];
+
+    const { width, height } = this.scale;
+    const trayWidth = count * SLOT_SIZE + (count - 1) * SLOT_GAP;
     const trayX = (width - trayWidth) / 2;
     const trayY = height - SLOT_SIZE - 16;
     this.hudTrayX = trayX;
@@ -2339,7 +2402,7 @@ export class MatchScene extends Phaser.Scene {
     const trayBg = this.add.graphics().setDepth(1000);
     trayBg.fillStyle(0x0a0a14, 0.85);
     trayBg.fillRoundedRect(trayX - 10, trayY - 10, trayWidth + 20, SLOT_SIZE + 20, 6);
-    this.hud(trayBg);
+    this.hudTrayBg = this.hud(trayBg);
 
     // Stun HUD overlay — drawn on top of the tray + all slots, hidden by
     // default. renderHud toggles visibility based on the local bomberman's
@@ -2368,7 +2431,7 @@ export class MatchScene extends Phaser.Scene {
     ).setOrigin(1, 0.5).setDepth(1002).setVisible(false).setDisplaySize(32, 32);
     this.meleeHudIcon = this.hud(meleeIcon);
 
-    for (let i = 0; i < SLOT_COUNT; i++) {
+    for (let i = 0; i < count; i++) {
       const sx = trayX + i * (SLOT_SIZE + SLOT_GAP);
 
       const rect = this.add.rectangle(sx, trayY, SLOT_SIZE, SLOT_SIZE, 0x1a1a2e, 1)
@@ -2399,6 +2462,8 @@ export class MatchScene extends Phaser.Scene {
       const highlight = this.add.graphics().setDepth(1003);
       this.slotHighlights.push(this.hud(highlight));
     }
+
+    this.lastBuiltSlotCount = count;
   }
 
   /** Returns slot index [0..4] if (x,y) is on a bomb slot, -1 otherwise. */
@@ -2408,7 +2473,7 @@ export class MatchScene extends Phaser.Scene {
     if (rel < 0) return -1;
     const stride = SLOT_SIZE + SLOT_GAP;
     const idx = Math.floor(rel / stride);
-    if (idx < 0 || idx >= SLOT_COUNT) return -1;
+    if (idx < 0 || idx >= this.localTotalSlotCount()) return -1;
     const offset = rel - idx * stride;
     if (offset > SLOT_SIZE) return -1; // in the gap between slots
     return idx;
@@ -2417,6 +2482,9 @@ export class MatchScene extends Phaser.Scene {
   private renderHud(): void {
     if (!this.state) return;
     const me = this.myBomberman();
+    // Build (or rebuild) the slot tray now that we know the local Bomberman's
+    // `maxCustomSlots`. Idempotent — only does work on count change.
+    this.rebuildSlotTrayIfNeeded();
 
     const phaseLabel = this.state.phase === 'input' ? 'YOUR TURN'
       : this.state.phase === 'transition' ? 'RESOLVING...'
@@ -2460,8 +2528,8 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private renderBombSlots(me: BombermanState): void {
-    // Slot layout: 0 = Rock (infinite), 1..INVENTORY_SLOT_COUNT = custom inventory[0..N-1]
-    for (let i = 0; i < SLOT_COUNT; i++) {
+    // Slot layout: 0 = Rock (infinite), 1..maxCustomSlots = custom inventory[0..N-1]
+    for (let i = 0; i < this.localTotalSlotCount(); i++) {
       let sub = '';
       let bombType: import('@shared/types/bombs.ts').BombType | null = null;
 
@@ -2513,12 +2581,12 @@ export class MatchScene extends Phaser.Scene {
 
     // Loot swap shortcut: clicking an inventory slot while a loot swap is
     // pending triggers the swap instead of entering aim mode.
-    if (this.lootPendingSwap && slotIndex >= 1 && slotIndex <= INVENTORY_SLOT_COUNT) {
+    if (this.lootPendingSwap && slotIndex >= 1 && slotIndex <= this.localCustomSlotCount()) {
       this.executeLootSwap(slotIndex);
       return;
     }
 
-    // Slot 0 is Rock (always available), slots 1..INVENTORY_SLOT_COUNT map to inventory.slots[0..N-1]
+    // Slot 0 is Rock (always available), slots 1..maxCustomSlots map to inventory.slots[0..N-1]
     let hasBomb = false;
     if (slotIndex === 0) {
       hasBomb = true;
@@ -2558,15 +2626,21 @@ export class MatchScene extends Phaser.Scene {
     this.hideLootPanel();
     if (!this.state) return;
 
-    // Find what's on the player's tile
-    type LootSource = {
+    // Find what's on the player's tile. Each source carries its own slot
+    // count: chests are always 5 (`CHEST_LOOT_SLOT_COUNT`), bodies match the
+    // deceased's `maxCustomSlots`. The looting UI renders one row per source
+    // sized accordingly — the player's HUD slot tray remains the only thing
+    // sized off the local Bomberman's stats.
+    type LootSourceRow = {
       kind: 'chest' | 'body';
       id: string;
       bombs: Array<{ type: import('@shared/types/bombs.ts').BombType; count: number }>;
       label: string;
+      slotCount: number;
     };
 
-    const sources: LootSource[] = [];
+    const CHEST_LOOT_SLOT_COUNT = 5;
+    const sources: LootSourceRow[] = [];
     for (const c of this.state.chests) {
       if (c.x === me.x && c.y === me.y && c.bombs.length > 0) {
         sources.push({
@@ -2574,6 +2648,7 @@ export class MatchScene extends Phaser.Scene {
           id: c.id,
           bombs: c.bombs.map(b => ({ type: b.type, count: b.count })),
           label: `CHEST (TIER ${c.tier})`,
+          slotCount: CHEST_LOOT_SLOT_COUNT,
         });
       }
     }
@@ -2584,6 +2659,7 @@ export class MatchScene extends Phaser.Scene {
           id: b.id,
           bombs: b.bombs.map(bb => ({ type: bb.type, count: bb.count })),
           label: 'BODY LOOT',
+          slotCount: b.maxCustomSlots,
         });
       }
     }
@@ -2596,76 +2672,88 @@ export class MatchScene extends Phaser.Scene {
     this.lootPanelVisible = true;
 
     const { width } = this.scale;
-    const panelWidth = SLOT_COUNT * SLOT_SIZE + (SLOT_COUNT - 1) * SLOT_GAP + 20;
+    const lootSlotSize = SLOT_SIZE;
+    const rowH = 70;
+    const rowGap = 8;
+    const headerH = 26;
+
+    // Panel sized by the widest row. Each row's width = slotCount * SLOT_SIZE
+    // + (slotCount - 1) * SLOT_GAP + 20 padding.
+    let widestRow = 0;
+    for (const src of sources) {
+      const w = src.slotCount * lootSlotSize + Math.max(0, src.slotCount - 1) * SLOT_GAP + 20;
+      if (w > widestRow) widestRow = w;
+    }
+    const panelWidth = widestRow;
+    const panelHeight = headerH + sources.length * rowH + Math.max(0, sources.length - 1) * rowGap + 12;
+
     const panelX = (width - panelWidth) / 2;
-    const panelY = this.hudTrayY - 100;
+    const panelY = this.hudTrayY - panelHeight - 10;
     this.lootPanelY = panelY;
 
     // Background
     const bg = this.hud(this.add.graphics().setDepth(1010));
     bg.fillStyle(0x112211, 0.92);
-    bg.fillRoundedRect(panelX, panelY, panelWidth, 90, 6);
+    bg.fillRoundedRect(panelX, panelY, panelWidth, panelHeight, 6);
     bg.lineStyle(2, 0x44ff88, 0.9);
-    bg.strokeRoundedRect(panelX, panelY, panelWidth, 90, 6);
+    bg.strokeRoundedRect(panelX, panelY, panelWidth, panelHeight, 6);
     this.lootPanelObjects.push(bg);
 
-    // Title
-    const title = this.hud(this.add.text(width / 2, panelY + 12, sources[0].label, {
-      fontSize: '11px', color: '#44ff88', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setOrigin(0.5, 0).setDepth(1011));
-    this.lootPanelObjects.push(title);
-
-    // Flatten all lootable bombs across sources into 4 visual slots
-    const lootSlots: Array<{ kind: 'chest' | 'body'; sourceId: string; type: import('@shared/types/bombs.ts').BombType; count: number }> = [];
+    // Render each source as its own slot row. Index `i` here is the row;
+    // the absolute slot index across all rows is what the click handlers
+    // use (reconstructed in the same order in `tryLootSlotAt`).
+    let cursorY = panelY + 8;
     for (const src of sources) {
-      for (const bomb of src.bombs) {
-        lootSlots.push({ kind: src.kind, sourceId: src.id, type: bomb.type, count: bomb.count });
-        if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
+      const rowTitle = this.hud(this.add.text(panelX + 12, cursorY, src.label, {
+        fontSize: '11px', color: src.kind === 'chest' ? '#44ff88' : '#ffaa66',
+        fontFamily: 'monospace', fontStyle: 'bold',
+      }).setOrigin(0, 0).setDepth(1011));
+      this.lootPanelObjects.push(rowTitle);
+      cursorY += 18;
+
+      const rowWidth = src.slotCount * lootSlotSize + Math.max(0, src.slotCount - 1) * SLOT_GAP;
+      const slotStartX = panelX + (panelWidth - rowWidth) / 2;
+      const slotY = cursorY;
+
+      for (let i = 0; i < src.slotCount; i++) {
+        const sx = slotStartX + i * (lootSlotSize + SLOT_GAP);
+        const bomb = src.bombs[i];
+
+        const rect = this.hud(this.add.rectangle(sx, slotY, lootSlotSize, 50, 0x1a2a1e, 1)
+          .setOrigin(0, 0)
+          .setStrokeStyle(2, bomb ? (src.kind === 'chest' ? 0x44ff88 : 0xffaa66) : 0x333355)
+          .setDepth(1011));
+        this.lootPanelObjects.push(rect);
+
+        if (!bomb) {
+          const dash = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + 25, '—', {
+            fontSize: '12px', color: '#444', fontFamily: 'monospace',
+          }).setOrigin(0.5).setDepth(1012));
+          this.lootPanelObjects.push(dash);
+          continue;
+        }
+
+        const isPending = this.lootPendingSwap?.sourceId === src.id && this.lootPendingSwap?.bombType === bomb.type;
+
+        const lootIcon = this.hud(this.add.image(
+          sx + lootSlotSize / 2, slotY + 22, 'bomb_icons', bombIconFrame(bomb.type),
+        ).setDisplaySize(28, 28).setDepth(1012));
+        this.lootPanelObjects.push(lootIcon);
+
+        const countText = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + 42, `x${bomb.count}`, {
+          fontSize: '12px', color: isPending ? '#ffcc44' : '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
+        }).setOrigin(0.5, 1).setDepth(1012));
+        this.lootPanelObjects.push(countText);
+
+        if (isPending) {
+          const hlGfx = this.hud(this.add.graphics().setDepth(1013));
+          hlGfx.lineStyle(3, 0xffcc44, 1);
+          hlGfx.strokeRoundedRect(sx, slotY, lootSlotSize, 50, 4);
+          this.lootPanelObjects.push(hlGfx);
+        }
       }
-      if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
-    }
 
-    const slotStartX = panelX + 10;
-    const slotY = panelY + 30;
-    const lootSlotSize = SLOT_SIZE;
-
-    for (let i = 0; i < INVENTORY_SLOT_COUNT; i++) {
-      const sx = slotStartX + i * (lootSlotSize + SLOT_GAP);
-      const loot = lootSlots[i];
-
-      const rect = this.hud(this.add.rectangle(sx, slotY, lootSlotSize, 50, 0x1a2a1e, 1)
-        .setOrigin(0, 0)
-        .setStrokeStyle(2, loot ? 0x44ff88 : 0x333355)
-        .setDepth(1011));
-      this.lootPanelObjects.push(rect);
-
-      if (!loot) {
-        const dash = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + 25, '—', {
-          fontSize: '12px', color: '#444', fontFamily: 'monospace',
-        }).setOrigin(0.5).setDepth(1012));
-        this.lootPanelObjects.push(dash);
-        continue;
-      }
-
-      const isPending = this.lootPendingSwap?.sourceId === loot.sourceId && this.lootPendingSwap?.bombType === loot.type;
-
-      // Bomb icon
-      const lootIcon = this.hud(this.add.image(
-        sx + lootSlotSize / 2, slotY + 22, 'bomb_icons', bombIconFrame(loot.type),
-      ).setDisplaySize(28, 28).setDepth(1012));
-      this.lootPanelObjects.push(lootIcon);
-
-      const countText = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + 42, `x${loot.count}`, {
-        fontSize: '12px', color: isPending ? '#ffcc44' : '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
-      }).setOrigin(0.5, 1).setDepth(1012));
-      this.lootPanelObjects.push(countText);
-
-      if (isPending) {
-        const hlGfx = this.hud(this.add.graphics().setDepth(1013));
-        hlGfx.lineStyle(3, 0xffcc44, 1);
-        hlGfx.strokeRoundedRect(sx, slotY, lootSlotSize, 50, 4);
-        this.lootPanelObjects.push(hlGfx);
-      }
+      cursorY += 50 + rowGap;
     }
   }
 
@@ -2675,45 +2763,111 @@ export class MatchScene extends Phaser.Scene {
     this.lootPanelVisible = false;
   }
 
-  /** Bomb type at a given loot panel index, in the same flat order
-   *  renderLootPanel uses (chests first, then bodies, capped at 4). */
-  private lootSlotBombType(me: BombermanState, lootIndex: number): BombType | null {
-    if (!this.state) return null;
-    const flat: BombType[] = [];
+  /**
+   * Build the same per-source-row layout used by `renderLootPanel`. Returns
+   * a flat array where each row's slots are appended in order: chests (5
+   * slots each), then bodies (deceased.maxCustomSlots slots each). Empty
+   * slots are represented as `null`. The flat index in this array maps 1:1
+   * to the visual click target produced by `renderLootPanel`.
+   */
+  private lootRowsFlat(me: BombermanState): Array<{
+    kind: 'chest' | 'body';
+    sourceId: string;
+    type: import('@shared/types/bombs.ts').BombType;
+    count: number;
+  } | null> {
+    const CHEST_LOOT_SLOT_COUNT = 5;
+    const flat: Array<{
+      kind: 'chest' | 'body';
+      sourceId: string;
+      type: import('@shared/types/bombs.ts').BombType;
+      count: number;
+    } | null> = [];
+    if (!this.state) return flat;
     for (const c of this.state.chests) {
-      if (c.x === me.x && c.y === me.y && c.bombs.length > 0) {
-        for (const b of c.bombs) { flat.push(b.type); if (flat.length >= INVENTORY_SLOT_COUNT) break; }
-      }
-      if (flat.length >= INVENTORY_SLOT_COUNT) break;
-    }
-    if (flat.length < INVENTORY_SLOT_COUNT) {
-      for (const b of this.state.bodies) {
-        if (b.x === me.x && b.y === me.y) {
-          for (const bb of b.bombs) { flat.push(bb.type); if (flat.length >= INVENTORY_SLOT_COUNT) break; }
-        }
-        if (flat.length >= INVENTORY_SLOT_COUNT) break;
+      if (c.x !== me.x || c.y !== me.y || c.bombs.length === 0) continue;
+      for (let i = 0; i < CHEST_LOOT_SLOT_COUNT; i++) {
+        const b = c.bombs[i];
+        flat.push(b ? { kind: 'chest', sourceId: c.id, type: b.type, count: b.count } : null);
       }
     }
-    return flat[lootIndex] ?? null;
+    for (const body of this.state.bodies) {
+      if (body.x !== me.x || body.y !== me.y || body.bombs.length === 0) continue;
+      for (let i = 0; i < body.maxCustomSlots; i++) {
+        const b = body.bombs[i];
+        flat.push(b ? { kind: 'body', sourceId: body.id, type: b.type, count: b.count } : null);
+      }
+    }
+    return flat;
   }
 
-  /** Hit-test the loot panel. Returns the loot slot index or -1. */
-  private hitTestLootPanel(screenX: number, screenY: number): number {
-    if (!this.lootPanelVisible) return -1;
-    const { width } = this.scale;
-    const panelWidth = SLOT_COUNT * SLOT_SIZE + (SLOT_COUNT - 1) * SLOT_GAP + 20;
-    const panelX = (width - panelWidth) / 2;
-    const slotStartX = panelX + 10;
-    const slotY = this.lootPanelY + 30;
+  /** Bomb type at a given loot panel index. */
+  private lootSlotBombType(me: BombermanState, lootIndex: number): BombType | null {
+    return this.lootRowsFlat(me)[lootIndex]?.type ?? null;
+  }
 
-    if (screenY < slotY || screenY > slotY + 50) return -1;
-    const rel = screenX - slotStartX;
-    if (rel < 0) return -1;
-    const stride = SLOT_SIZE + SLOT_GAP;
-    const idx = Math.floor(rel / stride);
-    if (idx < 0 || idx >= INVENTORY_SLOT_COUNT) return -1;
-    if (rel - idx * stride > SLOT_SIZE) return -1;
-    return idx;
+  /** Hit-test the loot panel. Returns the flat loot slot index or -1. */
+  private hitTestLootPanel(screenX: number, screenY: number): number {
+    if (!this.lootPanelVisible || !this.state) return -1;
+    const me = this.myBomberman();
+    if (!me) return -1;
+
+    // Reconstruct the same row layout `renderLootPanel` produced. Each row
+    // is `headerH=18` of label + 50 of slot rect + spacing.
+    type Row = {
+      kind: 'chest' | 'body';
+      slotCount: number;
+      flatStart: number;
+    };
+    const CHEST_LOOT_SLOT_COUNT = 5;
+    const rows: Row[] = [];
+    let flatCursor = 0;
+    for (const c of this.state.chests) {
+      if (c.x === me.x && c.y === me.y && c.bombs.length > 0) {
+        rows.push({ kind: 'chest', slotCount: CHEST_LOOT_SLOT_COUNT, flatStart: flatCursor });
+        flatCursor += CHEST_LOOT_SLOT_COUNT;
+      }
+    }
+    for (const body of this.state.bodies) {
+      if (body.x === me.x && body.y === me.y && body.bombs.length > 0) {
+        rows.push({ kind: 'body', slotCount: body.maxCustomSlots, flatStart: flatCursor });
+        flatCursor += body.maxCustomSlots;
+      }
+    }
+    if (rows.length === 0) return -1;
+
+    const { width } = this.scale;
+    const lootSlotSize = SLOT_SIZE;
+    const rowGap = 8;
+
+    let widestRow = 0;
+    for (const r of rows) {
+      const w = r.slotCount * lootSlotSize + Math.max(0, r.slotCount - 1) * SLOT_GAP + 20;
+      if (w > widestRow) widestRow = w;
+    }
+    const panelWidth = widestRow;
+    const panelX = (width - panelWidth) / 2;
+
+    // Mirror render: each row is title (18px) + slots (50px) + rowGap.
+    let cursorY = this.lootPanelY + 8;
+    for (const row of rows) {
+      cursorY += 18; // label height
+      const slotYTop = cursorY;
+      const slotYBot = cursorY + 50;
+      if (screenY >= slotYTop && screenY <= slotYBot) {
+        const rowWidth = row.slotCount * lootSlotSize + Math.max(0, row.slotCount - 1) * SLOT_GAP;
+        const slotStartX = panelX + (panelWidth - rowWidth) / 2;
+        const rel = screenX - slotStartX;
+        if (rel < 0) return -1;
+        const stride = lootSlotSize + SLOT_GAP;
+        const idx = Math.floor(rel / stride);
+        if (idx < 0 || idx >= row.slotCount) return -1;
+        if (rel - idx * stride > lootSlotSize) return -1;
+        return row.flatStart + idx;
+      }
+      cursorY += 50 + rowGap;
+    }
+    return -1;
   }
 
   private onLootSlotClicked(lootIndex: number): void {
@@ -2721,47 +2875,27 @@ export class MatchScene extends Phaser.Scene {
     const me = this.myBomberman();
     if (!me) return;
 
-    // Gather all available loot on this tile (same logic as renderLootPanel)
-    const lootSlots: Array<{ kind: 'chest' | 'body'; sourceId: string; type: import('@shared/types/bombs.ts').BombType; count: number }> = [];
-    for (const c of this.state.chests) {
-      if (c.x === me.x && c.y === me.y && c.bombs.length > 0) {
-        for (const b of c.bombs) {
-          lootSlots.push({ kind: 'chest', sourceId: c.id, type: b.type, count: b.count });
-          if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
-        }
-        if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
-      }
-    }
-    if (lootSlots.length < INVENTORY_SLOT_COUNT) {
-      for (const b of this.state.bodies) {
-        if (b.x === me.x && b.y === me.y) {
-          for (const bb of b.bombs) {
-            lootSlots.push({ kind: 'body', sourceId: b.id, type: bb.type, count: bb.count });
-            if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
-          }
-        }
-        if (lootSlots.length >= INVENTORY_SLOT_COUNT) break;
-      }
-    }
+    // Use the same flat-row layout as the render path.
+    const lootSlots = this.lootRowsFlat(me);
 
     const loot = lootSlots[lootIndex];
     if (!loot) return;
 
     // Try to find a compatible slot: empty, or same type with room
-    const stackLimit = BALANCE.match.bombSlotStackLimit;
+    const stackLimit = this.localStackSize();
     let targetSlot = -1;
 
     // First: matching slot with room
-    for (let i = 0; i < INVENTORY_SLOT_COUNT; i++) {
+    for (let i = 0; i < this.localCustomSlotCount(); i++) {
       const slot = me.inventory.slots[i];
       if (slot && slot.type === loot.type && slot.count < stackLimit) {
-        targetSlot = i + 1; // network convention: 1..INVENTORY_SLOT_COUNT
+        targetSlot = i + 1; // network convention: 1..maxCustomSlots
         break;
       }
     }
     // Second: empty slot
     if (targetSlot === -1) {
-      for (let i = 0; i < INVENTORY_SLOT_COUNT; i++) {
+      for (let i = 0; i < this.localCustomSlotCount(); i++) {
         if (!me.inventory.slots[i]) {
           targetSlot = i + 1;
           break;

@@ -7,18 +7,39 @@ import type { BombermanTemplate } from '@shared/types/bomberman.ts';
 import { BOMB_CATALOG } from '@shared/config/bombs.ts';
 import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
 import { BombermanSelector } from '../systems/BombermanSelector.ts';
+import { attachTierInfoBadge } from '../systems/TierInfoBadge.ts';
 
-const CARD_WIDTH = 180;
-const CARD_HEIGHT = 400;
+const CARD_WIDTH = 200;
+const CARD_HEIGHT = 460;
 const CARD_GAP = 20;
 
+const ROLL_IN_MS = 280;
+const ROLL_OUT_MS = 260;
+const REFLOW_MS = 280;
+const ROLL_IN_STAGGER_MS = 70;
+
+interface CardView {
+  templateId: string;
+  container: Phaser.GameObjects.Container;
+  /** True once a fly-off tween has been kicked off — view will be destroyed. */
+  leaving: boolean;
+}
+
 /**
- * Bomberman Shop carousel — shows the current 10-minute cycle of 5
- * Bombermen (2 free, 2 paid, 1 expensive) and lets the player buy them.
- * Owned Bombermen show an [EQUIP] button instead.
+ * Bomberman Shop carousel — per-player edition.
+ *
+ * Each player has their own 2-minute cycle, persisted on `profile.bombermanShop`.
+ * Cards roll in from the right when the scene opens, fly off when bought (the
+ * bought-template-id is filtered from the visible row), and the whole batch
+ * flies off + new batch rolls in when the cycle ends.
+ *
+ * Diff-rendering: `renderCards()` compares the current views (keyed by
+ * template id) against the latest store cycle and animates additions,
+ * removals, and reorders.
  */
 export class BombermanShopScene extends Phaser.Scene {
-  private cardContainers: Phaser.GameObjects.Container[] = [];
+  private cardViews: Map<string, CardView> = new Map();
+  private cardOrder: string[] = [];
   private coinsText!: Phaser.GameObjects.Text;
   private toastText!: Phaser.GameObjects.Text;
   private rosterText!: Phaser.GameObjects.Text;
@@ -27,6 +48,9 @@ export class BombermanShopScene extends Phaser.Scene {
   private unsubShop: (() => void) | null = null;
   private activity: ActivityIndicator | null = null;
   private selector: BombermanSelector | null = null;
+  /** Cached cycleId of the most recent render — used to detect cycle rollover
+   *  so we can sequence "fly old off" → "roll new in". */
+  private renderedCycleId: string | null = null;
 
   constructor() {
     super({ key: 'BombermanShopScene' });
@@ -85,16 +109,15 @@ export class BombermanShopScene extends Phaser.Scene {
 
     this.unsubProfile = ProfileStore.subscribe(() => {
       this.renderHeader();
-      this.rebuildCards();
     });
-    this.unsubShop = BombermanShopStore.subscribe(() => this.rebuildCards());
+    this.unsubShop = BombermanShopStore.subscribe(() => this.renderCards());
 
     // Consistent Bomberman selector at the bottom (same component as Bombs Shop / Lobby)
     this.selector = new BombermanSelector(this, height - 130);
     this.selector.create();
 
     this.renderHeader();
-    this.rebuildCards();
+    this.renderCards();
   }
 
   update(): void {
@@ -105,8 +128,10 @@ export class BombermanShopScene extends Phaser.Scene {
     const sec = Math.floor((msLeft % 60000) / 1000).toString().padStart(2, '0');
     this.timerText.setText(`New cycle in ${min}:${sec}`);
 
-    // If cycle expired, auto-request the next one so we don't sit on stale data
-    if (msLeft === 0) {
+    // Cycle expired locally — request the next one. Server will tick forward
+    // and respond with a fresh cycle, which the diff-renderer will animate
+    // (old fly off, new roll in).
+    if (msLeft === 0 && cycle.cycleId === this.renderedCycleId) {
       NetworkManager.getSocket().emit('bomberman_shop_request');
     }
   }
@@ -118,8 +143,9 @@ export class BombermanShopScene extends Phaser.Scene {
     this.unsubShop = null;
     this.activity?.destroy();
     this.activity = null;
-    for (const c of this.cardContainers) c.destroy();
-    this.cardContainers = [];
+    for (const view of this.cardViews.values()) view.container.destroy();
+    this.cardViews.clear();
+    this.cardOrder = [];
     this.selector?.destroy();
     this.selector = null;
     const socket = NetworkManager.getSocket();
@@ -133,23 +159,119 @@ export class BombermanShopScene extends Phaser.Scene {
     this.rosterText.setText(`Roster: ${profile.ownedBombermen.length}/5`);
   }
 
-  private rebuildCards(): void {
-    for (const c of this.cardContainers) c.destroy();
-    this.cardContainers = [];
+  // ───────────────────────────────────────────────────────────────────────────
+  // Card row — diff and animate from the cycle store
+  // ───────────────────────────────────────────────────────────────────────────
 
+  private renderCards(): void {
     const cycle = BombermanShopStore.get();
     if (!cycle) return;
 
-    const { width } = this.scale;
-    const count = cycle.bombermen.length;
-    const totalW = count * CARD_WIDTH + (count - 1) * CARD_GAP;
-    const startX = (width - totalW) / 2 + CARD_WIDTH / 2;
-    const cardY = 310;
+    // Filter visible templates: exclude ones already bought this cycle. The
+    // server tracks `boughtTemplateIds`; the client renders only the
+    // remaining ones.
+    const visible = cycle.bombermen.filter(b => !cycle.boughtTemplateIds.includes(b.id));
+    const nextIds = visible.map(b => b.id);
 
-    for (let i = 0; i < count; i++) {
-      const container = this.createCard(startX + i * (CARD_WIDTH + CARD_GAP), cardY, cycle.bombermen[i]);
-      this.cardContainers.push(container);
+    // Cycle rollover: when the cycleId changes, treat ALL existing cards as
+    // "leaving" so the old batch flies off, then the new batch rolls in.
+    const isRollover = this.renderedCycleId !== null && this.renderedCycleId !== cycle.cycleId;
+    if (isRollover) {
+      for (const id of this.cardOrder) {
+        if (!this.cardViews.get(id)?.leaving) this.animateCardLeaving(id);
+      }
     }
+
+    // Removals: views that are no longer in the visible list (mid-cycle
+    // purchase). Animate them out unless we already started the rollover
+    // animation above.
+    for (const [id, view] of this.cardViews) {
+      if (view.leaving) continue;
+      if (!nextIds.includes(id)) this.animateCardLeaving(id);
+    }
+
+    // Additions: build any visible template that doesn't have a non-leaving
+    // view yet. Stagger the roll-in so they cascade left-to-right.
+    let addedIndex = 0;
+    for (let i = 0; i < visible.length; i++) {
+      const t = visible[i];
+      const existing = this.cardViews.get(t.id);
+      if (existing && !existing.leaving) continue;
+      const delay = (isRollover ? ROLL_OUT_MS : 0) + addedIndex * ROLL_IN_STAGGER_MS;
+      this.createAndArriveCard(t, i, visible.length, delay);
+      addedIndex++;
+    }
+
+    // Reflow: reposition surviving cards to their new index.
+    for (let i = 0; i < visible.length; i++) {
+      const t = visible[i];
+      const view = this.cardViews.get(t.id);
+      if (!view || view.leaving) continue;
+      const targetX = this.cardTargetX(i, visible.length);
+      if (Math.abs(view.container.x - targetX) > 1) {
+        this.tweens.add({
+          targets: view.container, x: targetX,
+          duration: REFLOW_MS, ease: 'Quad.easeOut',
+        });
+      }
+    }
+
+    this.cardOrder = nextIds.slice();
+    this.renderedCycleId = cycle.cycleId;
+  }
+
+  private cardTargetX(i: number, count: number): number {
+    const totalW = count * CARD_WIDTH + Math.max(0, count - 1) * CARD_GAP;
+    const startX = (this.scale.width - totalW) / 2;
+    return startX + i * (CARD_WIDTH + CARD_GAP) + CARD_WIDTH / 2;
+  }
+
+  private createAndArriveCard(template: BombermanTemplate, index: number, count: number, delay: number): void {
+    const cardY = 340;
+    const startX = this.scale.width + CARD_WIDTH; // off-screen right
+    const targetX = this.cardTargetX(index, count);
+
+    const container = this.createCard(startX, cardY, template);
+    container.setAlpha(0);
+
+    const view: CardView = {
+      templateId: template.id,
+      container,
+      leaving: false,
+    };
+    this.cardViews.set(template.id, view);
+
+    this.tweens.add({
+      targets: container,
+      x: targetX,
+      alpha: 1,
+      duration: ROLL_IN_MS,
+      ease: 'Quad.easeOut',
+      delay,
+    });
+  }
+
+  private animateCardLeaving(id: string): void {
+    const view = this.cardViews.get(id);
+    if (!view || view.leaving) return;
+    view.leaving = true;
+    // Disable any interactive children on the leaving card so half-flown
+    // cards don't accept clicks.
+    view.container.list.forEach((c) => {
+      const obj = c as Phaser.GameObjects.GameObject & { input?: { enabled: boolean } };
+      if (obj.input) obj.disableInteractive?.();
+    });
+    this.tweens.add({
+      targets: view.container,
+      y: view.container.y - 80,
+      alpha: 0,
+      duration: ROLL_OUT_MS,
+      ease: 'Quad.easeIn',
+      onComplete: () => {
+        view.container.destroy();
+        this.cardViews.delete(id);
+      },
+    });
   }
 
   private createCard(x: number, y: number, template: BombermanTemplate): Phaser.GameObjects.Container {
@@ -181,31 +303,44 @@ export class BombermanShopScene extends Phaser.Scene {
       fontSize: '14px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5));
 
-    // Character — animated sprite tinted with the template's vivid tint.
-    // Character variant = the template's persistent char1/char2/char3.
-    // Animation is a fresh random pick per card render ("different every
-    // time Player opens the Bomberman shop"). Scale 1.1 fits the 180x320 card.
+    // Character sprite
     const anim = pickRandomUiAnimation();
-    const charSprite = createShopBombermanSprite(this, 0, -30, template.tint, template.character, anim, 1.1);
+    const charSprite = createShopBombermanSprite(this, 0, -82, template.tint, template.character, anim, 1.0);
     container.add(charSprite);
 
-    // Bomb loadout summary with icons
-    const loadoutStartY = 55;
-    for (let si = 0; si < template.inventory.slots.length; si++) {
-      const slot = template.inventory.slots[si];
-      const rowY = loadoutStartY + si * 18;
+    // Tier info badge — top-right of the card. Hover reveals stat tooltip.
+    attachTierInfoBadge(this, container, {
+      x: 64, y: -CARD_HEIGHT / 2 + 14,
+      tier: template.tier,
+      maxCustomSlots: template.maxCustomSlots,
+      stackSize: template.stackSize,
+      tooltipSide: 'below',
+    });
+
+    // Bomb loadout list — variable count, custom slots only.
+    const loadoutStartY = -10;
+    const rowH = 22;
+    const iconSize = 18;
+    const loadoutSlots = template.inventory.slots;
+    for (let si = 0; si < template.maxCustomSlots; si++) {
+      const slot = loadoutSlots[si];
+      const rowY = loadoutStartY + si * rowH;
       if (!slot) {
-        container.add(this.add.text(0, rowY, '- empty', {
-          fontSize: '10px', color: '#666', fontFamily: 'monospace',
+        container.add(this.add.text(0, rowY, '— empty', {
+          fontSize: '11px', color: '#666', fontFamily: 'monospace',
         }).setOrigin(0.5));
       } else {
         const name = BOMB_CATALOG[slot.type].name;
-        const slotIcon = this.add.image(-40, rowY, 'bomb_icons', bombIconFrame(slot.type))
-          .setDisplaySize(14, 14);
+        const slotIcon = this.add.image(-CARD_WIDTH / 2 + 18, rowY, 'bomb_icons', bombIconFrame(slot.type))
+          .setDisplaySize(iconSize, iconSize);
         container.add(slotIcon);
-        container.add(this.add.text(-28, rowY, `${name} x${slot.count}`, {
-          fontSize: '10px', color: '#cccccc', fontFamily: 'monospace',
-        }).setOrigin(0, 0.5));
+        const nameText = this.add.text(-CARD_WIDTH / 2 + 32, rowY, name, {
+          fontSize: '11px', color: '#cccccc', fontFamily: 'monospace',
+        }).setOrigin(0, 0.5);
+        container.add(nameText);
+        container.add(this.add.text(CARD_WIDTH / 2 - 14, rowY, `×${slot.count}`, {
+          fontSize: '12px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
+        }).setOrigin(1, 0.5));
       }
     }
 
@@ -215,36 +350,25 @@ export class BombermanShopScene extends Phaser.Scene {
       fontSize: '16px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5));
 
-    // Buy button — if the player already owns a Bomberman purchased from this
-    // exact template (within the current cycle), show OWNED instead of BUY.
-    const alreadyOwned = profile?.ownedBombermen.some(b => b.sourceTemplateId === template.id) ?? false;
     const canAfford = profile ? profile.coins >= template.price : false;
     const rosterFull = profile ? profile.ownedBombermen.length >= 5 : true;
+    const enabled = canAfford && !rosterFull;
+    const btnColor = enabled ? '#44aaff' : '#555566';
+    const btn = this.add.text(0, CARD_HEIGHT / 2 - 18, '[ BUY ]', {
+      fontSize: '14px', color: btnColor, fontFamily: 'monospace', fontStyle: 'bold',
+      backgroundColor: '#111122', padding: { x: 12, y: 6 },
+    }).setOrigin(0.5);
 
-    if (alreadyOwned) {
-      container.add(this.add.text(0, CARD_HEIGHT / 2 - 18, 'OWNED', {
-        fontSize: '14px', color: '#44ff88', fontFamily: 'monospace', fontStyle: 'bold',
-        backgroundColor: '#113322', padding: { x: 12, y: 6 },
-      }).setOrigin(0.5));
-    } else {
-      const enabled = canAfford && !rosterFull;
-      const btnColor = enabled ? '#44aaff' : '#555566';
-      const btn = this.add.text(0, CARD_HEIGHT / 2 - 18, '[ BUY ]', {
-        fontSize: '14px', color: btnColor, fontFamily: 'monospace', fontStyle: 'bold',
-        backgroundColor: '#111122', padding: { x: 12, y: 6 },
-      }).setOrigin(0.5);
-
-      if (enabled) {
-        btn.setInteractive({ useHandCursor: true });
-        btn.on('pointerover', () => btn.setColor('#88ccff'));
-        btn.on('pointerout', () => btn.setColor('#44aaff'));
-        btn.on('pointerdown', () => {
-          NetworkManager.track('buy_bomberman', 'profile');
-          NetworkManager.getSocket().emit('buy_bomberman', { templateId: template.id });
-        });
-      }
-      container.add(btn);
+    if (enabled) {
+      btn.setInteractive({ useHandCursor: true });
+      btn.on('pointerover', () => btn.setColor('#88ccff'));
+      btn.on('pointerout', () => btn.setColor('#44aaff'));
+      btn.on('pointerdown', () => {
+        NetworkManager.track('buy_bomberman', 'profile');
+        NetworkManager.getSocket().emit('buy_bomberman', { templateId: template.id });
+      });
     }
+    container.add(btn);
 
     return container;
   }

@@ -64,6 +64,13 @@ export interface DroppedBody {
   ownerPlayerId: string;
   treasures: TreasureBundle;
   bombs: { type: BombType; count: number }[];
+  /** Inherited from the deceased's BombermanState. The body loot UI sizes its
+   *  slot row to this — Free → 4, Paid → 5, Expensive → 6. (Distinct from
+   *  chests, which are always 5 regardless of who's looting.) */
+  maxCustomSlots: number;
+  /** Inherited from the deceased's BombermanState. Captured at death so the
+   *  looting UI can show the correct stack cap on the deceased's loadout. */
+  stackSize: number;
 }
 
 /** Active flare on the map. Drives the lightTiles computation each turn. */

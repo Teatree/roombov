@@ -29,12 +29,15 @@ export interface DebugResetMsg {
   confirm: true;
 }
 
-// --- Bomberman shop (Step 4) ---
+// --- Bomberman shop (per-player) ---
+// Wire format matches the persisted `BombermanShopCycle` shape on PlayerProfile.
 
 export interface BombermanShopCycleMsg {
   cycleId: string;
+  startedAt: number;
   endsAt: number;
   bombermen: BombermanTemplate[];
+  boughtTemplateIds: string[];
 }
 
 export interface BuyBombermanMsg {
@@ -118,7 +121,7 @@ export interface MatchEndMsg {
  * an updated match_state if the loot succeeds.
  *
  * `targetSlotIndex` uses the same convention as bomb throws:
- *   1..INVENTORY_SLOT_COUNT → inventory.slots[0..N-1]
+ *   1..bomberman.maxCustomSlots → inventory.slots[0..N-1]
  *   (slot 0 = Rock is never a valid target)
  *
  * If `targetSlotIndex` already contains a different bomb type, the existing

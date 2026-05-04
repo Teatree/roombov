@@ -11,7 +11,6 @@
 
 import type { MatchState, PlayerAction, Chest, DoorInstance } from '../shared/types/match.ts';
 import type { BombermanState } from '../shared/types/bomberman.ts';
-import { INVENTORY_SLOT_COUNT } from '../shared/types/bomberman.ts';
 import type { BombType, BombInstance } from '../shared/types/bombs.ts';
 import type { MapData } from '../shared/types/map.ts';
 import { TileType } from '../shared/types/map.ts';
@@ -357,8 +356,8 @@ export class BotPlayer {
   }
 
   private findEmptySlot(me: BombermanState): number {
-    for (let i = 0; i < INVENTORY_SLOT_COUNT; i++) {
-      if (!me.inventory.slots[i]) return i + 1; // slotIndex 1..INVENTORY_SLOT_COUNT
+    for (let i = 0; i < me.inventory.slots.length; i++) {
+      if (!me.inventory.slots[i]) return i + 1; // slotIndex 1..maxCustomSlots
     }
     return -1;
   }
@@ -391,7 +390,7 @@ export class BotPlayer {
   }
 
   private findSlotWithType(me: BombermanState, type: BombType): number {
-    for (let i = 0; i < INVENTORY_SLOT_COUNT; i++) {
+    for (let i = 0; i < me.inventory.slots.length; i++) {
       const s = me.inventory.slots[i];
       if (s && s.type === type && s.count > 0) return i + 1;
     }

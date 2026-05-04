@@ -6,6 +6,8 @@ import { randomBytes } from 'crypto';
 import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import { createEmptyProfile } from '../shared/types/player-profile.ts';
 import { CHARACTER_VARIANTS } from '../shared/types/bomberman.ts';
+import type { BombermanTier } from '../shared/types/bomberman.ts';
+import { defaultStatsForTier } from '../shared/config/bomberman-tiers.ts';
 import type { BombType } from '../shared/types/bombs.ts';
 import { createEmptyGamblerStreet, type GamblerStreetState } from '../shared/types/gambler-street.ts';
 import { GAMBLER_STREET_GLOBAL } from '../shared/config/gambler-street.ts';
@@ -209,6 +211,41 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
     });
   }
 
+  // Tier-based stats backfill: legacy owned Bombermen pre-date `maxCustomSlots`
+  // and `stackSize`. Assign mid-tier defaults so they slot into the new
+  // system without losing or re-rolling anything else. If the existing
+  // inventory length doesn't match the tier-default slot count, resize:
+  // shrink with overflow returned to the stockpile (rare; only happens if a
+  // pre-tier inventory had >tier-default slots filled).
+  for (const b of owned) {
+    const tier = (b.tier ?? 'free') as BombermanTier;
+    const defaults = defaultStatsForTier(tier);
+    if (typeof b.maxCustomSlots !== 'number' || b.maxCustomSlots <= 0) {
+      b.maxCustomSlots = defaults.maxCustomSlots;
+    }
+    if (typeof b.stackSize !== 'number' || b.stackSize <= 0) {
+      b.stackSize = defaults.stackSize;
+    }
+    if (b.inventory && Array.isArray(b.inventory.slots)) {
+      if (b.inventory.slots.length > b.maxCustomSlots) {
+        // Trim — push any non-null overflow back to the stockpile.
+        for (let i = b.maxCustomSlots; i < b.inventory.slots.length; i++) {
+          const s = b.inventory.slots[i];
+          if (s) {
+            const mapped = normalizeBombType(s.type as unknown as string);
+            if (mapped) {
+              normalizedStockpile[mapped] = (normalizedStockpile[mapped] ?? 0) + s.count;
+            }
+          }
+        }
+        b.inventory.slots = b.inventory.slots.slice(0, b.maxCustomSlots);
+      } else if (b.inventory.slots.length < b.maxCustomSlots) {
+        const extra = b.maxCustomSlots - b.inventory.slots.length;
+        b.inventory.slots = [...b.inventory.slots, ...new Array(extra).fill(null)];
+      }
+    }
+  }
+
   // Backfill gambler street state for older profiles. Migrates legacy
   // `state.slots` (mix of gambler/cooldown kinds) into the new
   // `gamblers` + `pendingArrivals` shape so existing profiles keep their
@@ -227,6 +264,25 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
     equippedBombermanId: raw.equippedBombermanId ?? null,
     bombStockpile: normalizedStockpile as PlayerProfile['bombStockpile'],
     gamblerStreet,
+    // Per-player Bomberman shop cycle. Legacy profiles don't have this; the
+    // service generates on first request and persists. Backfill known fields
+    // on partial-shape entries so older saves still work.
+    bombermanShop: migrateBombermanShop(raw.bombermanShop),
+  };
+}
+
+function migrateBombermanShop(raw: unknown): PlayerProfile['bombermanShop'] {
+  if (!raw || typeof raw !== 'object') return null;
+  const cast = raw as Partial<PlayerProfile['bombermanShop']> & { bombermen?: unknown };
+  if (typeof cast.cycleId !== 'string') return null;
+  if (typeof cast.endsAt !== 'number') return null;
+  if (!Array.isArray(cast.bombermen)) return null;
+  return {
+    cycleId: cast.cycleId,
+    startedAt: typeof cast.startedAt === 'number' ? cast.startedAt : (cast.endsAt - 2 * 60 * 1000),
+    endsAt: cast.endsAt,
+    bombermen: cast.bombermen as PlayerProfile['bombermanShop'] extends infer T ? T extends { bombermen: infer B } ? B : never : never,
+    boughtTemplateIds: Array.isArray(cast.boughtTemplateIds) ? cast.boughtTemplateIds : [],
   };
 }
 

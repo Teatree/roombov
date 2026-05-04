@@ -17,7 +17,7 @@ import type { ClientToServerEvents, ServerToClientEvents } from '../shared/types
 import type { MatchConfig, MatchState, PlayerAction, Chest, DroppedBody } from '../shared/types/match.ts';
 import type { LootBombMsg } from '../shared/types/messages.ts';
 import type { BombermanState } from '../shared/types/bomberman.ts';
-import { CHARACTER_VARIANTS, INVENTORY_SLOT_COUNT } from '../shared/types/bomberman.ts';
+import { CHARACTER_VARIANTS } from '../shared/types/bomberman.ts';
 import type { MapData } from '../shared/types/map.ts';
 import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import { BALANCE } from '../shared/config/balance.ts';
@@ -25,7 +25,7 @@ import { CHEST_CONFIG } from '../shared/config/chests.ts';
 import type { BombType } from '../shared/types/bombs.ts';
 import { BotPlayer } from './BotPlayer.ts';
 import { rollBombermanName } from '../shared/config/bomberman-names.ts';
-import { TIER_CONFIG } from '../shared/config/bomberman-tiers.ts';
+import { TIER_CONFIG, defaultStatsForTier } from '../shared/config/bomberman-tiers.ts';
 import { resolveTurn } from '../shared/systems/TurnResolver.ts';
 import { createSeededRandom, seededRandInt, seededShuffle } from '../shared/utils/seeded-random.ts';
 import { rollBombLoot, rollTreasureLoot } from '../shared/utils/loot-roll.ts';
@@ -133,25 +133,29 @@ export class MatchRoom {
       const m = light - c / 2;
       const tint = (Math.round((r + m) * 255) << 16) | (Math.round((g + m) * 255) << 8) | Math.round((bl + m) * 255);
 
+      // Pick a tier first — drives slot count, stack size, and inventory shape.
+      const tiers = ['free', 'paid', 'paid_expensive'] as const;
+      const tier = tiers[Math.floor(rng() * tiers.length)];
+      const tierStats = defaultStatsForTier(tier);
+      const maxCustomSlots = tierStats.maxCustomSlots;
+      const stackSize = tierStats.stackSize;
+
       // Generate random inventory (10 bombs from paid tier weights)
       const counts: Partial<Record<BombType, number>> = {};
-      // Always include at least 2 flares
       counts['flare'] = 2;
       for (let b = 0; b < 8; b++) {
         const type = rollBomb();
         counts[type] = (counts[type] ?? 0) + 1;
       }
-      // Pack into 4 slots
+      // Pack into the bot's slot count, capped by its stack size.
       const sorted = Object.entries(counts)
         .filter(([, c]) => (c ?? 0) > 0)
         .sort(([, a], [, b]) => (b ?? 0) - (a ?? 0)) as [BombType, number][];
-      const slots: (null | { type: BombType; count: number })[] = new Array(INVENTORY_SLOT_COUNT).fill(null);
-      for (let si = 0; si < Math.min(INVENTORY_SLOT_COUNT, sorted.length); si++) {
-        slots[si] = { type: sorted[si][0], count: Math.min(sorted[si][1], BALANCE.match.bombSlotStackLimit) };
+      const slots: (null | { type: BombType; count: number })[] = new Array(maxCustomSlots).fill(null);
+      for (let si = 0; si < Math.min(maxCustomSlots, sorted.length); si++) {
+        slots[si] = { type: sorted[si][0], count: Math.min(sorted[si][1], stackSize) };
       }
 
-      const tiers = ['free', 'paid', 'paid_expensive'] as const;
-      const tier = tiers[Math.floor(rng() * tiers.length)];
       const name = rollBombermanName(tier, rng);
 
       // Create a dummy profile and participant
@@ -171,6 +175,8 @@ export class MatchRoom {
             colors: { shirt: tint, pants: tint, hair: tint },
             tint,
             character: CHARACTER_VARIANTS[Math.floor(rng() * CHARACTER_VARIANTS.length)],
+            maxCustomSlots,
+            stackSize,
             inventory: { slots },
             purchasedAt: Date.now(),
             sourceTemplateId: 'bot',
@@ -178,6 +184,7 @@ export class MatchRoom {
           equippedBombermanId: `bot_bm_${i}`,
           bombStockpile: {},
           gamblerStreet: createEmptyGamblerStreet(Date.now(), GAMBLER_STREET_GLOBAL.slotCount),
+          bombermanShop: null,
         },
       });
     }
@@ -207,6 +214,11 @@ export class MatchRoom {
     const bombermen: BombermanState[] = this.participants.map((p, i) => {
       const spawn = chosen[i];
       const equipped = p.profile.ownedBombermen.find(b => b.id === p.profile.equippedBombermanId);
+      // Fallback stats if equipped is somehow missing (shouldn't happen):
+      // give the participant a free-tier shape so the match doesn't crash.
+      const fallback = defaultStatsForTier('free');
+      const maxCustomSlots = equipped?.maxCustomSlots ?? fallback.maxCustomSlots;
+      const stackSize = equipped?.stackSize ?? fallback.stackSize;
       return {
         playerId: p.playerId,
         isBot: p.socketId === null,
@@ -219,9 +231,11 @@ export class MatchRoom {
         hp: BALANCE.match.bombermanMaxHp,
         alive: true,
         treasures: {},
+        maxCustomSlots,
+        stackSize,
         inventory: equipped
           ? { slots: equipped.inventory.slots.map(s => (s ? { ...s } : null)) }
-          : { slots: new Array(INVENTORY_SLOT_COUNT).fill(null) },
+          : { slots: new Array(maxCustomSlots).fill(null) },
         bleedingTurns: 0,
         escaped: false,
         rushCooldown: 0,
@@ -322,11 +336,11 @@ export class MatchRoom {
     const me = this.state.bombermen.find(b => b.playerId === playerId);
     if (!me || !me.alive || me.escaped) return;
 
-    // Target slot must be 1..INVENTORY_SLOT_COUNT (slot 0 is Rock, never writable)
-    if (msg.targetSlotIndex < 1 || msg.targetSlotIndex > INVENTORY_SLOT_COUNT) return;
+    // Target slot must be 1..maxCustomSlots (slot 0 is Rock, never writable)
+    if (msg.targetSlotIndex < 1 || msg.targetSlotIndex > me.maxCustomSlots) return;
     const invIdx = msg.targetSlotIndex - 1;
 
-    const stackLimit = BALANCE.match.bombSlotStackLimit;
+    const stackLimit = me.stackSize;
 
     if (msg.sourceKind === 'chest') {
       const chest = this.state.chests.find(

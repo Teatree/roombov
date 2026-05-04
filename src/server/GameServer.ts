@@ -37,9 +37,10 @@ export class GameServer {
   constructor(io: TypedServer, playerStore: PlayerStore) {
     this.io = io;
     this.playerStore = playerStore;
-    this.bombermanShop = new BombermanShopService(playerStore, (cycle) => {
-      this.io.emit('bomberman_shop_cycle', cycle);
-    });
+    // Per-player shop state — no global broadcast. Each socket gets its own
+    // cycle when it requests via `bomberman_shop_request`, and pushes its
+    // own update on purchase.
+    this.bombermanShop = new BombermanShopService(playerStore);
     this.bombsShop = new BombsShopService(playerStore);
     this.gamblerStreet = new GamblerStreetService(playerStore);
     this.matchScheduler = new MatchScheduler();
@@ -80,8 +81,8 @@ export class GameServer {
   private tickLobby(): void {
     const launched = this.matchScheduler.tick();
     this.io.emit('match_listings', { listings: this.matchScheduler.getListings() });
-    if (launched) {
-      void this.launchMatch(launched);
+    for (const config of launched) {
+      void this.launchMatch(config);
     }
   }
 
@@ -167,8 +168,10 @@ export class GameServer {
     console.log(`[Server] debug_reset completed for ${session.playerId} in ${Date.now() - t0}ms`);
   }
 
-  private onBombermanShopRequest(socket: TypedSocket): void {
-    const cycle = this.bombermanShop.getCurrentCycle();
+  private async onBombermanShopRequest(socket: TypedSocket): Promise<void> {
+    const profile = this.getProfileForSocket(socket);
+    if (!profile) return;
+    const cycle = await this.bombermanShop.getOrGenerateCycle(profile);
     socket.emit('bomberman_shop_cycle', cycle);
   }
 
@@ -179,6 +182,9 @@ export class GameServer {
     if (result.ok) {
       socket.emit('profile', { profile });
       socket.emit('shop_result', { ok: true, action: 'buy_bomberman', message: 'Purchased!' });
+      // Re-broadcast the (now-mutated) cycle so the client knows about the
+      // freshly-added bought-template-id and can animate the card out.
+      if (profile.bombermanShop) socket.emit('bomberman_shop_cycle', profile.bombermanShop);
     } else {
       socket.emit('shop_result', { ok: false, action: 'buy_bomberman', reason: result.reason });
     }

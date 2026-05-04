@@ -5,6 +5,7 @@ import { ActivityIndicator } from '../systems/ActivityIndicator.ts';
 import { ensureBombermanAnims, createShopBombermanSprite, preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
 import { TreasureListWidget } from '../systems/TreasureListWidget.ts';
 import { preloadTreasureIcons } from '../systems/TreasureIcons.ts';
+import { attachTierInfoBadge } from '../systems/TierInfoBadge.ts';
 
 /**
  * Entry point after Boot. Connects to the server, authenticates, and offers
@@ -163,6 +164,15 @@ export class MainMenuScene extends Phaser.Scene {
       this, 0, 0, equipped.tint, equipped.character, UiAnimLock.get(equipped.id), 1,
     );
     this.equippedContainer.add(preview);
+
+    // Tier info badge at the top-right of the sprite preview. Hover reveals
+    // HP / Bomb Slots / Stack Size for this Bomberman.
+    attachTierInfoBadge(this, this.equippedContainer, {
+      x: 38, y: -36,
+      tier: equipped.tier,
+      maxCustomSlots: equipped.maxCustomSlots,
+      stackSize: equipped.stackSize,
+    });
 
     const label = this.add.text(0, 70, `${equipped.name ?? equipped.tier.replace('_', ' ')}`, {
       fontSize: '14px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',

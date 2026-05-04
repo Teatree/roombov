@@ -4,7 +4,7 @@
  * every mutation via the `profile` message.
  */
 
-import type { OwnedBomberman } from './bomberman.ts';
+import type { BombermanShopCycle, OwnedBomberman } from './bomberman.ts';
 import type { BombType } from './bombs.ts';
 import type { TreasureBundle } from '../config/treasures.ts';
 import type { GamblerStreetState } from './gambler-street.ts';
@@ -42,6 +42,12 @@ export interface PlayerProfile {
    * keeps aging while the player is offline.
    */
   gamblerStreet: GamblerStreetState;
+  /**
+   * Per-player Bomberman shop cycle — null on a fresh profile, generated
+   * on first request. Wall-clock timestamps so the cycle expires (and the
+   * next batch rolls in) on schedule whether the player is online or not.
+   */
+  bombermanShop: BombermanShopCycle | null;
 }
 
 export function createEmptyProfile(id: string): PlayerProfile {
@@ -56,5 +62,6 @@ export function createEmptyProfile(id: string): PlayerProfile {
     equippedBombermanId: null,
     bombStockpile: {},
     gamblerStreet: createEmptyGamblerStreet(now, GAMBLER_STREET_GLOBAL.slotCount),
+    bombermanShop: null,
   };
 }

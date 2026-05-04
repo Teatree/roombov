@@ -29,7 +29,13 @@ export const BALANCE = {
     minSpawnDistance: 5,
     bombermanMaxHp: 2,
     bleedingDurationTurns: 10,
-    bombSlotStackLimit: 5,
+    /**
+     * Hard upper bound on stack size across all tiers — used in defensive
+     * fallbacks where a per-Bomberman context isn't available. Per-Bomberman
+     * `stackSize` is rolled in `TIER_CONFIG[tier].stackSizeRange` and is the
+     * primary value loot/equip validation reads from.
+     */
+    bombSlotStackLimit: 10,
     /** Tile radius for per-player line-of-sight fog of war. */
     losRadius: 5,
     /** Out of Combat Rush — move 2 tiles/turn when no enemies are nearby. */

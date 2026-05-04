@@ -5,7 +5,12 @@ import { BALANCE } from '@shared/config/balance.ts';
 import type { MapData } from '@shared/types/map.ts';
 import type { MatchState, PlayerAction } from '@shared/types/match.ts';
 import type { BombermanState } from '@shared/types/bomberman.ts';
-import { INVENTORY_SLOT_COUNT } from '@shared/types/bomberman.ts';
+import { defaultStatsForTier } from '@shared/config/bomberman-tiers.ts';
+
+// Tutorial Bomberman uses Free-tier stats — matches the entry-level loadout
+// a brand-new player will start with, so the tutorial teaches the layout
+// they'll actually see in their first real matches.
+const TUTORIAL_TIER_STATS = defaultStatsForTier('free');
 import type { LootBombMsg, MatchEndMsg } from '@shared/types/messages.ts';
 import { TutorialDirector } from '../tutorial/TutorialDirector.ts';
 import { TUTORIAL_SCRIPT } from '../tutorial/tutorial-script.ts';
@@ -93,9 +98,9 @@ export class TutorialMatchBackend implements MatchBackend {
     if (!this.state) return;
     const me = this.state.bombermen.find(b => b.playerId === TUTORIAL_PLAYER_ID);
     if (!me || !me.alive || me.escaped) return;
-    if (msg.targetSlotIndex < 1 || msg.targetSlotIndex > INVENTORY_SLOT_COUNT) return;
+    if (msg.targetSlotIndex < 1 || msg.targetSlotIndex > me.maxCustomSlots) return;
     const invIdx = msg.targetSlotIndex - 1;
-    const stackLimit = BALANCE.match.bombSlotStackLimit;
+    const stackLimit = me.stackSize;
 
     const next = structuredClone(this.state);
     const meN = next.bombermen.find(b => b.playerId === TUTORIAL_PLAYER_ID)!;
@@ -441,7 +446,9 @@ export class TutorialMatchBackend implements MatchBackend {
       hp: BALANCE.match.bombermanMaxHp,
       alive: true,
       treasures: {},
-      inventory: { slots: new Array(INVENTORY_SLOT_COUNT).fill(null) },
+      maxCustomSlots: TUTORIAL_TIER_STATS.maxCustomSlots,
+      stackSize: TUTORIAL_TIER_STATS.stackSize,
+      inventory: { slots: new Array(TUTORIAL_TIER_STATS.maxCustomSlots).fill(null) },
       bleedingTurns: 0,
       escaped: false,
       rushCooldown: 0,

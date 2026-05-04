@@ -14,8 +14,18 @@ import {
 import type { BetOutcome, Gambler, GamblerStreetState } from '@shared/types/gambler-street.ts';
 import type { GamblerStreetBetResultMsg } from '@shared/types/messages.ts';
 
-const TUTORIAL_GUY_KEY = 'gambler_face_default';
-const TUTORIAL_GUY_PATH = 'sprites/tutorial_guy.png';
+/**
+ * Gambler portrait pool. Each gambler is deterministically assigned one of
+ * these textures based on a hash of `gambler.id`, so a given gambler always
+ * shows the same face for their lifetime. Tutorial guy stays in rotation
+ * alongside the dedicated gambler portraits.
+ */
+const GAMBLER_PORTRAITS: ReadonlyArray<{ key: string; path: string }> = [
+  { key: 'gambler_face_tutorial_guy', path: 'sprites/tutorial_guy.png' },
+  { key: 'gambler_face_boss_richard', path: 'sprites/boss_Richard.png' },
+  { key: 'gambler_face_sad_henry',    path: 'sprites/sad_Henry.png' },
+  { key: 'gambler_face_angry_sal',    path: 'sprites/angry_Sal.png' },
+];
 const CONFETTI_TEX_KEY = 'gambler_confetti_particle';
 
 const STALL_GAP = 16;
@@ -159,8 +169,8 @@ export class GamblerStreetScene extends Phaser.Scene {
 
   preload(): void {
     preloadTreasureIcons(this);
-    if (!this.textures.exists(TUTORIAL_GUY_KEY)) {
-      this.load.image(TUTORIAL_GUY_KEY, TUTORIAL_GUY_PATH);
+    for (const p of GAMBLER_PORTRAITS) {
+      if (!this.textures.exists(p.key)) this.load.image(p.key, p.path);
     }
     if (!this.textures.exists(CONFETTI_TEX_KEY)) {
       const g = this.make.graphics({ x: 0, y: 0 }, false);
@@ -446,7 +456,7 @@ export class GamblerStreetScene extends Phaser.Scene {
 
     // Avatar — tutorial_guy with per-id deterministic tint
     const avatarSize = Math.min(110, w - 32);
-    const avatar = this.add.image(0, -h / 2 + awningH + 12 + avatarSize / 2, TUTORIAL_GUY_KEY);
+    const avatar = this.add.image(0, -h / 2 + awningH + 12 + avatarSize / 2, portraitForGamblerId(g.id));
     avatar.setDisplaySize(avatarSize, avatarSize);
     avatar.setTint(tintForGamblerId(g.id));
     container.add(avatar);
@@ -1252,6 +1262,15 @@ function ellipsize(s: string, maxChars: number): string {
   return s.slice(0, Math.max(0, maxChars - 1)) + '…';
 }
 
+/**
+ * Tint intensity for gambler avatars. The portrait artwork is now distinct
+ * enough that we don't need a strong color cast to differentiate gamblers —
+ * a faint tint reads as "personality" without overpowering the art.
+ *   0.0 = no tint (pure white blend, portrait shows natural color)
+ *   1.0 = full color tint (the original strength).
+ */
+const TINT_INTENSITY = 0.20;
+
 function tintForGamblerId(id: string): number {
   let h = 0x811c9dc5 | 0;
   for (let i = 0; i < id.length; i++) {
@@ -1262,7 +1281,29 @@ function tintForGamblerId(id: string): number {
   const hue = (u % 360);
   const sat = 0.55 + ((u >>> 8) & 0xff) / 255 * 0.30;
   const light = 0.62 + ((u >>> 16) & 0xff) / 255 * 0.18;
-  return hslToRgb(hue, sat, light);
+  const full = hslToRgb(hue, sat, light);
+  // Blend the rolled color toward white to soften the tint. At
+  // TINT_INTENSITY=0.2 the result keeps just a hint of the unique color.
+  const r = (full >> 16) & 0xff;
+  const g = (full >> 8) & 0xff;
+  const b = full & 0xff;
+  const blend = (channel: number): number => Math.round(0xff * (1 - TINT_INTENSITY) + channel * TINT_INTENSITY);
+  return (blend(r) << 16) | (blend(g) << 8) | blend(b);
+}
+
+/**
+ * Pick a portrait texture key for a gambler deterministically from their id.
+ * Uses a different hash mixer than `tintForGamblerId` so portrait + tint
+ * vary independently — same id = same portrait + same tint forever.
+ */
+function portraitForGamblerId(id: string): string {
+  let h = 0x9e3779b9 | 0;
+  for (let i = 0; i < id.length; i++) {
+    h = Math.imul(h ^ id.charCodeAt(i), 0x85ebca6b);
+    h ^= h >>> 13;
+  }
+  const u = (h >>> 0);
+  return GAMBLER_PORTRAITS[u % GAMBLER_PORTRAITS.length].key;
 }
 
 function hslToRgb(h: number, s: number, l: number): number {

@@ -16,9 +16,7 @@
 import type { BombType } from '../shared/types/bombs.ts';
 import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import type { OwnedBomberman } from '../shared/types/bomberman.ts';
-import { INVENTORY_SLOT_COUNT } from '../shared/types/bomberman.ts';
 import { BOMB_CATALOG, PURCHASABLE_BOMBS } from '../shared/config/bombs.ts';
-import { BALANCE } from '../shared/config/balance.ts';
 import type { PlayerStore } from './PlayerStore.ts';
 
 export type BombsShopResult =
@@ -82,13 +80,14 @@ export class BombsShopService {
     requestedQty: number,
   ): Promise<BombsShopResult> {
     if (!PURCHASABLE_BOMBS.includes(type)) return { ok: false, reason: 'not_purchasable' };
-    if (slotIndex < 0 || slotIndex >= INVENTORY_SLOT_COUNT) return { ok: false, reason: 'slot_out_of_range' };
     if (!profile.equippedBombermanId) return { ok: false, reason: 'no_equipped_bomberman' };
 
     const bomberman = this.getEquipped(profile);
     if (!bomberman) return { ok: false, reason: 'invalid_bomberman' };
 
-    const stackLimit = BALANCE.match.bombSlotStackLimit;
+    if (slotIndex < 0 || slotIndex >= bomberman.maxCustomSlots) return { ok: false, reason: 'slot_out_of_range' };
+
+    const stackLimit = bomberman.stackSize;
     const stockpiled = profile.bombStockpile[type] ?? 0;
     if (stockpiled <= 0) return { ok: false, reason: 'not_in_stockpile' };
 
@@ -123,9 +122,9 @@ export class BombsShopService {
    * Remove a bomb slot back into the stockpile. Used for unequip.
    */
   async unequipSlot(profile: PlayerProfile, slotIndex: number): Promise<BombsShopResult> {
-    if (slotIndex < 0 || slotIndex >= INVENTORY_SLOT_COUNT) return { ok: false, reason: 'slot_out_of_range' };
     const bomberman = this.getEquipped(profile);
     if (!bomberman) return { ok: false, reason: 'no_equipped_bomberman' };
+    if (slotIndex < 0 || slotIndex >= bomberman.maxCustomSlots) return { ok: false, reason: 'slot_out_of_range' };
 
     const slot = bomberman.inventory.slots[slotIndex];
     if (!slot) return { ok: true };

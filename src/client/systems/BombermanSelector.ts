@@ -1,7 +1,7 @@
 /**
  * Reusable Bomberman selector strip — shows owned Bombermen as small cards
- * with their name, animated sprite, inventory summary (bomb icons), and an
- * EQUIP button. Used in the Bombs Shop and Lobby scenes.
+ * with their name, animated sprite, inventory summary (bomb icons), tier
+ * info badge, and an EQUIP button. Used in the Bombs Shop and Lobby scenes.
  *
  * Call `create()` to build the visual, `destroy()` to tear it down, and
  * `rebuild()` when the profile changes (new equip, purchase, etc.).
@@ -13,7 +13,7 @@ import { ProfileStore, UiAnimLock } from '../ClientState.ts';
 import { createShopBombermanSprite, pickRandomUiAnimation } from './BombermanAnimations.ts';
 import { bombIconFrame } from './BombIcons.ts';
 import type { OwnedBomberman } from '@shared/types/bomberman.ts';
-import { INVENTORY_SLOT_COUNT } from '@shared/types/bomberman.ts';
+import { attachTierInfoBadge } from './TierInfoBadge.ts';
 
 const SELECTOR_CARD_W = 140;
 const SELECTOR_CARD_H = 180;
@@ -90,27 +90,40 @@ export class BombermanSelector {
     const sprite = createShopBombermanSprite(this.scene, 0, -40, owned.tint, owned.character, anim, 0.6);
     container.add(sprite);
 
+    // Tier info badge — Roman numeral circle, top-right of the card. Hover
+    // reveals the stat tooltip (HP / Slots / Stack Size).
+    attachTierInfoBadge(this.scene, container, {
+      x: SELECTOR_CARD_W / 2 - 14,
+      y: -SELECTOR_CARD_H / 2 + 14,
+      tier: owned.tier,
+      maxCustomSlots: owned.maxCustomSlots,
+      stackSize: owned.stackSize,
+    });
+
     // Name
     container.add(this.scene.add.text(0, -4, owned.name ?? '???', {
       fontSize: '10px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5));
 
-    // Inventory icons row
+    // Inventory icons row — variable count based on the bomberman's slots.
     const slots = owned.inventory.slots;
-    const iconSize = 18;
+    const slotCount = owned.maxCustomSlots;
+    // Auto-shrink icon size for higher-tier loadouts so 6 icons still fit
+    // inside the 140-wide card. Sizes chosen to stay readable.
+    const iconSize = slotCount >= 6 ? 16 : slotCount >= 5 ? 18 : 20;
     const iconGap = 4;
-    const totalIconW = 4 * iconSize + 3 * iconGap;
+    const totalIconW = slotCount * iconSize + Math.max(0, slotCount - 1) * iconGap;
     const iconStartX = -totalIconW / 2 + iconSize / 2;
     const iconY = 16;
 
-    for (let si = 0; si < INVENTORY_SLOT_COUNT; si++) {
+    for (let si = 0; si < slotCount; si++) {
       const slot = slots[si];
       const ix = iconStartX + si * (iconSize + iconGap);
       if (slot) {
         const icon = this.scene.add.image(ix, iconY, 'bomb_icons', bombIconFrame(slot.type))
           .setDisplaySize(iconSize, iconSize);
         container.add(icon);
-        container.add(this.scene.add.text(ix, iconY + 12, `${slot.count}`, {
+        container.add(this.scene.add.text(ix, iconY + iconSize / 2 + 4, `${slot.count}`, {
           fontSize: '8px', color: '#ffd944', fontFamily: 'monospace',
         }).setOrigin(0.5, 0));
       } else {

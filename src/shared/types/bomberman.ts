@@ -28,6 +28,24 @@ export const CHARACTER_VARIANTS: readonly CharacterVariant[] = [
   'char1', 'char2', 'char3', 'char4', 'char5', 'char6', 'char7',
 ];
 
+/**
+ * Per-player Bomberman shop cycle. Lives on `PlayerProfile.bombermanShop`.
+ * Wall-clock timestamps so the cycle ages while the player is offline; the
+ * server-side service ticks state forward on read and regenerates the
+ * cycle as soon as `endsAt` has passed.
+ */
+export interface BombermanShopCycle {
+  cycleId: string;
+  /** Unix ms when the cycle was generated. */
+  startedAt: number;
+  /** Unix ms when the cycle expires and the next batch rolls in. */
+  endsAt: number;
+  bombermen: BombermanTemplate[];
+  /** Template ids the player has already bought during this cycle. The
+   *  client filters these out so the bought card stays animated-out. */
+  boughtTemplateIds: string[];
+}
+
 /** Cosmetic random palette generated per Bomberman in the shop cycle. */
 export interface CosmeticColors {
   /** RGB hex numbers — Phaser uses 24-bit ints, not strings. */
@@ -37,29 +55,36 @@ export interface CosmeticColors {
 }
 
 /**
- * Bomb loadout inventory — up to 4 custom slots plus the fixed infinite Rock.
+ * Bomb loadout inventory — N custom slots plus the fixed infinite Rock.
+ *
+ * The custom-slot count `N` is per-Bomberman now (see `maxCustomSlots` on
+ * BombermanTemplate / OwnedBomberman / BombermanState), driven by tier:
+ *   Free → 4, Paid → 5, Expensive → 6 custom slots.
+ * Total visible loadout (with Rock) = N + 1 = 5 / 6 / 7.
  *
  * A slot is `null` when empty. Each slot carries a BombType + a count,
- * stacking up to the per-slot limit from BALANCE.match.bombSlotStackLimit.
+ * stacking up to the per-Bomberman `stackSize` (also tier-driven, rolled
+ * within a range at shop time and locked at purchase).
  */
 export interface BombSlot {
   type: BombType;
   count: number;
 }
 
-/** Number of custom inventory slots a Bomberman carries (HUD shows this + 1
- *  fixed Rock slot at index 0). Bump this constant to change carry capacity
- *  everywhere — server inventory init, packing, loot panel, HUD, and tutorial
- *  validators all read from it. */
-export const INVENTORY_SLOT_COUNT = 5;
+/**
+ * Hard upper bound on custom slot count across all tiers — used in places
+ * where a per-Bomberman count isn't available (loot panel cap-out logic,
+ * defensive bounds checks, etc.). Bump this if a future tier ever exceeds 6.
+ */
+export const MAX_INVENTORY_SLOT_COUNT = 6;
 
 export interface BombInventory {
-  /** Custom slots (empty = null). Length always equals INVENTORY_SLOT_COUNT. */
+  /** Custom slots (empty = null). Length equals the Bomberman's `maxCustomSlots`. */
   slots: (BombSlot | null)[];
 }
 
-export function emptyInventory(): BombInventory {
-  return { slots: new Array(INVENTORY_SLOT_COUNT).fill(null) };
+export function emptyInventory(slotCount: number): BombInventory {
+  return { slots: new Array(slotCount).fill(null) };
 }
 
 /**
@@ -81,6 +106,11 @@ export interface BombermanTemplate {
   tint: number;
   /** Sprite-sheet variant — randomized from CHARACTER_VARIANTS at roll time. */
   character: CharacterVariant;
+  /** How many custom inventory slots this Bomberman carries (excludes Rock).
+   *  Tier-fixed: free=4, paid=5, paid_expensive=6. */
+  maxCustomSlots: number;
+  /** Per-slot stacking cap. Tier-rolled in `TIER_CONFIG[tier].stackSizeRange`. */
+  stackSize: number;
   /** Starting bomb inventory generated at cycle time from tier weights. */
   inventory: BombInventory;
 }
@@ -95,6 +125,11 @@ export interface OwnedBomberman {
   /** Sprite-sheet variant inherited from the source template. Stable for the
    *  life of this owned Bomberman. */
   character: CharacterVariant;
+  /** Slot count + stack size inherited from the source template. Stable for
+   *  the life of this owned Bomberman (loadout shape never changes after
+   *  purchase). */
+  maxCustomSlots: number;
+  stackSize: number;
   /** Live inventory — mutated by the Bombs Shop equip flow. */
   inventory: BombInventory;
   /** Unix ms when the player bought this Bomberman. */
@@ -126,6 +161,10 @@ export interface BombermanState {
   alive: boolean;
   /** Treasures picked up during this match (dropped on death, kept on escape). */
   treasures: TreasureBundle;
+  /** Bomberman stats — copied from the equipped OwnedBomberman at match start.
+   *  In-match logic (loot panel, equip-to-slot, throws) reads from these. */
+  maxCustomSlots: number;
+  stackSize: number;
   /** Live bomb inventory (mutates as bombs are thrown / looted). */
   inventory: BombInventory;
   /** Turns remaining bleeding (0 = not bleeding). */

@@ -7,7 +7,7 @@ import { BombermanSelector } from '../systems/BombermanSelector.ts';
 import type { BombType } from '@shared/types/bombs.ts';
 import type { BombsCatalogEntry } from '@shared/types/messages.ts';
 import { BALANCE } from '@shared/config/balance.ts';
-import { INVENTORY_SLOT_COUNT } from '@shared/types/bomberman.ts';
+import { attachTierInfoBadge } from '../systems/TierInfoBadge.ts';
 import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
 
 /**
@@ -247,19 +247,35 @@ export class BombsShopScene extends Phaser.Scene {
     } else {
       // Equipped Bomberman preview. Character variant is persistent on the
       // owned Bomberman; animation is stable-until-match via UiAnimLock.
+      // Wrap in a container so the tier-info badge can attach relatively.
+      const previewContainer = this.add.container(col3X + colWidth / 2, topY + 80);
       const preview = createShopBombermanSprite(
-        this, col3X + colWidth / 2, topY + 80,
+        this, 0, 0,
         equipped.tint, equipped.character, UiAnimLock.get(equipped.id), 1,
       );
-      eqCol.add(preview);
+      previewContainer.add(preview);
+      attachTierInfoBadge(this, previewContainer, {
+        x: 36, y: -36,
+        tier: equipped.tier,
+        maxCustomSlots: equipped.maxCustomSlots,
+        stackSize: equipped.stackSize,
+        tooltipSide: 'left',
+      });
+      eqCol.add(previewContainer);
 
-      // Custom slot rows + 1 fixed Rock slot
+      // Variable slot count: equipped.maxCustomSlots custom + 1 fixed Rock.
+      // Slot row height shrinks slightly as count grows so 7 rows still fit
+      // comfortably under the preview without overlapping the BombermanSelector
+      // strip at the bottom of the scene.
+      const totalRows = equipped.maxCustomSlots + 1; // +1 for Rock
       const slotsStartY = topY + 150;
-      const slotH = 44;
+      const slotH = totalRows >= 7 ? 36 : totalRows >= 6 ? 40 : 44;
+      const slotGap = totalRows >= 6 ? 4 : 6;
+      const stackLimit = equipped.stackSize;
 
-      for (let slotIdx = 0; slotIdx < INVENTORY_SLOT_COUNT; slotIdx++) {
+      for (let slotIdx = 0; slotIdx < equipped.maxCustomSlots; slotIdx++) {
         const slot = equipped.inventory.slots[slotIdx];
-        const y = slotsStartY + slotIdx * (slotH + 6);
+        const y = slotsStartY + slotIdx * (slotH + slotGap);
 
         const bg = this.add.graphics();
         bg.fillStyle(0x1a1a2e, 0.9);
@@ -271,20 +287,18 @@ export class BombsShopScene extends Phaser.Scene {
         if (slot) {
           const entry = this.catalog.find(c => c.type === slot.type);
           const name = entry?.name ?? slot.type;
-          const eqIcon = this.add.image(col3X + 26, y + slotH / 2, 'bomb_icons', bombIconFrame(slot.type))
-            .setDisplaySize(28, 28);
+          const eqIcon = this.add.image(col3X + 22, y + slotH / 2, 'bomb_icons', bombIconFrame(slot.type))
+            .setDisplaySize(26, 26);
           eqCol.add(eqIcon);
-          eqCol.add(this.add.text(col3X + 46, y + 10, `SLOT ${slotIdx + 1}: ${name}`, {
-            fontSize: '12px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
-          }));
-          eqCol.add(this.add.text(col3X + 10, y + 26, `x${slot.count} / ${BALANCE.match.bombSlotStackLimit}`, {
-            fontSize: '11px', color: '#888888', fontFamily: 'monospace',
-          }));
+          eqCol.add(this.add.text(col3X + 40, y + slotH / 2 - 8, `SLOT ${slotIdx + 1}: ${name}`, {
+            fontSize: '11px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
+          }).setOrigin(0, 0.5));
+          eqCol.add(this.add.text(col3X + 40, y + slotH / 2 + 8, `x${slot.count} / ${stackLimit}`, {
+            fontSize: '10px', color: '#888888', fontFamily: 'monospace',
+          }).setOrigin(0, 0.5));
 
           // IMPORTANT: create the whole-slot equip-click zone FIRST so the
-          // [UNEQUIP] button added after it wins input priority. Previously
-          // the zone was added last and intercepted unequip clicks,
-          // emitting equip_bomb for the same slot instead of unequipping.
+          // [UNEQUIP] button added after it wins input priority.
           if (this.selectedStockpile) {
             const selected = this.selectedStockpile;
             const hit = this.add.zone(col3X, y, colWidth, slotH).setOrigin(0, 0);
@@ -294,15 +308,15 @@ export class BombsShopScene extends Phaser.Scene {
               NetworkManager.getSocket().emit('equip_bomb', {
                 type: selected,
                 slotIndex: slotIdx,
-                quantity: BALANCE.match.bombSlotStackLimit,
+                quantity: stackLimit,
               });
             });
             eqCol.add(hit);
           }
 
-          const unBtn = this.add.text(col3X + colWidth - 10, y + slotH / 2, '[ UNEQUIP ]', {
-            fontSize: '10px', color: '#ff8844', fontFamily: 'monospace',
-            backgroundColor: '#221a2e', padding: { x: 6, y: 3 },
+          const unBtn = this.add.text(col3X + colWidth - 8, y + slotH / 2, '[ UNEQUIP ]', {
+            fontSize: '9px', color: '#ff8844', fontFamily: 'monospace',
+            backgroundColor: '#221a2e', padding: { x: 5, y: 2 },
           }).setOrigin(1, 0.5).setInteractive({ useHandCursor: true });
           unBtn.on('pointerdown', (_p: Phaser.Input.Pointer, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
             ev.stopPropagation();
@@ -311,12 +325,10 @@ export class BombsShopScene extends Phaser.Scene {
           });
           eqCol.add(unBtn);
         } else {
-          eqCol.add(this.add.text(col3X + 10, y + slotH / 2, `SLOT ${slotIdx + 1}: empty`, {
-            fontSize: '12px', color: '#666', fontFamily: 'monospace',
+          eqCol.add(this.add.text(col3X + 12, y + slotH / 2, `SLOT ${slotIdx + 1}: empty`, {
+            fontSize: '11px', color: '#666', fontFamily: 'monospace',
           }).setOrigin(0, 0.5));
 
-          // Whole slot is clickable for equip when a stockpile bomb is
-          // selected AND the slot is empty.
           if (this.selectedStockpile) {
             const selected = this.selectedStockpile;
             const hit = this.add.zone(col3X, y, colWidth, slotH).setOrigin(0, 0);
@@ -326,7 +338,7 @@ export class BombsShopScene extends Phaser.Scene {
               NetworkManager.getSocket().emit('equip_bomb', {
                 type: selected,
                 slotIndex: slotIdx,
-                quantity: BALANCE.match.bombSlotStackLimit,
+                quantity: stackLimit,
               });
             });
             eqCol.add(hit);
@@ -334,23 +346,23 @@ export class BombsShopScene extends Phaser.Scene {
         }
       }
 
-      // Fixed Rock slot — sits below the INVENTORY_SLOT_COUNT custom slots.
-      const rockY = slotsStartY + INVENTORY_SLOT_COUNT * (slotH + 6);
+      // Fixed Rock slot — sits below the bomberman's custom slots.
+      const rockY = slotsStartY + equipped.maxCustomSlots * (slotH + slotGap);
       const rockBg = this.add.graphics();
       rockBg.fillStyle(0x2a2a1e, 0.9);
       rockBg.fillRoundedRect(col3X, rockY, colWidth, slotH, 4);
       rockBg.lineStyle(1, 0x554433, 1);
       rockBg.strokeRoundedRect(col3X, rockY, colWidth, slotH, 4);
       eqCol.add(rockBg);
-      const rockIcon = this.add.image(col3X + 26, rockY + slotH / 2, 'bomb_icons', bombIconFrame('rock'))
-        .setDisplaySize(28, 28);
+      const rockIcon = this.add.image(col3X + 22, rockY + slotH / 2, 'bomb_icons', bombIconFrame('rock'))
+        .setDisplaySize(26, 26);
       eqCol.add(rockIcon);
-      eqCol.add(this.add.text(col3X + 46, rockY + 10, `SLOT ${INVENTORY_SLOT_COUNT + 1}: Rock`, {
-        fontSize: '12px', color: '#ccaa88', fontFamily: 'monospace', fontStyle: 'bold',
-      }));
-      eqCol.add(this.add.text(col3X + 46, rockY + 26, 'infinite (fallback)', {
-        fontSize: '11px', color: '#776655', fontFamily: 'monospace',
-      }));
+      eqCol.add(this.add.text(col3X + 40, rockY + slotH / 2 - 8, `SLOT ${equipped.maxCustomSlots + 1}: Rock`, {
+        fontSize: '11px', color: '#ccaa88', fontFamily: 'monospace', fontStyle: 'bold',
+      }).setOrigin(0, 0.5));
+      eqCol.add(this.add.text(col3X + 40, rockY + slotH / 2 + 8, 'infinite (fallback)', {
+        fontSize: '10px', color: '#776655', fontFamily: 'monospace',
+      }).setOrigin(0, 0.5));
     }
 
     this.containers.push(eqCol);

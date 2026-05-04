@@ -26,7 +26,6 @@ import type {
   DroppedBody, MatchState, PlayerAction,
 } from '../types/match.ts';
 import type { BombermanState, BombInventory, BombSlot } from '../types/bomberman.ts';
-import { INVENTORY_SLOT_COUNT } from '../types/bomberman.ts';
 import type {
   BombInstance, FireTile, LightTile, BombType,
   SmokeCloud, Mine, PhosphorusPending, StatusEffect,
@@ -592,7 +591,7 @@ export function resolveTurn(
       let threw = action.kind === 'throw';
       if (threw && action.kind === 'throw') {
         // Determine the bomb type from the slot. Slot 0 = rock (always breaks).
-        if (action.slotIndex >= 1 && action.slotIndex <= INVENTORY_SLOT_COUNT) {
+        if (action.slotIndex >= 1 && action.slotIndex <= bomberman.inventory.slots.length) {
           const slot = bomberman.inventory.slots[action.slotIndex - 1];
           if (slot && NON_RUSH_BREAKING_BOMBS.has(slot.type)) threw = false;
         }
@@ -674,7 +673,7 @@ export function resolveTurn(
 
     // Slot layout (UI + network):
     //   0         → Rock (infinite, free)
-    //   1..N     → inventory.slots[0..N-1] (custom bombs, N = INVENTORY_SLOT_COUNT)
+    //   1..N     → inventory.slots[0..N-1] (custom bombs, N = bomberman.maxCustomSlots)
     let bombType: BombType | null = null;
 
     if (action.slotIndex === 0) {
@@ -1595,9 +1594,17 @@ export function resolveTurn(
         ownerPlayerId: b.playerId,
         treasures: b.treasures,
         bombs,
+        // Inherit the deceased's tier-stat shape so the body's loot panel
+        // displays the right number of slots and stack cap.
+        maxCustomSlots: b.maxCustomSlots,
+        stackSize: b.stackSize,
       });
       b.treasures = {};
-      b.inventory = { slots: [null, null, null, null] };
+      // Reset inventory to the bomberman's own slot count (preserve shape
+      // even though the corpse is now empty — we'll keep b around as a
+      // placeholder until full removal). Use `b.maxCustomSlots` rather than
+      // a hardcoded 4-array.
+      b.inventory = { slots: new Array(b.maxCustomSlots).fill(null) };
     }
   }
 
@@ -1690,17 +1697,20 @@ export function buildInventoryFromSlots(slots: (BombSlot | null)[]): BombInvento
 }
 
 /**
- * Try to stash up to `count` of `type` into a Bomberman's 4 custom slots.
+ * Try to stash up to `count` of `type` into a Bomberman's custom slots.
  * Fills existing matching stacks first, then uses empty slots.
  * Returns the number of bombs actually stashed.
+ *
+ * Currently unreferenced (loot logic lives in MatchRoom.handleLoot for the
+ * real-time path); kept here as a reusable helper. Pass the Bomberman's
+ * own `stackSize` so the cap follows tier rules.
  */
-function tryStashBomb(inventory: BombInventory, type: BombType, count: number): number {
+function tryStashBomb(inventory: BombInventory, type: BombType, count: number, stackLimit: number): number {
   if (count <= 0) return 0;
-  const stackLimit = BALANCE.match.bombSlotStackLimit;
   let remaining = count;
 
   // 1. Top up matching slots
-  for (let i = 0; i < INVENTORY_SLOT_COUNT && remaining > 0; i++) {
+  for (let i = 0; i < inventory.slots.length && remaining > 0; i++) {
     const slot = inventory.slots[i];
     if (!slot || slot.type !== type) continue;
     const room = stackLimit - slot.count;
@@ -1711,7 +1721,7 @@ function tryStashBomb(inventory: BombInventory, type: BombType, count: number): 
   }
 
   // 2. Fill empty slots
-  for (let i = 0; i < INVENTORY_SLOT_COUNT && remaining > 0; i++) {
+  for (let i = 0; i < inventory.slots.length && remaining > 0; i++) {
     if (inventory.slots[i] != null) continue;
     const take = Math.min(stackLimit, remaining);
     inventory.slots[i] = { type, count: take };
