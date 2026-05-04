@@ -209,13 +209,13 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
     });
   }
 
-  // Backfill gambler street state for older profiles. The empty state has all
-  // five slots in cooldown ready immediately, so the engine fills them on
-  // first tick — equivalent to "fresh carousel" without a special branch.
+  // Backfill gambler street state for older profiles. Migrates legacy
+  // `state.slots` (mix of gambler/cooldown kinds) into the new
+  // `gamblers` + `pendingArrivals` shape so existing profiles keep their
+  // carousel position. Profiles with no field at all get a fresh empty
+  // state (engine fills on first tick).
   const gamblerStreet: GamblerStreetState =
-    isValidGamblerStreet(raw.gamblerStreet)
-      ? raw.gamblerStreet
-      : createEmptyGamblerStreet(now, GAMBLER_STREET_GLOBAL.slotCount);
+    migrateGamblerStreet(raw.gamblerStreet, now);
 
   return {
     id: raw.id ?? generatePlayerId(),
@@ -230,8 +230,53 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
   };
 }
 
-function isValidGamblerStreet(s: unknown): s is GamblerStreetState {
-  if (!s || typeof s !== 'object') return false;
-  const cast = s as Partial<GamblerStreetState>;
-  return Array.isArray(cast.slots) && typeof cast.nextGamblerSerial === 'number';
+/**
+ * Convert any persisted gambler-street blob (current shape, legacy `slots`
+ * shape, or absent) into the current shape.
+ *
+ * Legacy shape (pre-conveyor): `{ slots: ({kind:'gambler',gambler}|{kind:'cooldown',readyAt})[] }`.
+ * New shape: `{ gamblers: Gambler[], pendingArrivals: number[] }`.
+ *
+ * Why migrate in-place rather than reset: players had carousel state worth
+ * preserving (active gamblers + their treasures asked, plus pending arrivals).
+ * Throwing it away on the upgrade would feel like a regression.
+ */
+function migrateGamblerStreet(raw: unknown, now: number): GamblerStreetState {
+  if (!raw || typeof raw !== 'object') {
+    return createEmptyGamblerStreet(now, GAMBLER_STREET_GLOBAL.slotCount);
+  }
+
+  const cast = raw as { gamblers?: unknown; pendingArrivals?: unknown; slots?: unknown; nextGamblerSerial?: unknown };
+
+  // Already current shape
+  if (Array.isArray(cast.gamblers) && Array.isArray(cast.pendingArrivals) && typeof cast.nextGamblerSerial === 'number') {
+    return raw as GamblerStreetState;
+  }
+
+  // Legacy `slots` shape — split into gamblers + pendingArrivals
+  if (Array.isArray(cast.slots)) {
+    type LegacySlot =
+      | { kind: 'gambler'; gambler: { id: string; name: string; treasureType: string; treasureAmount: number; coinReward: number; createdAt: number; expiresAt: number } }
+      | { kind: 'cooldown'; readyAt: number };
+    const legacy = cast.slots as LegacySlot[];
+    const gamblers: GamblerStreetState['gamblers'] = [];
+    const pendingArrivals: number[] = [];
+    for (const slot of legacy) {
+      if (slot.kind === 'gambler' && slot.gambler) {
+        gamblers.push(slot.gambler as unknown as GamblerStreetState['gamblers'][number]);
+      } else if (slot.kind === 'cooldown' && typeof slot.readyAt === 'number') {
+        pendingArrivals.push(slot.readyAt);
+      }
+    }
+    return {
+      gamblers,
+      pendingArrivals,
+      lastTickedAt: typeof (raw as { lastTickedAt?: unknown }).lastTickedAt === 'number'
+        ? (raw as { lastTickedAt: number }).lastTickedAt
+        : now,
+      nextGamblerSerial: typeof cast.nextGamblerSerial === 'number' ? cast.nextGamblerSerial : 1,
+    };
+  }
+
+  return createEmptyGamblerStreet(now, GAMBLER_STREET_GLOBAL.slotCount);
 }

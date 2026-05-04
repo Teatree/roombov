@@ -1,10 +1,22 @@
 /**
  * Gambler Street types.
  *
- * Persistent, server-authoritative state describing each player's gambler
- * carousel. Lives on `PlayerProfile.gamblerStreet`. All timestamps are
- * absolute Unix milliseconds so wall-clock aging works whether the player
- * is online or offline.
+ * Server-authoritative carousel state. Lives on `PlayerProfile.gamblerStreet`.
+ * All timestamps are absolute Unix milliseconds so the carousel ages on
+ * wall-clock whether the player is online or not.
+ *
+ * State model — the conveyor:
+ *   - `gamblers`: ordered left-to-right list of currently-visible gamblers,
+ *     length 0..slotCount. The leftmost expires first (timers are staggered
+ *     by at least `minStaggerMs`).
+ *   - `pendingArrivals`: queue of timestamps. Each entry says "a fresh gambler
+ *     should appear at the right end at this time." Used to model the 2–6s
+ *     gap between a removal and the next arrival.
+ *
+ * Invariant maintained by the engine:
+ *   `gamblers.length + pendingArrivals.length` equals `slotCount` whenever the
+ *   carousel is meant to be fully stocked. Drops below only mid-tick (e.g. an
+ *   expired gambler is removed before its replacement is queued).
  */
 
 import type { TreasureType } from '../config/treasures.ts';
@@ -39,27 +51,23 @@ export interface Gambler {
 }
 
 /**
- * A slot is either occupied by an active gambler, or empty and counting down
- * to the next gambler appearing.
- */
-export type GamblerSlot =
-  | { kind: 'gambler'; gambler: Gambler }
-  | { kind: 'cooldown'; readyAt: number /* unix ms */ };
-
-/**
- * The full street state for one player. Has a fixed slot count
- * (`GAMBLER_STREET_GLOBAL.slotCount`).
+ * The full street state for one player.
  */
 export interface GamblerStreetState {
-  slots: GamblerSlot[];
+  /** Active gamblers, ordered left-to-right (leftmost expires first). */
+  gamblers: Gambler[];
   /**
-   * Last time the engine ticked this state. Not strictly required for
-   * correctness (tick is idempotent given `now`), but useful for debugging.
+   * Pending arrivals queue — each entry is a Unix-ms timestamp at which a
+   * fresh gambler should appear at the right end. Length + gamblers.length
+   * sums to `slotCount` in steady state.
+   */
+  pendingArrivals: number[];
+  /**
+   * Last time the engine ticked this state. Useful for debugging only —
+   * the tick is idempotent given a fixed `(state, now, rng draws)`.
    */
   lastTickedAt: number;
-  /**
-   * Monotonic counter used to mint `Gambler.id` deterministically per-player.
-   */
+  /** Monotonic counter used to mint `Gambler.id` deterministically. */
   nextGamblerSerial: number;
 }
 
@@ -68,7 +76,7 @@ export interface GamblerStreetState {
  * "Which hand?" reveal animation and update the local UI.
  */
 export interface BetOutcome {
-  /** Which slot was bet on (index into slots). */
+  /** Which gambler-list index was bet on (index into `state.gamblers`). */
   slotIndex: number;
   /** Tier the player picked. */
   tier: BetTier;
@@ -87,16 +95,17 @@ export interface BetOutcome {
   correctHand: 'left' | 'right';
 }
 
-/** Empty starting state for a fresh profile. */
+/**
+ * Empty starting state for a fresh profile. The engine's first tick will
+ * fill all `slotCount` arrivals immediately (each pendingArrival has
+ * `readyAt = now`), producing five gamblers with staggered expiries.
+ */
 export function createEmptyGamblerStreet(now: number, slotCount: number): GamblerStreetState {
-  const slots: GamblerSlot[] = [];
-  for (let i = 0; i < slotCount; i++) {
-    // All slots start in cooldown so the engine generates the initial set
-    // on the first tick (consistent code path with all later regenerations).
-    slots.push({ kind: 'cooldown', readyAt: now });
-  }
+  const pendingArrivals: number[] = [];
+  for (let i = 0; i < slotCount; i++) pendingArrivals.push(now);
   return {
-    slots,
+    gamblers: [],
+    pendingArrivals,
     lastTickedAt: now,
     nextGamblerSerial: 1,
   };

@@ -2,12 +2,20 @@
  * Gambler Street engine — pure functions only.
  *
  * The server calls these to:
- *   - tick state forward to "now" (expire gamblers, fill cooldowns)
- *   - generate fresh gamblers with weighted treasure picks
+ *   - tick state forward to "now" (expire gamblers, schedule respawns,
+ *     spawn pending arrivals)
+ *   - generate fresh gamblers with weighted treasure picks and staggered
+ *     expiry times
  *   - compute coin rewards via the diminishing-returns curve
- *   - resolve a bet (deduct treasure, roll win/loss, mint cooldown slot)
+ *   - resolve a bet (deduct treasure, roll win/loss, queue replacement)
  *
  * NO side effects. The caller persists the resulting state via PlayerStore.
+ *
+ * Carousel data model: `state.gamblers` is the active list (0..slotCount),
+ * left-to-right, leftmost expires first. `state.pendingArrivals` is a queue
+ * of `readyAt` timestamps — each pending entry will become a fresh gambler
+ * at the right end of the list when the wall clock crosses its readyAt.
+ * The two arrays sum to `slotCount` in steady state.
  */
 
 import type { TreasureBundle, TreasureType } from '../config/treasures.ts';
@@ -21,7 +29,6 @@ import {
 } from '../config/gambler-street.ts';
 import type {
   Gambler,
-  GamblerSlot,
   GamblerStreetState,
   BetOutcome,
 } from '../types/gambler-street.ts';
@@ -55,23 +62,18 @@ export function computeCoinReward(type: TreasureType, units: number): number {
   const tuning = GAMBLER_TREASURE_TUNING[type];
   const { startRatio, endRatio, startUnits, curveMaxUnits } = tuning.rewardCurve;
 
-  // Head: linear at startRatio.
   const headCap = Math.min(units, startUnits);
   let total = startRatio * headCap;
 
   if (units > startUnits) {
-    // Log-interpolated middle: ∫(a + b·ln u) du from startUnits to upperBound.
     const upper = Math.min(units, curveMaxUnits);
     if (upper > startUnits) {
       const lnRange = Math.log(curveMaxUnits / startUnits);
-      // m(u) = a + b·ln(u); solved from boundary conditions:
       const b = (endRatio - startRatio) / lnRange;
       const a = startRatio - b * Math.log(startUnits);
       const F = (u: number) => u * (a - b + b * Math.log(u));
       total += F(upper) - F(startUnits);
     }
-
-    // Tail: linear at endRatio for any units beyond curveMaxUnits.
     if (units > curveMaxUnits) {
       total += endRatio * (units - curveMaxUnits);
     }
@@ -85,18 +87,20 @@ export function computeCoinReward(type: TreasureType, units: number): number {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Advance the gambler street state to `now`:
- *   1. Any active gambler whose `expiresAt` has passed becomes a 10s-cooldown slot.
- *   2. Any cooldown slot whose `readyAt` has passed gets a freshly-generated gambler.
+ * Advance the gambler street state to `now` by processing events in
+ * wall-clock order:
+ *   - Expiry: leftmost gambler's `expiresAt` ≤ now → remove, queue a
+ *     respawn anchored to the gambler's actual expiry time (not `now`).
+ *   - Spawn: earliest pendingArrival's `readyAt` ≤ now → generate a fresh
+ *     gambler with `createdAt = readyAt`. If the rolled lifespan still puts
+ *     the new gambler's expiry in the past (long offline gap), the next
+ *     loop iteration will expire it naturally and queue another respawn.
  *
- * Idempotent: calling twice with the same `now` and `profileTreasures` yields
- * the same state (modulo RNG draws — the caller passes a seeded rng to keep
- * tests deterministic; in production the server uses Math.random).
+ * Bounded loop: each iteration consumes one event. For typical use the
+ * count is tiny; for an hour-long offline gap the count is in the hundreds.
  *
- * On generation, this respects the per-treasure-type cap so the carousel
- * never has more than `maxGamblersPerTreasureType` of the same type.
- *
- * Returns a NEW state object — does not mutate the input.
+ * Idempotent: calling twice with the same `now` and same rng draws yields
+ * the same state. Returns a NEW state object — does not mutate the input.
  */
 export function tickGamblerStreet(
   state: GamblerStreetState,
@@ -105,51 +109,101 @@ export function tickGamblerStreet(
   rng: () => number,
 ): GamblerStreetState {
   const slotCount = GAMBLER_STREET_GLOBAL.slotCount;
+  const respawnRange = GAMBLER_STREET_GLOBAL.respawnDelayRangeMs;
 
-  // Defensive: slot count may have changed across versions. Resize.
-  let slots: GamblerSlot[] = state.slots.slice(0, slotCount);
-  while (slots.length < slotCount) {
-    slots.push({ kind: 'cooldown', readyAt: now });
+  const gamblers: Gambler[] = state.gamblers.slice();
+  let pendingArrivals: number[] = state.pendingArrivals.slice();
+  let serial = state.nextGamblerSerial;
+
+  pendingArrivals.sort((a, b) => a - b);
+
+  // Generous cap — long offline gaps with short cycles can produce hundreds
+  // of events; clock-skew should still terminate quickly.
+  const MAX_EVENTS = slotCount * 256;
+  for (let i = 0; i < MAX_EVENTS; i++) {
+    const nextExpiry = gamblers.length > 0 ? gamblers[0].expiresAt : Infinity;
+    const nextSpawn = pendingArrivals.length > 0 ? pendingArrivals[0] : Infinity;
+    const nextEvent = Math.min(nextExpiry, nextSpawn);
+
+    if (nextEvent > now) break; // all remaining events are in the future
+
+    if (nextExpiry <= nextSpawn) {
+      // Expire the leftmost gambler. Anchor the respawn to its expiry, not
+      // to `now` — otherwise long offline gaps wouldn't catch up.
+      const expired = gamblers.shift() as Gambler;
+      pendingArrivals.push(pickRespawnTime(expired.expiresAt, respawnRange, rng));
+      pendingArrivals.sort((a, b) => a - b);
+    } else {
+      // Spawn the next pending arrival. Use its readyAt as createdAt so the
+      // gambler's lifespan is measured from its real spawn time.
+      const readyAt = pendingArrivals.shift() as number;
+      if (gamblers.length >= slotCount) continue;
+
+      const typeCounts: Partial<Record<TreasureType, number>> = {};
+      for (const g of gamblers) typeCounts[g.treasureType] = (typeCounts[g.treasureType] ?? 0) + 1;
+
+      const earliestExpiry = computeNewArrivalEarliestExpiry(gamblers, readyAt);
+      const gambler = generateGambler(
+        profileTreasures,
+        typeCounts,
+        readyAt,
+        earliestExpiry,
+        serial,
+        rng,
+      );
+      serial++;
+      gamblers.push(gambler);
+    }
   }
 
-  // Step 1 — expire active gamblers whose lifespan has run out.
-  slots = slots.map((slot) => {
-    if (slot.kind === 'gambler' && slot.gambler.expiresAt <= now) {
-      return {
-        kind: 'cooldown' as const,
-        readyAt: now + GAMBLER_STREET_GLOBAL.expiryCooldownMs,
-      };
-    }
-    return slot;
-  });
-
-  // Step 2 — fill cooldown slots whose readyAt has passed.
-  let serial = state.nextGamblerSerial;
-  for (let i = 0; i < slots.length; i++) {
-    const slot = slots[i];
-    if (slot.kind !== 'cooldown') continue;
-    if (slot.readyAt > now) continue;
-
-    // Compute existing-type counts for the dedupe cap, ignoring this slot.
-    const typeCounts: Partial<Record<TreasureType, number>> = {};
-    for (let j = 0; j < slots.length; j++) {
-      if (j === i) continue;
-      const s = slots[j];
-      if (s.kind !== 'gambler') continue;
-      const t = s.gambler.treasureType;
-      typeCounts[t] = (typeCounts[t] ?? 0) + 1;
-    }
-
-    const gambler = generateGambler(profileTreasures, typeCounts, now, serial, rng);
-    slots[i] = { kind: 'gambler', gambler };
-    serial++;
+  // Defensive top-up — if persisted state somehow lost entries (slotCount
+  // increased between deploys, manual edit, etc.).
+  while (gamblers.length + pendingArrivals.length < slotCount) {
+    pendingArrivals.push(now + pickRespawnTime(0, respawnRange, rng));
   }
 
   return {
-    slots,
+    gamblers,
+    pendingArrivals,
     lastTickedAt: now,
     nextGamblerSerial: serial,
   };
+}
+
+/** Pick a respawn time `now + uniform(min..max)`. */
+function pickRespawnTime(
+  now: number,
+  range: readonly [number, number],
+  rng: () => number,
+): number {
+  const [min, max] = range;
+  const span = Math.max(0, max - min);
+  return now + min + Math.floor(rng() * (span + 1));
+}
+
+/**
+ * For a new gambler arriving at the right end at `createdAt`, compute the
+ * minimum expiry time it must satisfy:
+ *   - At least `createdAt + lifespanRangeMs[0]` (the gambler always has at
+ *     least the minimum lifespan ahead of them from when they spawned).
+ *   - At least `lastActive.expiresAt + minStaggerMs` (so timers stay
+ *     staggered left-to-right).
+ *
+ * The actual lifespan rolled in `generateGambler` is then clamped up to
+ * this floor before computing expiresAt.
+ */
+function computeNewArrivalEarliestExpiry(
+  activeGamblers: readonly Gambler[],
+  createdAt: number,
+): number {
+  const stagger = GAMBLER_STREET_GLOBAL.minStaggerMs;
+  const minLifespan = GAMBLER_STREET_GLOBAL.lifespanRangeMs[0];
+  let floor = createdAt + minLifespan;
+  if (activeGamblers.length > 0) {
+    const lastExpiry = activeGamblers[activeGamblers.length - 1].expiresAt;
+    floor = Math.max(floor, lastExpiry + stagger);
+  }
+  return floor;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -159,16 +213,22 @@ export function tickGamblerStreet(
 /**
  * Generate a new Gambler: pick a treasure type (weighted, respecting the
  * per-type cap), pick an ask amount, compute the coin reward, pick a name
- * and a lifespan.
+ * and a lifespan that satisfies the stagger floor.
+ *
+ * `earliestExpiry` is the minimum acceptable expiresAt; the lifespan roll is
+ * clamped up to ensure the floor is hit when the natural roll would have
+ * fallen short. This produces the "leftmost expires first" property even
+ * after long offline aging.
  *
  * If every treasure type is at the cap (cap × types ≤ slot count is unusual
  * but possible if config is stretched) the cap is relaxed for this generation
- * — we always return a valid Gambler so a slot never gets stuck.
+ * — we always return a valid Gambler so the carousel never gets stuck.
  */
 export function generateGambler(
   profileTreasures: TreasureBundle,
   typeCountsInUse: Partial<Record<TreasureType, number>>,
-  now: number,
+  createdAt: number,
+  earliestExpiry: number,
   serial: number,
   rng: () => number,
 ): Gambler {
@@ -182,15 +242,17 @@ export function generateGambler(
   const name = GAMBLER_NAMES[Math.floor(rng() * GAMBLER_NAMES.length)];
   const [lifeMin, lifeMax] = GAMBLER_STREET_GLOBAL.lifespanRangeMs;
   const lifespan = lifeMin + Math.floor(rng() * (lifeMax - lifeMin));
+  const naturalExpiry = createdAt + lifespan;
+  const expiresAt = Math.max(naturalExpiry, earliestExpiry);
 
   return {
-    id: `g_${now.toString(36)}_${serial.toString(36)}`,
+    id: `g_${createdAt.toString(36)}_${serial.toString(36)}`,
     name,
     treasureType,
     treasureAmount: amount,
     coinReward,
-    createdAt: now,
-    expiresAt: now + lifespan,
+    createdAt,
+    expiresAt,
   };
 }
 
@@ -237,7 +299,6 @@ export function computeAskAmount(
 
   let raw: number;
   if (owned < tuning.amountPctThreshold) {
-    // Inclusive of both endpoints.
     raw = minAbs + Math.floor(rng() * (maxAbs - minAbs + 1));
   } else {
     const pct = minPct + rng() * (maxPct - minPct);
@@ -256,14 +317,11 @@ export function computeAskAmount(
 
 /**
  * Result of attempting to bet. The caller then mutates the profile's
- * treasure & coin counts based on the outcome and replaces the slot with
- * a `postBetCooldownMs` cooldown.
- *
- * Errors are surfaced as a discriminated union so the server can return a
- * clean reason string to the client.
+ * treasure & coin counts based on the outcome and removes the gambler from
+ * the active list (queuing a respawn arrival in its place).
  */
 export type BetResolution =
-  | { ok: true; outcome: BetOutcome; nextSlot: GamblerSlot }
+  | { ok: true; outcome: BetOutcome; respawnAt: number }
   | { ok: false; reason:
       | 'invalid_slot'
       | 'no_gambler'
@@ -274,11 +332,11 @@ export type BetResolution =
     };
 
 /**
- * Resolve a bet against the gambler at `slotIndex` with the given tier and
- * the player's hand pick.
+ * Resolve a bet against the gambler at index `slotIndex` of `state.gamblers`.
  *
  * Pure: does not mutate state, treasures, or coins. Returns the bet outcome
- * for the caller to apply.
+ * for the caller to apply, plus the timestamp at which the replacement
+ * gambler should arrive.
  *
  * Roll model (per the design): for the chosen tier, the player wins with
  * probability `winChance`. The "correct hand" returned in the outcome is
@@ -294,19 +352,18 @@ export function resolveBet(
   now: number,
   rng: () => number,
 ): BetResolution {
-  if (slotIndex < 0 || slotIndex >= state.slots.length) {
+  if (slotIndex < 0 || slotIndex >= state.gamblers.length) {
     return { ok: false, reason: 'invalid_slot' };
   }
   if (pickedHand !== 'left' && pickedHand !== 'right') {
     return { ok: false, reason: 'invalid_hand' };
   }
-  const slot = state.slots[slotIndex];
-  if (slot.kind !== 'gambler') return { ok: false, reason: 'no_gambler' };
-  if (slot.gambler.expiresAt <= now) return { ok: false, reason: 'gambler_expired' };
+  const gambler = state.gamblers[slotIndex];
+  if (!gambler) return { ok: false, reason: 'no_gambler' };
+  if (gambler.expiresAt <= now) return { ok: false, reason: 'gambler_expired' };
   const tierCfg = GAMBLER_STREET_GLOBAL.betTiers[tier];
   if (!tierCfg) return { ok: false, reason: 'invalid_tier' };
 
-  const { gambler } = slot;
   const cost = gambler.treasureAmount * tierCfg.costMultiplier;
   const owned = profileTreasures[gambler.treasureType] ?? 0;
   if (owned < cost) return { ok: false, reason: 'insufficient_treasure' };
@@ -325,12 +382,8 @@ export function resolveBet(
     correctHand,
   };
 
-  const nextSlot: GamblerSlot = {
-    kind: 'cooldown',
-    readyAt: now + GAMBLER_STREET_GLOBAL.postBetCooldownMs,
-  };
-
-  return { ok: true, outcome, nextSlot };
+  const respawnAt = pickRespawnTime(now, GAMBLER_STREET_GLOBAL.respawnDelayRangeMs, rng);
+  return { ok: true, outcome, respawnAt };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

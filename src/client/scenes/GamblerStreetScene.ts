@@ -11,7 +11,7 @@ import {
   TREASURE_DISPLAY_NAMES,
   type TreasureType,
 } from '@shared/config/treasures.ts';
-import type { BetOutcome, GamblerSlot } from '@shared/types/gambler-street.ts';
+import type { BetOutcome, Gambler, GamblerStreetState } from '@shared/types/gambler-street.ts';
 import type { GamblerStreetBetResultMsg } from '@shared/types/messages.ts';
 
 const TUTORIAL_GUY_KEY = 'gambler_face_default';
@@ -20,7 +20,7 @@ const CONFETTI_TEX_KEY = 'gambler_confetti_particle';
 
 const STALL_GAP = 16;
 const STALL_BAND_TOP = 130;
-const STALL_BAND_HEIGHT = 270;
+const STALL_BAND_HEIGHT = 290;
 const STALL_MAX_WIDTH = 240;
 
 const DRAWER_GAP = 24;
@@ -33,32 +33,35 @@ const REJECTION_AUTO_DISMISS_MS = 2000;
 const STAGE_CROSSFADE_MS = 150;
 const DRAWER_SLIDE_MS = 200;
 
-// Palette is harvested from MainMenuScene / BombermanShopScene / BombsShopScene
-// so the chrome reads as the same UI family. No new tokens introduced.
+const STALL_LEAVE_MS = 250;
+const STALL_ARRIVE_MS = 280;
+const STALL_REFLOW_MS = 300;
+
+const POLL_INTERVAL_MS = 1000;
+const POLL_SERVER_EVERY_N_TICKS = 2; // 2s server pings while on the scene
+
+const LOW_TIME_THRESHOLD_MS = 10_000;
+const THROB_PERIOD_MS = 600;
+const WALKED_AWAY_GRACE_MS = 1000;
+
+// Palette harvested from MainMenuScene / BombermanShopScene / BombsShopScene.
 const COLORS = {
-  // Stalls / drawer surface
   cardBg: 0x1a1a2e,
   cardBorder: 0x333355,
   cardBorderHover: 0x556699,
   cardBorderSelected: 0x88aacc,
-  cardCooldownBg: 0x141420,
-  cardCooldownBorder: 0x2a2a44,
   awning: 0x442233,
   pin: 0x88aacc,
 
-  // Drawer
   drawerBg: 0x1a1a2e,
   drawerBorder: 0x556699,
-  scrim: 0x000000,
 
-  // Buttons (matched to MainMenu/BombermanShop primary action button)
   btnPrimary: 0x222244,
   btnPrimaryHover: 0x334466,
   btnDanger: 0x442233,
   btnDangerHover: 0x664455,
   btnDisabled: 0x222226,
 
-  // Text
   textTitle: '#e0e0e0',
   textPrimary: '#ffffff',
   textSecondary: '#aaaaaa',
@@ -70,8 +73,9 @@ const COLORS = {
   textBlue: '#44aaff',
   textBlueHover: '#88ccff',
   textDisabled: '#555566',
+  textTimerNormal: '#aaaaaa',
+  textTimerLow: '#ff6644',
 
-  // Lifespan bar
   lifespanFill: 0x88aacc,
   lifespanFillLow: 0xff6644,
   lifespanTrack: 0x2a2a44,
@@ -80,38 +84,47 @@ const COLORS = {
 type DrawerStage = 'bet' | 'hand' | 'reveal';
 
 interface DrawerData {
-  slotIndex: number;
+  /** Identity of the gambler being interacted with. Stable across reorders. */
+  gamblerId: string;
+  /** Snapshot of the gambler at drawer-open time — used so the drawer keeps
+   *  rendering coherent copy even if the gambler leaves the active list. */
+  gamblerSnapshot: Gambler;
   stage: DrawerStage;
   tier: BetTier | null;
   pickedHand: 'left' | 'right' | null;
   outcome: BetOutcome | null;
   rejected: boolean;
   rejectionReason: string | null;
+  /** True once the watched gambler is no longer present in state.gamblers.
+   *  Buttons are disabled and the drawer auto-closes after WALKED_AWAY_GRACE_MS. */
+  walkedAway: boolean;
 }
 
 interface StallView {
+  gambler: Gambler;
   container: Phaser.GameObjects.Container;
-  hitZone: Phaser.GameObjects.Zone | null;
+  hitZone: Phaser.GameObjects.Zone;
   border: Phaser.GameObjects.Rectangle;
-  pin: Phaser.GameObjects.Triangle | null;
-  lifespanFill: Phaser.GameObjects.Rectangle | null;
-  lifespanCreatedAt: number;
-  lifespanExpiresAt: number;
-  cooldownText: Phaser.GameObjects.Text | null;
-  cooldownReadyAt: number;
+  pin: Phaser.GameObjects.Triangle;
+  timeLeftLabel: Phaser.GameObjects.Text;
+  timeLeftText: Phaser.GameObjects.Text;
+  lifespanFill: Phaser.GameObjects.Rectangle;
+  /** True once a leave-tween has been kicked off — view will be destroyed. */
+  leaving: boolean;
 }
 
 /**
- * Gambler Street main scene.
+ * Gambler Street main scene — conveyor edition.
  *
- * Five stalls in a horizontal row. Clicking an active stall opens an
- * in-scene drawer below the row that runs through bet → hand → reveal,
- * then slides closed and is destroyed. The drawer replaces the old
- * GamblerStreetPopupScene; nothing else uses parallel scene chrome here.
+ * The carousel is a horizontal row of 1–5 stalls. Gamblers expire on a
+ * staggered schedule (left expires first); when one leaves the others shift
+ * left and a fresh arrival slides in from the right after 2–6 seconds.
  *
- * Server protocol is unchanged from the previous design:
- *   C→S `gambler_street_bet { slotIndex, tier, pickedHand }`
- *   S→C `gambler_street_bet_result { ok, outcome, state, reason }`
+ * Server-authoritative for state; client renders smooth transitions on diff.
+ *
+ * Drawer flow: bet → hand → reveal, in-scene drawer below the row. If the
+ * watched gambler walks away (timer hits 0 server-side) the drawer disables
+ * its buttons, shows a "walked away" message, and slides closed 1s later.
  */
 export class GamblerStreetScene extends Phaser.Scene {
   private treasureList!: TreasureListWidget;
@@ -119,21 +132,23 @@ export class GamblerStreetScene extends Phaser.Scene {
   private subHeaderText!: Phaser.GameObjects.Text;
 
   private stallRow!: Phaser.GameObjects.Container;
-  private stallViews: StallView[] = [];
+  private stallViews: Map<string, StallView> = new Map();
+  private layoutOrder: string[] = [];
 
   private drawer: Phaser.GameObjects.Container | null = null;
   private drawerData: DrawerData | null = null;
   private drawerBody: Phaser.GameObjects.Container | null = null;
   private drawerHeaderTitle: Phaser.GameObjects.Text | null = null;
-  private drawerHeaderSubtitle: Phaser.GameObjects.Text | null = null;
+  private drawerHeaderSubtitle: Phaser.GameObjects.Container | null = null;
   private autoDismissTimer: Phaser.Time.TimerEvent | null = null;
+  private walkedAwayCloseTimer: Phaser.Time.TimerEvent | null = null;
   private confettiEmitters: Phaser.GameObjects.Particles.ParticleEmitter[] = [];
 
   private pollTimer: Phaser.Time.TimerEvent | null = null;
+  private pollTickCount = 0;
   private unsubscribeStreet: (() => void) | null = null;
   private unsubscribeProfile: (() => void) | null = null;
 
-  /** Cached layout — recomputed on resize. */
   private viewport = { width: 0, height: 0 };
   private stallSize = { w: 0, h: 0 };
   private drawerY = 0;
@@ -162,7 +177,7 @@ export class GamblerStreetScene extends Phaser.Scene {
     const { width, height } = this.scale;
     this.viewport = { width, height };
 
-    // Top bar — back-button left, title + sub-header center, coins + treasure right.
+    // Top bar
     const backBtn = this.add.text(20, 30, '[ < BACK ]', {
       fontSize: '16px', color: COLORS.textMuted, fontFamily: 'monospace',
     }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
@@ -176,7 +191,7 @@ export class GamblerStreetScene extends Phaser.Scene {
 
     this.subHeaderText = this.add.text(
       width / 2, 75,
-      'Five gamblers waiting. Will fortune favour you tonight?',
+      'Gamblers come and go. Will fortune favour you tonight?',
       {
         fontSize: '14px', color: COLORS.textMuted, fontFamily: 'monospace', fontStyle: 'italic',
       },
@@ -190,23 +205,20 @@ export class GamblerStreetScene extends Phaser.Scene {
       x: width - 20, y: 20, anchor: 'top-right', iconScale: 1.0, fontSize: 16,
     });
 
-    // Stall row container — built once, contents rebuilt on store changes.
     this.stallRow = this.add.container(0, 0);
 
-    // Esc key — close drawer if open, else back to main menu.
     this.input.keyboard?.on('keydown-ESC', () => {
       if (this.drawer) this.closeDrawer();
       else this.scene.start('MainMenuScene');
     });
 
-    // Subscribe to stores
     this.unsubscribeStreet = GamblerStreetStore.subscribe(() => this.renderStalls());
     this.unsubscribeProfile = ProfileStore.subscribe(() => this.renderProfileBits());
     this.renderProfileBits();
 
     NetworkManager.getSocket().emit('gambler_street_request', {});
     this.pollTimer = this.time.addEvent({
-      delay: 1000, loop: true, callback: this.tickPoll, callbackScope: this,
+      delay: POLL_INTERVAL_MS, loop: true, callback: this.tickPoll, callbackScope: this,
     });
 
     this.computeLayout();
@@ -223,13 +235,15 @@ export class GamblerStreetScene extends Phaser.Scene {
     this.pollTimer = null;
     this.autoDismissTimer?.remove(false);
     this.autoDismissTimer = null;
+    this.walkedAwayCloseTimer?.remove(false);
+    this.walkedAwayCloseTimer = null;
     this.treasureList?.destroy();
     this.destroyDrawer();
-    this.stallViews = [];
-    // NOTE: do NOT `socket.off('gambler_street_bet_result')` here — that would
-    // strip the global store-sync handler in NetworkManager.ts. Pending
-    // once-handlers carry a reference to drawerData and self-cancel via the
-    // `this.drawerData !== myData` guard if the drawer is gone.
+    this.stallViews.clear();
+    this.layoutOrder = [];
+    // Do NOT socket.off('gambler_street_bet_result') — that would strip the
+    // global store-sync handler. Pending once-handlers self-cancel via the
+    // drawerData identity guard.
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -239,12 +253,18 @@ export class GamblerStreetScene extends Phaser.Scene {
   private computeLayout(): void {
     const { width } = this.viewport;
     const slotCount = GAMBLER_STREET_GLOBAL.slotCount;
-    // Reserve some side margin and divide remaining width across the slots.
     const margin = 40;
     const usable = width - margin * 2;
     const stallW = Math.min(STALL_MAX_WIDTH, (usable - STALL_GAP * (slotCount - 1)) / slotCount);
     this.stallSize = { w: Math.floor(stallW), h: STALL_BAND_HEIGHT };
     this.drawerY = STALL_BAND_TOP + STALL_BAND_HEIGHT + DRAWER_GAP + DRAWER_HEIGHT / 2;
+  }
+
+  /** x of the stall's container origin for index `i` in a row of `count`. */
+  private stallTargetX(i: number, count: number): number {
+    const totalW = count * this.stallSize.w + Math.max(0, count - 1) * STALL_GAP;
+    const startX = (this.viewport.width - totalW) / 2;
+    return startX + i * (this.stallSize.w + STALL_GAP) + this.stallSize.w / 2;
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -257,8 +277,6 @@ export class GamblerStreetScene extends Phaser.Scene {
     this.coinsText.setText(`${profile.coins} coins`);
     this.treasureList.setBundle(profile.treasures);
 
-    // Disabled-state of bet-tier cards depends on owned treasure — refresh
-    // drawer body if it's currently in `bet` stage.
     if (this.drawer && this.drawerData?.stage === 'bet') {
       this.renderDrawerBody();
     }
@@ -269,258 +287,308 @@ export class GamblerStreetScene extends Phaser.Scene {
   // ───────────────────────────────────────────────────────────────────────────
 
   private tickPoll = (): void => {
-    const state = GamblerStreetStore.get();
-    const now = Date.now();
-    if (!state || (now - (state.lastTickedAt ?? 0)) > 4000) {
+    this.pollTickCount = (this.pollTickCount + 1) % POLL_SERVER_EVERY_N_TICKS;
+    if (this.pollTickCount === 0) {
       NetworkManager.getSocket().emit('gambler_street_request', {});
     }
     this.refreshTimers();
   };
 
-  /** Refresh lifespan bars + cooldown countdown text without rebuilding. */
+  /** Per-second visual refresh: countdown text, throb effect, lifespan bar. */
   private refreshTimers(): void {
     const now = Date.now();
-    for (const view of this.stallViews) {
-      if (view.lifespanFill) {
-        const total = Math.max(1, view.lifespanExpiresAt - view.lifespanCreatedAt);
-        const remaining = Math.max(0, view.lifespanExpiresAt - now);
-        const ratio = Math.min(1, remaining / total);
-        const fullW = this.stallSize.w - 24;
-        view.lifespanFill.width = fullW * ratio;
-        view.lifespanFill.fillColor = ratio < 0.15 ? COLORS.lifespanFillLow : COLORS.lifespanFill;
+    for (const view of this.stallViews.values()) {
+      if (view.leaving) continue;
+      const remaining = Math.max(0, view.gambler.expiresAt - now);
+      view.timeLeftText.setText(formatCountdown(remaining));
+
+      const isLow = remaining <= LOW_TIME_THRESHOLD_MS && remaining > 0;
+      if (isLow) {
+        view.timeLeftText.setColor(COLORS.textTimerLow);
+        view.timeLeftLabel.setColor(COLORS.textTimerLow);
+        // Sine throb between 1.0 and 0.55
+        const phase = (now % THROB_PERIOD_MS) / THROB_PERIOD_MS;
+        const a = 0.55 + 0.45 * (0.5 + 0.5 * Math.cos(2 * Math.PI * phase));
+        view.timeLeftText.setAlpha(a);
+        view.timeLeftLabel.setAlpha(a);
+      } else {
+        view.timeLeftText.setColor(COLORS.textTimerNormal);
+        view.timeLeftLabel.setColor(COLORS.textTimerNormal);
+        view.timeLeftText.setAlpha(1);
+        view.timeLeftLabel.setAlpha(1);
       }
-      if (view.cooldownText) {
-        view.cooldownText.setText(formatCountdown(view.cooldownReadyAt - now));
-      }
+
+      // Lifespan bar
+      const total = Math.max(1, view.gambler.expiresAt - view.gambler.createdAt);
+      const ratio = Math.min(1, remaining / total);
+      const fullW = this.stallSize.w - 24;
+      view.lifespanFill.width = fullW * ratio;
+      view.lifespanFill.fillColor = isLow ? COLORS.lifespanFillLow : COLORS.lifespanFill;
     }
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // Stall row
+  // Stall row — diff and animate from state.gamblers
   // ───────────────────────────────────────────────────────────────────────────
 
   private renderStalls(): void {
-    this.stallRow.removeAll(true);
-    this.stallViews = [];
-
     const state = GamblerStreetStore.get();
     if (!state) {
-      const loading = this.add.text(this.viewport.width / 2, STALL_BAND_TOP + 80, 'Loading…', {
-        fontSize: '16px', color: COLORS.textDim, fontFamily: 'monospace',
-      }).setOrigin(0.5);
-      this.stallRow.add(loading);
+      // First time render before state arrives — show a loading placeholder
+      // exactly once. The placeholder is a single text in the stallRow.
+      if (this.stallRow.list.length === 0) {
+        const loading = this.add.text(this.viewport.width / 2, STALL_BAND_TOP + 100, 'Loading…', {
+          fontSize: '16px', color: COLORS.textDim, fontFamily: 'monospace',
+        }).setOrigin(0.5);
+        this.stallRow.add(loading);
+      }
       return;
     }
 
-    const { width } = this.viewport;
-    const { w: stallW } = this.stallSize;
-    const slotCount = state.slots.length;
-    const totalW = slotCount * stallW + (slotCount - 1) * STALL_GAP;
-    const startX = (width - totalW) / 2;
-
-    for (let i = 0; i < slotCount; i++) {
-      const slot = state.slots[i];
-      const x = startX + i * (stallW + STALL_GAP);
-      const view = this.buildStall(x, STALL_BAND_TOP, slot, i);
-      this.stallViews.push(view);
-      this.stallRow.add(view.container);
+    // Strip any loading placeholder once real state arrives
+    if (this.stallViews.size === 0 && this.stallRow.list.length > 0 && state.gamblers.length > 0) {
+      this.stallRow.removeAll(true);
     }
+
+    const nextIds = state.gamblers.map(g => g.id);
+
+    // Removals: any current id no longer in nextIds → animate-out
+    for (const [id, view] of this.stallViews) {
+      if (!nextIds.includes(id) && !view.leaving) {
+        this.animateStallLeaving(id);
+      }
+    }
+
+    // Additions: any new id without a non-leaving view → create + animate-in
+    for (let i = 0; i < state.gamblers.length; i++) {
+      const g = state.gamblers[i];
+      const existing = this.stallViews.get(g.id);
+      if (!existing || existing.leaving) {
+        this.createAndArriveStall(g, i, state.gamblers.length);
+      }
+    }
+
+    // Reflow: tween x of all non-leaving stalls to new positions
+    for (let i = 0; i < state.gamblers.length; i++) {
+      const g = state.gamblers[i];
+      const view = this.stallViews.get(g.id);
+      if (!view || view.leaving) continue;
+      // Update cached gambler in case server changed something (it shouldn't,
+      // but the snapshot keeps the timer accurate after long offline aging).
+      view.gambler = g;
+      const targetX = this.stallTargetX(i, state.gamblers.length);
+      if (Math.abs(view.container.x - targetX) > 1) {
+        this.tweens.add({
+          targets: view.container, x: targetX,
+          duration: STALL_REFLOW_MS, ease: 'Quad.easeOut',
+        });
+      }
+    }
+
+    this.layoutOrder = nextIds.slice();
 
     this.applyStallStates();
     this.refreshTimers();
+    this.updateDrawerForState(state);
   }
 
-  private buildStall(x: number, y: number, slot: GamblerSlot, index: number): StallView {
+  private createAndArriveStall(g: Gambler, index: number, count: number): void {
+    const startX = this.viewport.width + this.stallSize.w; // off-screen right
+    const targetX = this.stallTargetX(index, count);
+    const y = STALL_BAND_TOP + this.stallSize.h / 2;
+    const view = this.buildStall(g, startX, y);
+    this.stallViews.set(g.id, view);
+    this.stallRow.add(view.container);
+
+    view.container.setAlpha(0);
+    this.tweens.add({
+      targets: view.container,
+      x: targetX,
+      alpha: 1,
+      duration: STALL_ARRIVE_MS,
+      ease: 'Quad.easeOut',
+    });
+  }
+
+  private animateStallLeaving(id: string): void {
+    const view = this.stallViews.get(id);
+    if (!view) return;
+    view.leaving = true;
+    view.hitZone.disableInteractive();
+    this.tweens.add({
+      targets: view.container,
+      y: view.container.y - 70,
+      alpha: 0,
+      duration: STALL_LEAVE_MS,
+      ease: 'Quad.easeIn',
+      onComplete: () => {
+        view.container.destroy();
+        this.stallViews.delete(id);
+      },
+    });
+  }
+
+  private buildStall(g: Gambler, x: number, y: number): StallView {
     const w = this.stallSize.w;
     const h = this.stallSize.h;
-    const container = this.add.container(x + w / 2, y + h / 2);
+    const container = this.add.container(x, y);
 
-    const isActive = slot.kind === 'gambler';
-    const bg = this.add.rectangle(0, 0, w, h, isActive ? COLORS.cardBg : COLORS.cardCooldownBg, 1);
+    const bg = this.add.rectangle(0, 0, w, h, COLORS.cardBg, 1);
     container.add(bg);
     const border = this.add.rectangle(0, 0, w, h);
-    border.setFillStyle(0x000000, 0).setStrokeStyle(2, isActive ? COLORS.cardBorder : COLORS.cardCooldownBorder, 1);
+    border.setFillStyle(0x000000, 0).setStrokeStyle(2, COLORS.cardBorder, 1);
     container.add(border);
 
-    let pin: Phaser.GameObjects.Triangle | null = null;
-    let lifespanFill: Phaser.GameObjects.Rectangle | null = null;
-    let cooldownText: Phaser.GameObjects.Text | null = null;
-    let lifespanCreatedAt = 0;
-    let lifespanExpiresAt = 0;
-    let cooldownReadyAt = 0;
+    // Awning
+    const awningH = 8;
+    const awning = this.add.rectangle(0, -h / 2 + awningH / 2, w - 4, awningH, COLORS.awning, 1);
+    container.add(awning);
 
-    if (slot.kind === 'gambler') {
-      const g = slot.gambler;
+    // Avatar — tutorial_guy with per-id deterministic tint
+    const avatarSize = Math.min(110, w - 32);
+    const avatar = this.add.image(0, -h / 2 + awningH + 12 + avatarSize / 2, TUTORIAL_GUY_KEY);
+    avatar.setDisplaySize(avatarSize, avatarSize);
+    avatar.setTint(tintForGamblerId(g.id));
+    container.add(avatar);
 
-      // Awning strip across the top
-      const awningH = 8;
-      const awning = this.add.rectangle(0, -h / 2 + awningH / 2, w - 4, awningH, COLORS.awning, 1);
-      container.add(awning);
+    // Name (single line, ellipsis on overflow)
+    const nameY = avatar.y + avatarSize / 2 + 6;
+    const name = this.add.text(0, nameY, ellipsize(g.name, Math.floor(w / 9)), {
+      fontSize: '14px', color: COLORS.textPrimary, fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5);
+    container.add(name);
 
-      // Avatar — tutorial_guy with per-id deterministic tint
-      const avatarSize = Math.min(120, w - 32);
-      const avatar = this.add.image(0, -h / 2 + awningH + 12 + avatarSize / 2, TUTORIAL_GUY_KEY);
-      avatar.setDisplaySize(avatarSize, avatarSize);
-      avatar.setTint(tintForGamblerId(g.id));
-      container.add(avatar);
+    // Ask line: "wants {N} {treasureIcon}"
+    const askY = nameY + 22;
+    const askLabel = this.add.text(-w / 2 + 14, askY, `wants ${g.treasureAmount}`, {
+      fontSize: '12px', color: COLORS.textCoin, fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0, 0.5);
+    container.add(askLabel);
+    const askIcon = this.add.image(askLabel.x + askLabel.width + 6, askY, TREASURE_TEXTURE_KEY, treasureIconFrame(g.treasureType));
+    askIcon.setOrigin(0, 0.5).setDisplaySize(18, 18);
+    container.add(askIcon);
 
-      // Name (single line, ellipsis on overflow)
-      const nameY = avatar.y + avatarSize / 2 + 8;
-      const name = this.add.text(0, nameY, ellipsize(g.name, Math.floor(w / 9)), {
-        fontSize: '14px', color: COLORS.textPrimary, fontFamily: 'monospace', fontStyle: 'bold',
-      }).setOrigin(0.5);
-      container.add(name);
+    // Reward line: "win {N} coins" — coins bold yellow
+    const rewardY = askY + 22;
+    const rewardPrefix = this.add.text(-w / 2 + 14, rewardY, 'win ', {
+      fontSize: '12px', color: COLORS.textSecondary, fontFamily: 'monospace',
+    }).setOrigin(0, 0.5);
+    container.add(rewardPrefix);
+    const rewardCoins = this.add.text(rewardPrefix.x + rewardPrefix.width, rewardY, `${g.coinReward} coins`, {
+      fontSize: '12px', color: COLORS.textCoin, fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0, 0.5);
+    container.add(rewardCoins);
 
-      // Ask line: "wants {N} {treasureIcon}"
-      const askY = nameY + 24;
-      const askLabel = this.add.text(-w / 2 + 14, askY, `wants ${g.treasureAmount}`, {
-        fontSize: '12px', color: COLORS.textCoin, fontFamily: 'monospace', fontStyle: 'bold',
-      }).setOrigin(0, 0.5);
-      container.add(askLabel);
-      const askIcon = this.add.image(askLabel.x + askLabel.width + 6, askY, TREASURE_TEXTURE_KEY, treasureIconFrame(g.treasureType));
-      askIcon.setOrigin(0, 0.5).setDisplaySize(18, 18);
-      container.add(askIcon);
+    // Time-left label + countdown
+    const timeY = rewardY + 26;
+    const timeLeftLabel = this.add.text(-w / 2 + 14, timeY, 'time left', {
+      fontSize: '11px', color: COLORS.textTimerNormal, fontFamily: 'monospace',
+    }).setOrigin(0, 0.5);
+    container.add(timeLeftLabel);
+    const timeLeftText = this.add.text(timeLeftLabel.x + timeLeftLabel.width + 6, timeY, '0:00', {
+      fontSize: '14px', color: COLORS.textTimerNormal, fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0, 0.5);
+    container.add(timeLeftText);
 
-      // Reward line: "win {N} coins"
-      const rewardY = askY + 22;
-      const reward = this.add.text(-w / 2 + 14, rewardY, `win ${g.coinReward} coins`, {
-        fontSize: '12px', color: COLORS.textSecondary, fontFamily: 'monospace',
-      }).setOrigin(0, 0.5);
-      container.add(reward);
+    // Lifespan bar (bottom edge, decorative)
+    const barY = h / 2 - 18;
+    const barW = w - 24;
+    const barTrack = this.add.rectangle(0, barY, barW, 4, COLORS.lifespanTrack, 1);
+    container.add(barTrack);
+    const lifespanFill = this.add.rectangle(-barW / 2, barY, barW, 4, COLORS.lifespanFill, 1).setOrigin(0, 0.5);
+    container.add(lifespanFill);
 
-      // Lifespan bar (bottom edge)
-      const barY = h / 2 - 14;
-      const barW = w - 24;
-      const barTrack = this.add.rectangle(0, barY, barW, 4, COLORS.lifespanTrack, 1);
-      container.add(barTrack);
-      lifespanFill = this.add.rectangle(-barW / 2, barY, barW, 4, COLORS.lifespanFill, 1).setOrigin(0, 0.5);
-      container.add(lifespanFill);
-      lifespanCreatedAt = g.createdAt;
-      lifespanExpiresAt = g.expiresAt;
+    // Selected pin (hidden until selected)
+    const pin = this.add.triangle(0, h / 2 + 8, 0, 0, 12, 0, 6, -8, COLORS.pin);
+    pin.setVisible(false);
+    container.add(pin);
 
-      // Selected pin (hidden until applyStallStates)
-      pin = this.add.triangle(0, h / 2 + 8, 0, 0, 12, 0, 6, -8, COLORS.pin);
-      pin.setVisible(false);
-      container.add(pin);
-    } else {
-      // Cooldown stall: hourglass + "next gambler in mm:ss"
-      const hg = this.add.graphics();
-      drawHourglass(hg, COLORS.textMuted);
-      hg.setPosition(0, -22);
-      container.add(hg);
-
-      const lbl = this.add.text(0, 30, 'next gambler in', {
-        fontSize: '12px', color: COLORS.textMuted, fontFamily: 'monospace',
-      }).setOrigin(0.5);
-      container.add(lbl);
-      cooldownText = this.add.text(0, 52, formatCountdown(slot.readyAt - Date.now()), {
-        fontSize: '20px', color: COLORS.textSecondary, fontFamily: 'monospace', fontStyle: 'bold',
-      }).setOrigin(0.5);
-      container.add(cooldownText);
-      cooldownReadyAt = slot.readyAt;
-    }
-
-    // Hit zone — only added for active stalls (cooldowns aren't clickable)
-    let hitZone: Phaser.GameObjects.Zone | null = null;
-    if (isActive) {
-      hitZone = this.add.zone(0, 0, w, h);
-      hitZone.setInteractive({ useHandCursor: true });
-      hitZone.on('pointerdown', () => this.onStallClicked(index));
-      hitZone.on('pointerover', () => this.onStallHover(index, true));
-      hitZone.on('pointerout', () => this.onStallHover(index, false));
-      container.add(hitZone);
-    }
+    // Hit zone
+    const hitZone = this.add.zone(0, 0, w, h);
+    hitZone.setInteractive({ useHandCursor: true });
+    hitZone.on('pointerdown', () => this.onStallClicked(g.id));
+    hitZone.on('pointerover', () => this.onStallHover(g.id, true));
+    hitZone.on('pointerout', () => this.onStallHover(g.id, false));
+    container.add(hitZone);
 
     return {
+      gambler: g,
       container,
       hitZone,
       border,
       pin,
+      timeLeftLabel,
+      timeLeftText,
       lifespanFill,
-      lifespanCreatedAt,
-      lifespanExpiresAt,
-      cooldownText,
-      cooldownReadyAt,
+      leaving: false,
     };
   }
 
   /** Apply hover/selected/dimmed states to all stalls based on drawer state. */
   private applyStallStates(): void {
-    const selectedIdx = this.drawerData?.slotIndex ?? null;
-    const drawerLocked = this.drawerData ? this.drawerData.stage !== 'bet' : false;
+    const selectedId = this.drawerData?.gamblerId ?? null;
+    const drawerLocked = this.drawerData ? this.drawerData.stage !== 'bet' || this.drawerData.walkedAway : false;
 
-    for (let i = 0; i < this.stallViews.length; i++) {
-      const view = this.stallViews[i];
-      const isSelected = i === selectedIdx;
-      const isDimmed = selectedIdx !== null && !isSelected;
+    for (const [id, view] of this.stallViews) {
+      if (view.leaving) continue;
+      const isSelected = id === selectedId;
+      const isDimmed = selectedId !== null && !isSelected;
 
       view.container.setAlpha(isDimmed ? 0.55 : 1);
-      view.pin?.setVisible(isSelected);
-      if (isSelected) {
-        view.border.setStrokeStyle(2, COLORS.cardBorderSelected, 1);
-      } else if (view.hitZone) {
-        view.border.setStrokeStyle(2, COLORS.cardBorder, 1);
-      } else {
-        view.border.setStrokeStyle(2, COLORS.cardCooldownBorder, 1);
-      }
+      view.pin.setVisible(isSelected);
+      view.border.setStrokeStyle(2, isSelected ? COLORS.cardBorderSelected : COLORS.cardBorder, 1);
 
-      // Stalls become non-interactive once the drawer is locked past bet stage.
-      // They still render dimmed, just don't react to clicks.
-      if (view.hitZone) {
-        if (drawerLocked) view.hitZone.disableInteractive();
-        else view.hitZone.setInteractive({ useHandCursor: true });
-      }
+      if (drawerLocked) view.hitZone.disableInteractive();
+      else view.hitZone.setInteractive({ useHandCursor: true });
     }
   }
 
-  private onStallHover(index: number, over: boolean): void {
-    const view = this.stallViews[index];
-    if (!view) return;
-    const selectedIdx = this.drawerData?.slotIndex ?? null;
-    if (index === selectedIdx) return; // selected style wins
+  private onStallHover(id: string, over: boolean): void {
+    const view = this.stallViews.get(id);
+    if (!view || view.leaving) return;
+    const selectedId = this.drawerData?.gamblerId ?? null;
+    if (id === selectedId) return;
     view.border.setStrokeStyle(2, over ? COLORS.cardBorderHover : COLORS.cardBorder, 1);
   }
 
-  private onStallClicked(index: number): void {
+  private onStallClicked(id: string): void {
     if (this.drawerData) {
-      // Drawer is open
-      if (this.drawerData.stage !== 'bet') return; // locked past bet stage
-      if (this.drawerData.slotIndex === index) {
-        // Click selected stall = close
+      if (this.drawerData.stage !== 'bet' || this.drawerData.walkedAway) return;
+      if (this.drawerData.gamblerId === id) {
         this.closeDrawer();
         return;
       }
-      // Different stall in bet stage = retarget
-      this.retargetDrawer(index);
+      this.retargetDrawer(id);
       return;
     }
-    this.openDrawer(index);
+    this.openDrawer(id);
   }
 
   // ───────────────────────────────────────────────────────────────────────────
   // Drawer lifecycle
   // ───────────────────────────────────────────────────────────────────────────
 
-  private openDrawer(slotIndex: number): void {
+  private openDrawer(gamblerId: string): void {
     const state = GamblerStreetStore.get();
     if (!state) return;
-    const slot = state.slots[slotIndex];
-    if (!slot || slot.kind !== 'gambler') return;
+    const gambler = state.gamblers.find(g => g.id === gamblerId);
+    if (!gambler) return;
 
     this.drawerData = {
-      slotIndex,
+      gamblerId,
+      gamblerSnapshot: gambler,
       stage: 'bet',
       tier: null,
       pickedHand: null,
       outcome: null,
       rejected: false,
       rejectionReason: null,
+      walkedAway: false,
     };
 
     const drawerW = this.viewport.width - DRAWER_MARGIN_X * 2;
     const drawer = this.add.container(this.viewport.width / 2, this.drawerY);
 
-    // Slide-in: start below the screen and tween into place
     drawer.setAlpha(0);
     drawer.y = this.drawerY + 80;
 
@@ -528,15 +596,12 @@ export class GamblerStreetScene extends Phaser.Scene {
       .setStrokeStyle(2, COLORS.drawerBorder, 1);
     drawer.add(bg);
 
-    // Header (gambler name + sub-line + close button)
     this.drawerHeaderTitle = this.add.text(-drawerW / 2 + 24, -DRAWER_HEIGHT / 2 + 24, '', {
       fontSize: '20px', color: COLORS.textPrimary, fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0, 0);
     drawer.add(this.drawerHeaderTitle);
 
-    this.drawerHeaderSubtitle = this.add.text(-drawerW / 2 + 24, -DRAWER_HEIGHT / 2 + 50, '', {
-      fontSize: '13px', color: COLORS.textSecondary, fontFamily: 'monospace',
-    }).setOrigin(0, 0);
+    this.drawerHeaderSubtitle = this.add.container(-drawerW / 2 + 24, -DRAWER_HEIGHT / 2 + 50);
     drawer.add(this.drawerHeaderSubtitle);
 
     const closeBtn = this.add.text(drawerW / 2 - 18, -DRAWER_HEIGHT / 2 + 12, '✕', {
@@ -547,7 +612,6 @@ export class GamblerStreetScene extends Phaser.Scene {
     closeBtn.on('pointerdown', () => this.closeDrawer());
     drawer.add(closeBtn);
 
-    // Body container — holds stage-specific content. Crossfaded between stages.
     this.drawerBody = this.add.container(0, 14);
     drawer.add(this.drawerBody);
 
@@ -563,14 +627,15 @@ export class GamblerStreetScene extends Phaser.Scene {
     this.applyStallStates();
   }
 
-  private retargetDrawer(slotIndex: number): void {
+  private retargetDrawer(gamblerId: string): void {
     if (!this.drawerData) return;
     const state = GamblerStreetStore.get();
     if (!state) return;
-    const slot = state.slots[slotIndex];
-    if (!slot || slot.kind !== 'gambler') return;
+    const gambler = state.gamblers.find(g => g.id === gamblerId);
+    if (!gambler) return;
 
-    this.drawerData.slotIndex = slotIndex;
+    this.drawerData.gamblerId = gamblerId;
+    this.drawerData.gamblerSnapshot = gambler;
     this.drawerData.tier = null;
     this.drawerData.pickedHand = null;
     this.renderDrawerHeader();
@@ -585,12 +650,9 @@ export class GamblerStreetScene extends Phaser.Scene {
     this.drawerData = null;
     this.autoDismissTimer?.remove(false);
     this.autoDismissTimer = null;
+    this.walkedAwayCloseTimer?.remove(false);
+    this.walkedAwayCloseTimer = null;
 
-    // Pending bet-result once-handlers self-cancel via their drawerData
-    // identity guard — see `pickHand`. Removing all listeners here would
-    // clobber the global store-sync handler in NetworkManager.ts.
-
-    // Clean up any active confetti
     for (const e of this.confettiEmitters) e.destroy();
     this.confettiEmitters = [];
 
@@ -606,7 +668,6 @@ export class GamblerStreetScene extends Phaser.Scene {
     this.applyStallStates();
   }
 
-  /** Hard destroy — used in shutdown(). No animation. */
   private destroyDrawer(): void {
     if (this.drawer) {
       this.drawer.destroy();
@@ -620,37 +681,110 @@ export class GamblerStreetScene extends Phaser.Scene {
     this.confettiEmitters = [];
   }
 
+  /** Called whenever new state arrives — detects "watched gambler walked away".
+   *
+   * Only fires while the player still has a chance to bet (stages `bet` and
+   * `hand` before the hand is committed). Once the player has clicked a hand
+   * we hand control to the bet-result handler — the gambler is *expected* to
+   * vanish from state at that point because the server removes them on bet.
+   */
+  private updateDrawerForState(state: GamblerStreetState): void {
+    if (!this.drawerData) return;
+    if (this.drawerData.walkedAway) return;
+    // Reveal stage = a bet is in flight or already resolved. Server has likely
+    // removed the gambler from state; let `pickHand`'s once-handler render the
+    // outcome instead of falsely flagging "walked away".
+    if (this.drawerData.stage === 'reveal') return;
+    const exists = state.gamblers.some(g => g.id === this.drawerData!.gamblerId);
+    if (exists) return;
+
+    this.drawerData.walkedAway = true;
+    this.applyStallStates();
+    this.renderDrawerHeader();
+    this.renderDrawerBody();
+    this.walkedAwayCloseTimer?.remove(false);
+    this.walkedAwayCloseTimer = this.time.delayedCall(WALKED_AWAY_GRACE_MS, () => this.closeDrawer());
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
   // Drawer rendering
   // ───────────────────────────────────────────────────────────────────────────
 
-  private currentGamblerSlot(): GamblerSlot & { kind: 'gambler' } | null {
-    const data = this.drawerData;
+  private currentGambler(): Gambler | null {
+    if (!this.drawerData) return null;
     const state = GamblerStreetStore.get();
-    if (!data || !state) return null;
-    const slot = state.slots[data.slotIndex];
-    if (!slot || slot.kind !== 'gambler') return null;
-    return slot;
+    const live = state?.gamblers.find(g => g.id === this.drawerData!.gamblerId) ?? null;
+    return live ?? this.drawerData.gamblerSnapshot;
   }
 
   private renderDrawerHeader(): void {
-    const slot = this.currentGamblerSlot();
-    if (!slot || !this.drawerHeaderTitle || !this.drawerHeaderSubtitle) return;
-    const g = slot.gambler;
+    const gambler = this.currentGambler();
+    if (!gambler || !this.drawerHeaderTitle || !this.drawerHeaderSubtitle) return;
+    const data = this.drawerData!;
 
-    this.drawerHeaderTitle.setText(g.name);
-    const treasureName = TREASURE_DISPLAY_NAMES[g.treasureType];
-    const baseSubtitle = `wants ${g.treasureAmount} ${treasureName} · pays ${g.coinReward} coins on a win`;
-    if (this.drawerData?.tier) {
-      const cost = this.drawerData.tier === 'cheap'
-        ? g.treasureAmount * GAMBLER_STREET_GLOBAL.betTiers.cheap.costMultiplier
-        : g.treasureAmount * GAMBLER_STREET_GLOBAL.betTiers.premium.costMultiplier;
-      this.drawerHeaderSubtitle.setText(
-        `paid ${cost} ${treasureName} — which hand has the coins?`,
-      );
-    } else {
-      this.drawerHeaderSubtitle.setText(baseSubtitle);
+    this.drawerHeaderTitle.setText(gambler.name);
+
+    // Build the subtitle as a row of styled text + treasure icon segments
+    this.drawerHeaderSubtitle.removeAll(true);
+    const treasureName = TREASURE_DISPLAY_NAMES[gambler.treasureType];
+    let subtitleX = 0;
+
+    if (data.walkedAway) {
+      const t = this.add.text(subtitleX, 0, `${gambler.name} walked away.`, {
+        fontSize: '13px', color: COLORS.textLoss, fontFamily: 'monospace', fontStyle: 'italic',
+      }).setOrigin(0, 0);
+      this.drawerHeaderSubtitle.add(t);
+      return;
     }
+
+    if (data.tier) {
+      const cost = gambler.treasureAmount * GAMBLER_STREET_GLOBAL.betTiers[data.tier].costMultiplier;
+      const before = this.add.text(subtitleX, 0, `paid ${cost} `, {
+        fontSize: '13px', color: COLORS.textSecondary, fontFamily: 'monospace',
+      }).setOrigin(0, 0);
+      subtitleX += before.width;
+      this.drawerHeaderSubtitle.add(before);
+
+      const icon = this.add.image(subtitleX, 8, TREASURE_TEXTURE_KEY, treasureIconFrame(gambler.treasureType));
+      icon.setOrigin(0, 0.5).setDisplaySize(16, 16);
+      subtitleX += 18;
+      this.drawerHeaderSubtitle.add(icon);
+
+      const after = this.add.text(subtitleX, 0, `${treasureName} — which hand has the coins?`, {
+        fontSize: '13px', color: COLORS.textSecondary, fontFamily: 'monospace',
+      }).setOrigin(0, 0);
+      this.drawerHeaderSubtitle.add(after);
+      return;
+    }
+
+    // Default subtitle: "wants 12 [icon] Chalice · pays 6 coins (bold yellow) on a win"
+    const wantsLbl = this.add.text(subtitleX, 0, `wants ${gambler.treasureAmount} `, {
+      fontSize: '13px', color: COLORS.textSecondary, fontFamily: 'monospace',
+    }).setOrigin(0, 0);
+    subtitleX += wantsLbl.width;
+    this.drawerHeaderSubtitle.add(wantsLbl);
+
+    const icon = this.add.image(subtitleX, 8, TREASURE_TEXTURE_KEY, treasureIconFrame(gambler.treasureType));
+    icon.setOrigin(0, 0.5).setDisplaySize(16, 16);
+    subtitleX += 18;
+    this.drawerHeaderSubtitle.add(icon);
+
+    const between = this.add.text(subtitleX, 0, `${treasureName} · pays `, {
+      fontSize: '13px', color: COLORS.textSecondary, fontFamily: 'monospace',
+    }).setOrigin(0, 0);
+    subtitleX += between.width;
+    this.drawerHeaderSubtitle.add(between);
+
+    const coins = this.add.text(subtitleX, 0, `${gambler.coinReward} coins`, {
+      fontSize: '13px', color: COLORS.textCoin, fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0, 0);
+    subtitleX += coins.width;
+    this.drawerHeaderSubtitle.add(coins);
+
+    const tail = this.add.text(subtitleX, 0, ' on a win', {
+      fontSize: '13px', color: COLORS.textSecondary, fontFamily: 'monospace',
+    }).setOrigin(0, 0);
+    this.drawerHeaderSubtitle.add(tail);
   }
 
   private renderDrawerBody(): void {
@@ -658,12 +792,13 @@ export class GamblerStreetScene extends Phaser.Scene {
     const body = this.drawerBody;
     const oldChildren = body.list.slice();
 
-    // Build new content first, then crossfade
     const fresh = this.add.container(0, 0);
     fresh.setAlpha(0);
     body.add(fresh);
 
-    if (this.drawerData.stage === 'bet') {
+    if (this.drawerData.walkedAway) {
+      this.buildWalkedAwayStage(fresh);
+    } else if (this.drawerData.stage === 'bet') {
       this.buildBetStage(fresh);
     } else if (this.drawerData.stage === 'hand') {
       this.buildHandStage(fresh);
@@ -676,7 +811,6 @@ export class GamblerStreetScene extends Phaser.Scene {
       return;
     }
 
-    // Crossfade
     this.tweens.add({
       targets: fresh, alpha: 1,
       duration: STAGE_CROSSFADE_MS, ease: 'Linear',
@@ -690,20 +824,35 @@ export class GamblerStreetScene extends Phaser.Scene {
     });
   }
 
+  private buildWalkedAwayStage(parent: Phaser.GameObjects.Container): void {
+    const gambler = this.currentGambler();
+    if (!gambler) return;
+    const txt = this.add.text(0, 60,
+      `${gambler.name} walked away before you placed a bet.`,
+      {
+        fontSize: '16px', color: COLORS.textLoss, fontFamily: 'monospace',
+      }).setOrigin(0.5);
+    parent.add(txt);
+
+    const sub = this.add.text(0, 92, 'better luck next time, chum.', {
+      fontSize: '12px', color: COLORS.textMuted, fontFamily: 'monospace', fontStyle: 'italic',
+    }).setOrigin(0.5);
+    parent.add(sub);
+  }
+
   private buildBetStage(parent: Phaser.GameObjects.Container): void {
-    const slot = this.currentGamblerSlot();
-    if (!slot) return;
-    const g = slot.gambler;
+    const gambler = this.currentGambler();
+    if (!gambler) return;
     const profile = ProfileStore.get();
-    const owned = profile?.treasures[g.treasureType] ?? 0;
+    const owned = profile?.treasures[gambler.treasureType] ?? 0;
 
     const cheap = GAMBLER_STREET_GLOBAL.betTiers.cheap;
     const premium = GAMBLER_STREET_GLOBAL.betTiers.premium;
-    const cheapCost = g.treasureAmount * cheap.costMultiplier;
-    const premiumCost = g.treasureAmount * premium.costMultiplier;
+    const cheapCost = gambler.treasureAmount * cheap.costMultiplier;
+    const premiumCost = gambler.treasureAmount * premium.costMultiplier;
     const canCheap = owned >= cheapCost;
     const canPremium = owned >= premiumCost;
-    const treasureName = TREASURE_DISPLAY_NAMES[g.treasureType];
+    const treasureName = TREASURE_DISPLAY_NAMES[gambler.treasureType];
 
     const cardW = 320;
     const cardH = 170;
@@ -713,9 +862,9 @@ export class GamblerStreetScene extends Phaser.Scene {
       -cardW / 2 - gap / 2, 30,
       cardW, cardH,
       'Cheap',
-      cheapCost, treasureName, g.treasureType,
-      cheap.winChance, g.coinReward,
-      '2 min cooldown after',
+      cheapCost, treasureName, gambler.treasureType,
+      cheap.winChance, gambler.coinReward,
+      '2–6s before the next gambler',
       canCheap, COLORS.btnPrimary, COLORS.btnPrimaryHover,
       () => this.pickTier('cheap'),
     );
@@ -723,8 +872,8 @@ export class GamblerStreetScene extends Phaser.Scene {
       cardW / 2 + gap / 2, 30,
       cardW, cardH,
       'Premium',
-      premiumCost, treasureName, g.treasureType,
-      premium.winChance, g.coinReward,
+      premiumCost, treasureName, gambler.treasureType,
+      premium.winChance, gambler.coinReward,
       'safer odds, same prize',
       canPremium, COLORS.btnDanger, COLORS.btnDangerHover,
       () => this.pickTier('premium'),
@@ -761,7 +910,7 @@ export class GamblerStreetScene extends Phaser.Scene {
     }).setOrigin(0.5);
     c.add(tier);
 
-    // Cost line: "{N} {icon}"
+    // Cost line: "{N} [icon] Treasure"
     const costText = this.add.text(-12, -h / 2 + 50, String(cost), {
       fontSize: '28px', color: enabled ? COLORS.textCoin : COLORS.textDisabled,
       fontFamily: 'monospace', fontStyle: 'bold',
@@ -776,13 +925,12 @@ export class GamblerStreetScene extends Phaser.Scene {
     }).setOrigin(0, 0.5);
     c.add(costLabel);
 
-    // Win chance line
     const chanceText = this.add.text(0, 0, `${Math.round(winChance * 100)}% chance`, {
       fontSize: '16px', color: enabled ? COLORS.textPrimary : COLORS.textDisabled, fontFamily: 'monospace',
     }).setOrigin(0.5);
     c.add(chanceText);
 
-    // Reward + footer
+    // "{N} coins on win" — coins bold yellow
     const reward = this.add.text(0, h / 2 - 38, `${coinReward} coins on win`, {
       fontSize: '13px', color: enabled ? COLORS.textCoin : COLORS.textDisabled,
       fontFamily: 'monospace', fontStyle: 'bold',
@@ -807,9 +955,6 @@ export class GamblerStreetScene extends Phaser.Scene {
   }
 
   private buildHandStage(parent: Phaser.GameObjects.Container): void {
-    const slot = this.currentGamblerSlot();
-    if (!slot) return;
-
     const handsY = 30;
     const handGap = 220;
     const left = this.buildHandPicker(-handGap / 2, handsY, 'left', false);
@@ -834,9 +979,9 @@ export class GamblerStreetScene extends Phaser.Scene {
       .setStrokeStyle(1, COLORS.cardBorder, 1);
     c.add(bg);
 
-    const hand_g = this.add.graphics();
-    drawHand(hand_g, COLORS.textBlue);
-    const handHolder = this.add.container(0, -10, [hand_g]);
+    const handG = this.add.graphics();
+    drawHand(handG, COLORS.textBlue);
+    const handHolder = this.add.container(0, -10, [handG]);
     if (mirror) handHolder.setScale(-1, 1);
     c.add(handHolder);
 
@@ -875,7 +1020,6 @@ export class GamblerStreetScene extends Phaser.Scene {
     }
 
     if (!data.outcome) {
-      // Shouldn't happen, but guard anyway
       const txt = this.add.text(0, 60, 'Rolling…', {
         fontSize: '20px', color: COLORS.textSecondary, fontFamily: 'monospace',
       }).setOrigin(0.5);
@@ -884,8 +1028,7 @@ export class GamblerStreetScene extends Phaser.Scene {
     }
 
     const outcome = data.outcome;
-    const slot = this.currentGamblerSlot();
-    const treasureName = slot ? TREASURE_DISPLAY_NAMES[outcome.treasureType] : '';
+    const treasureName = TREASURE_DISPLAY_NAMES[outcome.treasureType];
 
     // Left: chosen hand opening with/without coin
     const handFrameW = 220;
@@ -896,9 +1039,9 @@ export class GamblerStreetScene extends Phaser.Scene {
       .setStrokeStyle(2, outcome.won ? 0x44ff88 : 0xff6644, 1);
     handFrame.add(frameBg);
 
-    const hand_g = this.add.graphics();
-    drawHand(hand_g, outcome.won ? COLORS.textWin : COLORS.textLoss);
-    const handHolder = this.add.container(0, -10, [hand_g]);
+    const handG = this.add.graphics();
+    drawHand(handG, outcome.won ? COLORS.textWin : COLORS.textLoss);
+    const handHolder = this.add.container(0, -10, [handG]);
     if (data.pickedHand === 'right') handHolder.setScale(-1, 1);
     handFrame.add(handHolder);
 
@@ -908,13 +1051,13 @@ export class GamblerStreetScene extends Phaser.Scene {
       }).setOrigin(0.5);
       handFrame.add(coin);
       const coinLbl = this.add.text(0, 60, 'coins', {
-        fontSize: '12px', color: COLORS.textCoin, fontFamily: 'monospace',
+        fontSize: '12px', color: COLORS.textCoin, fontFamily: 'monospace', fontStyle: 'bold',
       }).setOrigin(0.5);
       handFrame.add(coinLbl);
     }
     parent.add(handFrame);
 
-    // Right: result text — anchored to the same vertical center as the hand frame
+    // Right: result text
     const textX = handFrameW / 2 + 24 - handFrameW / 2;
     const textContainer = this.add.container(textX, 30);
     const headline = outcome.won ? 'Fortune smiles!' : 'Empty hand';
@@ -924,17 +1067,52 @@ export class GamblerStreetScene extends Phaser.Scene {
     }).setOrigin(0, 0.5);
     textContainer.add(headlineText);
 
-    const bodyCopy = outcome.won
-      ? `the ${outcome.correctHand} hand held the prize.\n+${outcome.coinsGained} coins added to your purse.`
-      : `the prize was in the ${outcome.correctHand} hand.\nyou lost ${outcome.treasurePaid} ${treasureName}.`;
-    const bodyText = this.add.text(0, 26, bodyCopy, {
-      fontSize: '13px', color: COLORS.textSecondary, fontFamily: 'monospace',
-      lineSpacing: 4, wordWrap: { width: 280 },
-    }).setOrigin(0, 0);
-    textContainer.add(bodyText);
+    if (outcome.won) {
+      // "the {correctHand} hand held the prize."
+      const line1 = this.add.text(0, 22, `the ${outcome.correctHand} hand held the prize.`, {
+        fontSize: '13px', color: COLORS.textSecondary, fontFamily: 'monospace',
+      }).setOrigin(0, 0);
+      textContainer.add(line1);
+
+      // "+{N} coins added to your purse." — coins bold yellow
+      const plusText = this.add.text(0, 46, `+${outcome.coinsGained} coins`, {
+        fontSize: '13px', color: COLORS.textCoin, fontFamily: 'monospace', fontStyle: 'bold',
+      }).setOrigin(0, 0);
+      textContainer.add(plusText);
+      const tail = this.add.text(plusText.width, 46, ' added to your purse.', {
+        fontSize: '13px', color: COLORS.textSecondary, fontFamily: 'monospace',
+      }).setOrigin(0, 0);
+      textContainer.add(tail);
+    } else {
+      // "the {correctHand} hand had the coins. you lost {N} [icon] {treasure}."
+      const line1Prefix = this.add.text(0, 22, `the ${outcome.correctHand} hand had the `, {
+        fontSize: '13px', color: COLORS.textSecondary, fontFamily: 'monospace',
+      }).setOrigin(0, 0);
+      textContainer.add(line1Prefix);
+      const line1Coins = this.add.text(line1Prefix.width, 22, 'coins', {
+        fontSize: '13px', color: COLORS.textCoin, fontFamily: 'monospace', fontStyle: 'bold',
+      }).setOrigin(0, 0);
+      textContainer.add(line1Coins);
+      const line1Tail = this.add.text(line1Prefix.width + line1Coins.width, 22, '.', {
+        fontSize: '13px', color: COLORS.textSecondary, fontFamily: 'monospace',
+      }).setOrigin(0, 0);
+      textContainer.add(line1Tail);
+
+      // "you lost {N} [icon] Treasure"
+      const line2Prefix = this.add.text(0, 46, `you lost ${outcome.treasurePaid} `, {
+        fontSize: '13px', color: COLORS.textSecondary, fontFamily: 'monospace',
+      }).setOrigin(0, 0);
+      textContainer.add(line2Prefix);
+      const lossIcon = this.add.image(line2Prefix.width, 46 + 8, TREASURE_TEXTURE_KEY, treasureIconFrame(outcome.treasureType));
+      lossIcon.setOrigin(0, 0.5).setDisplaySize(16, 16);
+      textContainer.add(lossIcon);
+      const line2Tail = this.add.text(line2Prefix.width + 18, 46, ` ${treasureName}.`, {
+        fontSize: '13px', color: COLORS.textSecondary, fontFamily: 'monospace',
+      }).setOrigin(0, 0);
+      textContainer.add(line2Tail);
+    }
     parent.add(textContainer);
 
-    // Done button
     const doneBtn = this.add.text(0, 130, '[ DONE ]', {
       fontSize: '16px', color: COLORS.textBlue, fontFamily: 'monospace', fontStyle: 'bold',
       backgroundColor: '#222244', padding: { x: 18, y: 8 },
@@ -944,7 +1122,6 @@ export class GamblerStreetScene extends Phaser.Scene {
     doneBtn.on('pointerdown', () => this.closeDrawer());
     parent.add(doneBtn);
 
-    // Confetti — scaled down to fit the drawer reveal frame (D2)
     this.fireConfetti(outcome.won ? 'gold' : 'grey');
   }
 
@@ -953,7 +1130,7 @@ export class GamblerStreetScene extends Phaser.Scene {
   // ───────────────────────────────────────────────────────────────────────────
 
   private pickTier(tier: BetTier): void {
-    if (!this.drawerData || this.drawerData.stage !== 'bet') return;
+    if (!this.drawerData || this.drawerData.stage !== 'bet' || this.drawerData.walkedAway) return;
     this.drawerData.tier = tier;
     this.drawerData.stage = 'hand';
     this.renderDrawerHeader();
@@ -962,22 +1139,33 @@ export class GamblerStreetScene extends Phaser.Scene {
   }
 
   private pickHand(hand: 'left' | 'right'): void {
-    if (!this.drawerData || this.drawerData.stage !== 'hand') return;
+    if (!this.drawerData || this.drawerData.stage !== 'hand' || this.drawerData.walkedAway) return;
     if (!this.drawerData.tier) return;
-    const slotIndex = this.drawerData.slotIndex;
-    const tier = this.drawerData.tier;
 
+    // Resolve current slotIndex from the live state — the gambler may have
+    // shifted left after another gambler expired between drawer-open and now.
+    const state = GamblerStreetStore.get();
+    const slotIndex = state?.gamblers.findIndex(g => g.id === this.drawerData!.gamblerId) ?? -1;
+    if (slotIndex < 0) {
+      // Gambler vanished between opening the drawer and clicking a hand —
+      // shouldn't normally happen because walkedAway should have caught it,
+      // but be defensive.
+      this.drawerData.walkedAway = true;
+      this.renderDrawerHeader();
+      this.renderDrawerBody();
+      this.walkedAwayCloseTimer?.remove(false);
+      this.walkedAwayCloseTimer = this.time.delayedCall(WALKED_AWAY_GRACE_MS, () => this.closeDrawer());
+      return;
+    }
+
+    const tier = this.drawerData.tier;
     this.drawerData.pickedHand = hand;
     this.drawerData.stage = 'reveal';
 
-    // Capture the current drawer-data reference so the response handler can
-    // detect a stale callback (drawer cancelled, or a new drawer opened) and
-    // no-op cleanly. The global store-sync handler in NetworkManager.ts still
-    // updates state independently of this one.
     const myData = this.drawerData;
     const socket = NetworkManager.getSocket();
     socket.once('gambler_street_bet_result', (msg: GamblerStreetBetResultMsg) => {
-      if (this.drawerData !== myData) return; // drawer closed or replaced
+      if (this.drawerData !== myData) return;
       if (msg.ok && msg.outcome) {
         myData.outcome = msg.outcome;
       } else {
@@ -992,7 +1180,6 @@ export class GamblerStreetScene extends Phaser.Scene {
     NetworkManager.track('gambler_street_bet', 'gambler_street_bet_result');
     socket.emit('gambler_street_bet', { slotIndex, tier, pickedHand: hand });
 
-    // Show "Rolling…" until the response arrives
     this.renderDrawerBody();
     this.applyStallStates();
   }
@@ -1003,7 +1190,7 @@ export class GamblerStreetScene extends Phaser.Scene {
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // Confetti (scaled down from the popup version per D2)
+  // Confetti (scaled down to fit the drawer reveal frame)
   // ───────────────────────────────────────────────────────────────────────────
 
   private fireConfetti(palette: 'gold' | 'grey'): void {
@@ -1011,12 +1198,11 @@ export class GamblerStreetScene extends Phaser.Scene {
       ? [0xffd944, 0xffaa44, 0xffe88a, 0xc4a566, 0xffe4a0, 0xff8844]
       : [0xaaaaaa, 0x888888, 0x666666, 0x555555, 0x444444];
 
-    // Bursts originate from the drawer's left/right edges
     const drawerW = this.viewport.width - DRAWER_MARGIN_X * 2;
     const burstY = this.drawerY;
     const leftX = this.viewport.width / 2 - drawerW / 2;
     const rightX = this.viewport.width / 2 + drawerW / 2;
-    const burstCount = 18; // half the popup version
+    const burstCount = 18;
 
     const baseConfig = {
       lifespan: 1200,
@@ -1054,27 +1240,18 @@ export class GamblerStreetScene extends Phaser.Scene {
 // Helpers — pure functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Format a remaining-ms value as MM:SS. Negative values render as 0:00. */
 function formatCountdown(remainingMs: number): string {
-  const totalSec = Math.max(0, Math.floor(remainingMs / 1000));
+  const totalSec = Math.max(0, Math.ceil(remainingMs / 1000));
   const mm = Math.floor(totalSec / 60);
   const ss = totalSec % 60;
   return `${mm}:${ss.toString().padStart(2, '0')}`;
 }
 
-/** Truncate to `maxChars`, appending `…`. */
 function ellipsize(s: string, maxChars: number): string {
   if (s.length <= maxChars) return s;
   return s.slice(0, Math.max(0, maxChars - 1)) + '…';
 }
 
-/**
- * Deterministic per-id tint for tutorial_guy. Same vivid pastel range used by
- * BombermanShopService.rollBomberman: high saturation, high lightness so the
- * sprite reads as a character against the dark stall background. Hue + sat +
- * lightness all derived from a stable FNV-1a hash of the id so the same
- * gambler always gets the same color.
- */
 function tintForGamblerId(id: string): number {
   let h = 0x811c9dc5 | 0;
   for (let i = 0; i < id.length; i++) {
@@ -1106,71 +1283,26 @@ function hslToRgb(h: number, s: number, l: number): number {
 }
 
 /**
- * Draw a stylized hourglass into the supplied Graphics object, anchored at
- * (0, 0) with the timer roughly 28×40. Used for cooldown stalls — no sprite
- * asset for this exists in `public/sprites/`.
- */
-function drawHourglass(g: Phaser.GameObjects.Graphics, colorHex: string): void {
-  const color = Phaser.Display.Color.HexStringToColor(colorHex).color;
-  g.lineStyle(2, color, 1);
-  // Outline
-  g.strokeRect(-14, -20, 28, 4); // top cap
-  g.strokeRect(-14, 16, 28, 4);  // bottom cap
-  g.beginPath();
-  g.moveTo(-12, -16);
-  g.lineTo(12, -16);
-  g.lineTo(-12, 16);
-  g.lineTo(12, 16);
-  g.lineTo(-12, -16);
-  g.strokePath();
-  // Sand (top half — partial fill)
-  g.fillStyle(color, 0.6);
-  g.beginPath();
-  g.moveTo(-10, -14);
-  g.lineTo(10, -14);
-  g.lineTo(2, -2);
-  g.lineTo(-2, -2);
-  g.closePath();
-  g.fillPath();
-  // Sand falling
-  g.fillRect(-1, -2, 2, 6);
-  // Sand (bottom heap)
-  g.beginPath();
-  g.moveTo(-8, 14);
-  g.lineTo(8, 14);
-  g.lineTo(2, 8);
-  g.lineTo(-2, 8);
-  g.closePath();
-  g.fillPath();
-}
-
-/**
- * Draw a stylized hand silhouette into the supplied Graphics object, palm
- * pointing up. Origin at (0, 0); palm centred horizontally and roughly the
- * vertical centre. Mirror by setting `setScale(-1, 1)` on the parent
- * container — this draws the "left" hand orientation.
+ * Draw a stylized hand silhouette with palm pointing up. Mirror by setting
+ * `setScale(-1, 1)` on the parent container to flip into the right-hand pose.
  */
 function drawHand(g: Phaser.GameObjects.Graphics, colorHex: string): void {
   const color = Phaser.Display.Color.HexStringToColor(colorHex).color;
   g.lineStyle(2, color, 1);
   g.fillStyle(color, 0.18);
 
-  // Palm
   g.fillRoundedRect(-26, -20, 52, 64, 10);
   g.strokeRoundedRect(-26, -20, 52, 64, 10);
 
-  // Four fingers (top of palm)
   for (let i = 0; i < 4; i++) {
     const x = -22 + i * 12;
     g.fillRoundedRect(x, -56, 9, 38, 4);
     g.strokeRoundedRect(x, -56, 9, 38, 4);
   }
 
-  // Thumb (left side) — drawing the "left hand" view
   g.fillRoundedRect(-38, -8, 14, 32, 6);
   g.strokeRoundedRect(-38, -8, 14, 32, 6);
 
-  // Wrist hint
   g.lineStyle(2, color, 0.6);
   g.strokeRoundedRect(-18, 44, 36, 10, 4);
 }

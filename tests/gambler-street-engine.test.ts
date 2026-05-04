@@ -23,7 +23,7 @@ function freshState(): GamblerStreetState {
 }
 
 describe('tickGamblerStreet', () => {
-  it('fills all 5 slots with gamblers on first tick from empty state', () => {
+  it('test_engine_tick_first_tick_from_empty_fills_all_gamblers', () => {
     // Arrange
     const state = freshState();
     const treasures: TreasureBundle = { fish: 100 };
@@ -33,26 +33,22 @@ describe('tickGamblerStreet', () => {
     const next = tickGamblerStreet(state, treasures, NOW + 1, rng);
 
     // Assert
-    expect(next.slots).toHaveLength(GAMBLER_STREET_GLOBAL.slotCount);
-    for (const slot of next.slots) {
-      expect(slot.kind).toBe('gambler');
-    }
+    expect(next.gamblers).toHaveLength(GAMBLER_STREET_GLOBAL.slotCount);
+    expect(next.pendingArrivals).toHaveLength(0);
   });
 
-  it('respects max-per-treasure-type cap when generating', () => {
-    // Arrange — force 5 slots ready to fill, all at NOW.
+  it('test_engine_tick_respects_max_per_treasure_type_cap', () => {
+    // Arrange
     const state = freshState();
     const treasures: TreasureBundle = { fish: 1000 };
 
-    // Act — generate many times with different seeds; cap must hold every time.
+    // Act + Assert across many seeds
     for (let seed = 1; seed <= 50; seed++) {
       const rng = createSeededRandom(seed);
       const next = tickGamblerStreet(state, treasures, NOW + 1, rng);
       const counts: Record<string, number> = {};
-      for (const slot of next.slots) {
-        if (slot.kind !== 'gambler') continue;
-        const t = slot.gambler.treasureType;
-        counts[t] = (counts[t] ?? 0) + 1;
+      for (const g of next.gamblers) {
+        counts[g.treasureType] = (counts[g.treasureType] ?? 0) + 1;
       }
       for (const [type, n] of Object.entries(counts)) {
         expect(
@@ -63,49 +59,98 @@ describe('tickGamblerStreet', () => {
     }
   });
 
-  it('does not regenerate gamblers whose lifespan has not yet elapsed', () => {
-    // Arrange — populate the street, then tick again 100ms later.
+  it('test_engine_tick_initial_gamblers_are_staggered_by_minStaggerMs', () => {
+    // Arrange
     const state = freshState();
-    const treasures: TreasureBundle = {};
-    const rng = createSeededRandom(123);
-    const populated = tickGamblerStreet(state, treasures, NOW + 1, rng);
-    const idsBefore = populated.slots.map((s) => (s.kind === 'gambler' ? s.gambler.id : ''));
+    const rng = createSeededRandom(7);
 
     // Act
-    const later = tickGamblerStreet(populated, treasures, NOW + 100, rng);
-    const idsAfter = later.slots.map((s) => (s.kind === 'gambler' ? s.gambler.id : ''));
+    const next = tickGamblerStreet(state, {}, NOW + 1, rng);
 
-    // Assert
-    expect(idsAfter).toEqual(idsBefore);
+    // Assert — adjacent gamblers' expiries differ by >= minStaggerMs.
+    for (let i = 1; i < next.gamblers.length; i++) {
+      const delta = next.gamblers[i].expiresAt - next.gamblers[i - 1].expiresAt;
+      expect(delta).toBeGreaterThanOrEqual(GAMBLER_STREET_GLOBAL.minStaggerMs);
+    }
   });
 
-  it('expires gamblers past their lifespan and replaces them after expiryCooldownMs', () => {
-    // Arrange — populate, then advance well past the longest lifespan.
+  it('test_engine_tick_does_not_regenerate_gamblers_whose_lifespan_has_not_elapsed', () => {
+    // Arrange
+    const state = freshState();
+    const rng = createSeededRandom(123);
+    const populated = tickGamblerStreet(state, {}, NOW + 1, rng);
+    const idsBefore = populated.gamblers.map(g => g.id);
+
+    // Act — tick again 100ms later, well within all gamblers' lifespans.
+    const later = tickGamblerStreet(populated, {}, NOW + 100, rng);
+
+    // Assert
+    expect(later.gamblers.map(g => g.id)).toEqual(idsBefore);
+  });
+
+  it('test_engine_tick_removes_expired_gambler_and_queues_pending_arrival', () => {
+    // Arrange
     const state = freshState();
     const rng = createSeededRandom(7);
     const populated = tickGamblerStreet(state, {}, NOW + 1, rng);
-    const longestLifespan = GAMBLER_STREET_GLOBAL.lifespanRangeMs[1];
+    const leftmostExpiry = populated.gamblers[0].expiresAt;
 
-    // Act — advance to right after expiry but before the cooldown elapses.
-    const justAfterExpiry = tickGamblerStreet(populated, {}, NOW + longestLifespan + 1, rng);
-    // All slots should now be cooldown (no replacement yet).
-    expect(justAfterExpiry.slots.every((s) => s.kind === 'cooldown')).toBe(true);
+    // Act — advance to just after the leftmost gambler's expiry but before
+    //       the respawn cooldown could elapse.
+    const minRespawn = GAMBLER_STREET_GLOBAL.respawnDelayRangeMs[0];
+    const justAfter = tickGamblerStreet(populated, {}, leftmostExpiry + 1, rng);
 
-    // Advance past the expiry cooldown — slots should be filled again.
-    const afterCooldown = tickGamblerStreet(
-      justAfterExpiry,
-      {},
-      NOW + longestLifespan + GAMBLER_STREET_GLOBAL.expiryCooldownMs + 100,
+    // Assert — leftmost is gone; one pending arrival queued for ~now+respawn.
+    expect(justAfter.gamblers).toHaveLength(GAMBLER_STREET_GLOBAL.slotCount - 1);
+    expect(justAfter.pendingArrivals).toHaveLength(1);
+    expect(justAfter.pendingArrivals[0]).toBeGreaterThanOrEqual(leftmostExpiry + minRespawn);
+  });
+
+  it('test_engine_tick_respawn_arrives_at_right_end_after_delay', () => {
+    // Arrange
+    const state = freshState();
+    const rng = createSeededRandom(7);
+    const populated = tickGamblerStreet(state, {}, NOW + 1, rng);
+    const leftmostExpiry = populated.gamblers[0].expiresAt;
+
+    // Act — advance well past expiry + max respawn delay.
+    const wayAfter = tickGamblerStreet(
+      populated, {},
+      leftmostExpiry + GAMBLER_STREET_GLOBAL.respawnDelayRangeMs[1] + 100,
       rng,
     );
-    expect(afterCooldown.slots.every((s) => s.kind === 'gambler')).toBe(true);
+
+    // Assert — back to full count, fresh gambler at the right end.
+    expect(wayAfter.gamblers).toHaveLength(GAMBLER_STREET_GLOBAL.slotCount);
+    expect(wayAfter.pendingArrivals).toHaveLength(0);
+    // The new rightmost did not exist in the previous populated state.
+    const previousIds = new Set(populated.gamblers.map(g => g.id));
+    const newRightmost = wayAfter.gamblers[wayAfter.gamblers.length - 1];
+    expect(previousIds.has(newRightmost.id)).toBe(false);
+  });
+
+  it('test_engine_tick_offline_aging_still_produces_full_carousel', () => {
+    // Arrange
+    const state = freshState();
+    const rng = createSeededRandom(99);
+    const populated = tickGamblerStreet(state, {}, NOW + 1, rng);
+
+    // Act — simulate the player being offline for an hour. Many remove/respawn
+    //       cycles should have happened.
+    const oneHourLater = NOW + 60 * 60_000;
+    const aged = tickGamblerStreet(populated, {}, oneHourLater, rng);
+
+    // Assert — carousel is fully stocked with fresh gamblers, no leftovers.
+    expect(aged.gamblers).toHaveLength(GAMBLER_STREET_GLOBAL.slotCount);
+    for (const g of aged.gamblers) {
+      expect(g.expiresAt).toBeGreaterThan(oneHourLater);
+    }
   });
 });
 
 describe('computeAskAmount', () => {
-  it('uses the absolute floor range when player owns less than threshold', () => {
+  it('test_compute_ask_amount_uses_absolute_floor_when_owned_below_threshold', () => {
     // Arrange — fish: minAmountRange=[20,100], threshold=50, round=5.
-    const rng = createSeededRandom(1);
     const tuning = GAMBLER_TREASURE_TUNING.fish;
 
     // Act + Assert across several seeds
@@ -116,26 +161,22 @@ describe('computeAskAmount', () => {
       expect(amount).toBeLessThanOrEqual(tuning.minAmountRange[1]);
       expect(amount % tuning.roundAmountTo).toBe(0);
     }
-    // Suppress unused var warning for `rng`.
-    void rng;
   });
 
-  it('uses the percentage range when player owns at or above threshold', () => {
-    // Arrange — owned=500 fish, percentage range = [0.10, 0.30] → asks for 50..150.
+  it('test_compute_ask_amount_uses_percentage_when_owned_at_or_above_threshold', () => {
+    // Arrange — owned=500 fish, percentage range = [0.10, 0.30] → asks 50..150.
     for (let s = 0; s < 50; s++) {
       const r = createSeededRandom(s);
       const amount = computeAskAmount('fish', 500, r);
-      // Asked amount is a % of 500 in the 10–30% range, rounded to 5.
       expect(amount).toBeGreaterThanOrEqual(50);
       expect(amount).toBeLessThanOrEqual(150);
       expect(amount % 5).toBe(0);
     }
   });
 
-  it('floors at the absolute minimum even if percentage rounding would go lower', () => {
-    // Arrange — at threshold-1 the absolute branch fires; at exactly threshold
-    // the percentage branch fires. With small owned counts the rounding could
-    // produce a value below minAbs without the floor.
+  it('test_compute_ask_amount_floors_at_minimum_even_when_percentage_rounds_lower', () => {
+    // Arrange — at threshold-1 absolute branch fires; at threshold percentage
+    // branch fires. Small owned counts could round below minAbs without floor.
     for (let s = 0; s < 30; s++) {
       const r = createSeededRandom(s);
       const amount = computeAskAmount('amulets', 21, r); // amulets threshold=20
@@ -145,12 +186,13 @@ describe('computeAskAmount', () => {
 });
 
 describe('generateGambler', () => {
-  it('produces a Gambler with consistent fields and matching coin reward', () => {
+  it('test_generate_gambler_produces_valid_gambler_with_matching_coin_reward', () => {
     // Arrange
     const rng = createSeededRandom(42);
+    const earliestExpiry = NOW + GAMBLER_STREET_GLOBAL.lifespanRangeMs[0];
 
     // Act
-    const g = generateGambler({ fish: 200 }, {}, NOW, 1, rng);
+    const g = generateGambler({ fish: 200 }, {}, NOW, earliestExpiry, 1, rng);
 
     // Assert
     expect(g.id).toMatch(/^g_/);
@@ -158,8 +200,20 @@ describe('generateGambler', () => {
     expect(g.treasureAmount).toBeGreaterThan(0);
     expect(g.coinReward).toBeGreaterThanOrEqual(0);
     expect(g.expiresAt).toBeGreaterThan(g.createdAt);
-    expect(g.expiresAt - g.createdAt).toBeGreaterThanOrEqual(GAMBLER_STREET_GLOBAL.lifespanRangeMs[0]);
-    expect(g.expiresAt - g.createdAt).toBeLessThan(GAMBLER_STREET_GLOBAL.lifespanRangeMs[1]);
+    expect(g.expiresAt).toBeGreaterThanOrEqual(earliestExpiry);
+  });
+
+  it('test_generate_gambler_clamps_expiry_up_to_earliest_floor', () => {
+    // Arrange — set a floor far beyond what a natural lifespan would produce.
+    // The generator must clamp up so the staggered carousel invariant holds.
+    const rng = createSeededRandom(42);
+    const farFloor = NOW + 10 * 60_000; // 10 minutes — well beyond 30-60s lifespan
+
+    // Act
+    const g = generateGambler({}, {}, NOW, farFloor, 1, rng);
+
+    // Assert
+    expect(g.expiresAt).toBe(farFloor);
   });
 });
 
@@ -167,24 +221,32 @@ describe('resolveBet', () => {
   function gamblerStateWithSingleSlot(): { state: GamblerStreetState; rng: () => number } {
     const state = freshState();
     const rng = createSeededRandom(12345);
-    const populated = tickGamblerStreet(state, { fish: 1000, amulets: 50, chalice: 100, jade: 100, books: 100, coffee: 100, grapes: 100, lanterns: 100, bones: 100, mushrooms: 100 }, NOW + 1, rng);
+    const populated = tickGamblerStreet(
+      state,
+      { fish: 1000, amulets: 50, chalice: 100, jade: 100, books: 100, coffee: 100, grapes: 100, lanterns: 100, bones: 100, mushrooms: 100 },
+      NOW + 1,
+      rng,
+    );
     return { state: populated, rng };
   }
 
-  it('refuses bets on cooldown slots', () => {
-    const state = freshState(); // all slots are cooldown
+  it('test_resolve_bet_refuses_invalid_slot_when_no_gamblers', () => {
+    // Arrange
+    const state = freshState(); // no active gamblers yet
     const rng = createSeededRandom(1);
+
+    // Act
     const result = resolveBet(state, {}, 0, 'cheap', 'left', NOW, rng);
+
+    // Assert
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('no_gambler');
+    if (!result.ok) expect(result.reason).toBe('invalid_slot');
   });
 
-  it('refuses bets when treasure is insufficient', () => {
+  it('test_resolve_bet_refuses_when_treasure_insufficient', () => {
     // Arrange
     const { state, rng } = gamblerStateWithSingleSlot();
-    const slot0 = state.slots[0];
-    if (slot0.kind !== 'gambler') throw new Error('test setup failed');
-    const profile: TreasureBundle = {}; // owns nothing of any type
+    const profile: TreasureBundle = {};
 
     // Act
     const result = resolveBet(state, profile, 0, 'cheap', 'left', NOW + 2, rng);
@@ -194,34 +256,32 @@ describe('resolveBet', () => {
     if (!result.ok) expect(result.reason).toBe('insufficient_treasure');
   });
 
-  it('produces a winning outcome with correctHand=picked when rng rolls below winChance', () => {
-    // Arrange — force the next rng to return 0.0 so any winChance > 0 is a win.
+  it('test_resolve_bet_winning_outcome_has_correctHand_equals_picked', () => {
+    // Arrange — force rng to return 0.0 so any winChance > 0 is a win.
     const { state } = gamblerStateWithSingleSlot();
-    const slot0 = state.slots[0];
-    if (slot0.kind !== 'gambler') throw new Error('test setup failed');
-    const profile: TreasureBundle = { [slot0.gambler.treasureType]: 10_000 };
-    const cheapRng = (): number => 0.0;
+    const gambler = state.gamblers[0];
+    const profile: TreasureBundle = { [gambler.treasureType]: 10_000 };
+    const winningRng = (): number => 0.0;
 
     // Act
-    const result = resolveBet(state, profile, 0, 'cheap', 'left', NOW + 2, cheapRng);
+    const result = resolveBet(state, profile, 0, 'cheap', 'left', NOW + 2, winningRng);
 
     // Assert
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.outcome.won).toBe(true);
       expect(result.outcome.correctHand).toBe('left');
-      expect(result.outcome.coinsGained).toBe(slot0.gambler.coinReward);
-      expect(result.outcome.treasurePaid).toBe(slot0.gambler.treasureAmount);
-      expect(result.nextSlot.kind).toBe('cooldown');
+      expect(result.outcome.coinsGained).toBe(gambler.coinReward);
+      expect(result.outcome.treasurePaid).toBe(gambler.treasureAmount);
+      expect(result.respawnAt).toBeGreaterThanOrEqual(NOW + 2 + GAMBLER_STREET_GLOBAL.respawnDelayRangeMs[0]);
     }
   });
 
-  it('produces a losing outcome with correctHand=other when rng rolls above winChance', () => {
-    // Arrange — force the next rng to return 0.99 so the cheap (50%) bet always loses.
+  it('test_resolve_bet_losing_outcome_has_correctHand_equals_other', () => {
+    // Arrange — force rng to return 0.99 so the cheap (50%) bet always loses.
     const { state } = gamblerStateWithSingleSlot();
-    const slot0 = state.slots[0];
-    if (slot0.kind !== 'gambler') throw new Error('test setup failed');
-    const profile: TreasureBundle = { [slot0.gambler.treasureType]: 10_000 };
+    const gambler = state.gamblers[0];
+    const profile: TreasureBundle = { [gambler.treasureType]: 10_000 };
     const losingRng = (): number => 0.99;
 
     // Act
@@ -233,16 +293,15 @@ describe('resolveBet', () => {
       expect(result.outcome.won).toBe(false);
       expect(result.outcome.correctHand).toBe('left'); // opposite of picked
       expect(result.outcome.coinsGained).toBe(0);
-      expect(result.outcome.treasurePaid).toBe(slot0.gambler.treasureAmount);
+      expect(result.outcome.treasurePaid).toBe(gambler.treasureAmount);
     }
   });
 
-  it('charges double treasure for the premium tier', () => {
+  it('test_resolve_bet_premium_tier_charges_double_treasure', () => {
     // Arrange
     const { state } = gamblerStateWithSingleSlot();
-    const slot0 = state.slots[0];
-    if (slot0.kind !== 'gambler') throw new Error('test setup failed');
-    const profile: TreasureBundle = { [slot0.gambler.treasureType]: 10_000 };
+    const gambler = state.gamblers[0];
+    const profile: TreasureBundle = { [gambler.treasureType]: 10_000 };
     const winRng = (): number => 0.0;
 
     // Act
@@ -251,18 +310,16 @@ describe('resolveBet', () => {
     // Assert
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.outcome.treasurePaid).toBe(slot0.gambler.treasureAmount * 2);
+      expect(result.outcome.treasurePaid).toBe(gambler.treasureAmount * 2);
     }
   });
 
-  it('refuses bets on expired gamblers', () => {
+  it('test_resolve_bet_refuses_expired_gambler', () => {
     // Arrange
     const { state, rng } = gamblerStateWithSingleSlot();
-    const slot0 = state.slots[0];
-    if (slot0.kind !== 'gambler') throw new Error('test setup failed');
-    const profile: TreasureBundle = { [slot0.gambler.treasureType]: 10_000 };
-    // Use a `now` past the gambler's expiry.
-    const farFuture = slot0.gambler.expiresAt + 1;
+    const gambler = state.gamblers[0];
+    const profile: TreasureBundle = { [gambler.treasureType]: 10_000 };
+    const farFuture = gambler.expiresAt + 1;
 
     // Act
     const result = resolveBet(state, profile, 0, 'cheap', 'left', farFuture, rng);

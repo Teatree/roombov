@@ -1,19 +1,19 @@
 {
   "id": "p_3a9ad8b22613",
   "createdAt": 1775946762703,
-  "updatedAt": 1777898803890,
-  "coins": 1480,
+  "updatedAt": 1777922622218,
+  "coins": 1491,
   "treasures": {
-    "fish": 175,
-    "books": 244,
-    "grapes": 270,
-    "jade": 210,
-    "coffee": 110,
-    "bones": 78,
-    "mushrooms": 291,
+    "fish": 110,
+    "books": 164,
+    "grapes": 115,
+    "jade": 170,
+    "coffee": 85,
+    "bones": 38,
+    "mushrooms": 46,
     "amulets": 313,
-    "lanterns": 308,
-    "chalice": 126
+    "lanterns": 174,
+    "chalice": 88
   },
   "ownedBombermen": [
     {
@@ -41,48 +41,113 @@
             "type": "flash",
             "count": 2
           },
-          null,
-          null
+          {
+            "type": "bomb_wide",
+            "count": 3
+          },
+          {
+            "type": "big_huge",
+            "count": 2
+          }
         ]
       },
       "purchasedAt": 1777898739835,
       "sourceTemplateId": "cycle_1777898738290_0_free"
+    },
+    {
+      "id": "owned_p_3a9ad8b22613_1777922617938_mbej",
+      "name": "Big Jake",
+      "tier": "paid",
+      "colors": {
+        "shirt": 4380518,
+        "pants": 3901992,
+        "hair": 11704372
+      },
+      "tint": 9754348,
+      "character": "char3",
+      "inventory": {
+        "slots": [
+          {
+            "type": "delay_tricky",
+            "count": 4
+          },
+          {
+            "type": "bomb_wide",
+            "count": 4
+          },
+          {
+            "type": "bomb",
+            "count": 4
+          },
+          {
+            "type": "flash",
+            "count": 2
+          },
+          null
+        ]
+      },
+      "purchasedAt": 1777922617938,
+      "sourceTemplateId": "cycle_1777922049769_2_paid"
     }
   ],
-  "equippedBombermanId": "owned_p_3a9ad8b22613_1777898739835_4n7v",
+  "equippedBombermanId": "owned_p_3a9ad8b22613_1777922617938_mbej",
   "bombStockpile": {
     "flare": 10,
     "delay_tricky": 11,
     "bomb": 5,
     "ender_pearl": 5,
-    "big_huge": 2,
-    "fart_escape": 2,
-    "bomb_wide": 3
+    "fart_escape": 2
   },
   "gamblerStreet": {
-    "slots": [
+    "gamblers": [
       {
-        "kind": "cooldown",
-        "readyAt": 1777898902275
+        "id": "g_morl43jk_hk",
+        "name": "Heinrich Bauer",
+        "treasureType": "coffee",
+        "treasureAmount": 15,
+        "coinReward": 3,
+        "createdAt": 1777922436080,
+        "expiresAt": 1777922608538
       },
       {
-        "kind": "cooldown",
-        "readyAt": 1777898907514
+        "id": "g_morl4uz9_hl",
+        "name": "Margaret Whitfield",
+        "treasureType": "fish",
+        "treasureAmount": 20,
+        "coinReward": 2,
+        "createdAt": 1777922471637,
+        "expiresAt": 1777922643538
       },
       {
-        "kind": "cooldown",
-        "readyAt": 1777898912882
+        "id": "g_morl5mab_hm",
+        "name": "Greta Hartmann",
+        "treasureType": "books",
+        "treasureAmount": 20,
+        "coinReward": 5,
+        "createdAt": 1777922507027,
+        "expiresAt": 1777922678538
       },
       {
-        "kind": "cooldown",
-        "readyAt": 1777898918959
+        "id": "g_morl6cni_hn",
+        "name": "Anneliese Schäfer",
+        "treasureType": "coffee",
+        "treasureAmount": 15,
+        "coinReward": 3,
+        "createdAt": 1777922541198,
+        "expiresAt": 1777922713538
       },
       {
-        "kind": "cooldown",
-        "readyAt": 1777898923890
+        "id": "g_morl74hy_ho",
+        "name": "Céleste Beaumont",
+        "treasureType": "lanterns",
+        "treasureAmount": 49,
+        "coinReward": 27,
+        "createdAt": 1777922577286,
+        "expiresAt": 1777922748538
       }
     ],
-    "lastTickedAt": 1777898803890,
-    "nextGamblerSerial": 95
+    "pendingArrivals": [],
+    "lastTickedAt": 1777922595195,
+    "nextGamblerSerial": 637
   }
 }

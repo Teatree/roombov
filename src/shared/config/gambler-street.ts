@@ -20,32 +20,32 @@ import type { TreasureType } from './treasures.ts';
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const GAMBLER_STREET_GLOBAL = {
-  /** How many gambler slots are visible at once. */
+  /** How many gamblers are visible at peak (active gamblers + pending arrivals
+   *  always sums to this; the conveyor never tries to grow past it). */
   slotCount: 5,
 
   /**
-   * A new gambler stays around for a random duration in this range before
-   * leaving on their own (no bet placed).
+   * A gambler's own lifespan before they leave on their own. Each gambler
+   * rolls a fresh random value in this range — a "30 to 60 second" feel.
    *   [minMs, maxMs] — inclusive min, exclusive max.
-   *
-   * Tuning note: the brief specified 3–5 min, but in practice that means
-   * the carousel "resets" between casual visits. Bumped to 30–60 min so
-   * gamblers feel persistent across a play session. Drop back if you want
-   * a more frantic rotation.
    */
-  lifespanRangeMs: [30 * 60_000, 60 * 60_000] as [number, number],
+  lifespanRangeMs: [30_000, 60_000] as [number, number],
 
   /**
-   * After a player bets (win OR loss), the slot stays empty for this long
-   * before a new gambler appears.
+   * Stagger constraint: a newly-generated gambler's expiry must be at least
+   * this much later than the latest-expiring active gambler's expiry. Keeps
+   * gamblers leaving in left-to-right order with a comfortable gap between
+   * each departure.
    */
-  postBetCooldownMs: 2 * 60_000,
+  minStaggerMs: 35_000,
 
   /**
-   * If a gambler leaves on their own (lifespan expired without a bet), the
-   * slot only stays empty for this much shorter cooldown.
+   * After ANY removal (timeout or post-bet) a fresh gambler arrives at the
+   * right end of the conveyor after a delay rolled from this range. Same
+   * range applies to both removal sources for simplicity.
+   *   [minMs, maxMs] — inclusive min, exclusive max.
    */
-  expiryCooldownMs: 10_000,
+  respawnDelayRangeMs: [2_000, 6_000] as [number, number],
 
   /**
    * Bet tiers. Both pay the same coin reward on win; they differ in the
@@ -59,7 +59,7 @@ export const GAMBLER_STREET_GLOBAL = {
 
   /**
    * Cap on simultaneous gamblers asking for the same treasure type.
-   * E.g. 2 → at most two of the five slots can ask for fish at once.
+   * E.g. 2 → at most two active gamblers can ask for fish at once.
    */
   maxGamblersPerTreasureType: 2,
 } as const;

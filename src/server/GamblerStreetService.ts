@@ -3,8 +3,8 @@
  *
  * Server-authoritative wrapper around the pure GamblerStreetEngine. Handles:
  *   - lazy ticking on player request (so offline aging works automatically)
- *   - bet resolution: deduct treasure, apply coin reward, replace slot with
- *     a 2-min cooldown, persist
+ *   - bet resolution: deduct treasure, apply coin reward, remove the gambler
+ *     from the active list, queue a respawn arrival, persist
  *
  * The carousel state lives on PlayerProfile so PlayerStore handles persistence
  * the same way it does for treasures, coins, and bomb stockpile.
@@ -55,7 +55,6 @@ export class GamblerStreetService {
     const before = profile.gamblerStreet;
     const next = tickGamblerStreet(before, profile.treasures, now, Math.random);
 
-    // Cheap structural check to avoid a write on every poll.
     if (gamblerStreetUnchanged(before, next)) return before;
 
     profile.gamblerStreet = next;
@@ -82,14 +81,15 @@ export class GamblerStreetService {
 
     const result = resolveBet(ticked, profile.treasures, slotIndex, tier, pickedHand, now, Math.random);
     if (!result.ok) {
-      // Persist the tick — even on a no-op bet the lifespans may have advanced.
+      // Persist the tick — even on a no-op bet the carousel may have advanced.
       if (!gamblerStreetUnchanged(profile.gamblerStreet, ticked)) {
         await this.playerStore.save(profile);
       }
       return { ok: false, reason: result.reason };
     }
 
-    // Apply outcome: deduct treasure, award coins, replace slot.
+    // Apply outcome: deduct treasure, award coins, remove gambler, queue
+    // a respawn arrival at the right end of the conveyor.
     const t = result.outcome.treasureType;
     const owned = profile.treasures[t] ?? 0;
     const remaining = owned - result.outcome.treasurePaid;
@@ -98,12 +98,17 @@ export class GamblerStreetService {
 
     profile.coins += result.outcome.coinsGained;
 
-    const newSlots = ticked.slots.slice();
-    newSlots[slotIndex] = result.nextSlot;
+    const newGamblers = ticked.gamblers.slice();
+    newGamblers.splice(slotIndex, 1);
+    const newPending = ticked.pendingArrivals.slice();
+    newPending.push(result.respawnAt);
+    newPending.sort((a, b) => a - b);
+
     profile.gamblerStreet = {
-      ...ticked,
-      slots: newSlots,
+      gamblers: newGamblers,
+      pendingArrivals: newPending,
       lastTickedAt: now,
+      nextGamblerSerial: ticked.nextGamblerSerial,
     };
 
     await this.playerStore.save(profile);
@@ -112,36 +117,40 @@ export class GamblerStreetService {
 }
 
 /**
- * Backfill gamblerStreet on profiles that were loaded before the migration
- * landed (e.g. cached in-memory pre-restart). Without this guard, ticking
- * `undefined.slots` throws and the socket handler dies silently — leaving the
- * client stuck on "Loading...".
+ * Backfill gamblerStreet on profiles that were loaded before this state shape
+ * was introduced (e.g. cached in-memory from before a server restart). Without
+ * this guard, ticking a missing or legacy-shaped state throws and the socket
+ * handler dies silently — leaving the client stuck on "Loading...".
  */
 function ensureGamblerStreet(profile: PlayerProfile, now: number): void {
-  const gs = (profile as { gamblerStreet?: GamblerStreetState }).gamblerStreet;
-  if (!gs || !Array.isArray(gs.slots)) {
+  const gs = (profile as { gamblerStreet?: unknown }).gamblerStreet;
+  if (!isCurrentShape(gs)) {
     profile.gamblerStreet = createEmptyGamblerStreet(now, GAMBLER_STREET_GLOBAL.slotCount);
   }
 }
 
+function isCurrentShape(s: unknown): s is GamblerStreetState {
+  if (!s || typeof s !== 'object') return false;
+  const cast = s as Partial<GamblerStreetState>;
+  return Array.isArray(cast.gamblers)
+    && Array.isArray(cast.pendingArrivals)
+    && typeof cast.nextGamblerSerial === 'number';
+}
+
 /**
- * Cheap deep-ish equality check between two carousel states. Returns true if
- * both have the same slot kinds, the same gambler ids in the same positions,
- * and the same cooldown readyAts. We skip the lastTickedAt field because it
- * advances every call.
+ * Cheap deep-ish equality check between two carousel states. Skips
+ * `lastTickedAt` because it advances every call.
  */
 function gamblerStreetUnchanged(a: GamblerStreetState, b: GamblerStreetState): boolean {
-  if (a.slots.length !== b.slots.length) return false;
+  if (a.gamblers.length !== b.gamblers.length) return false;
+  if (a.pendingArrivals.length !== b.pendingArrivals.length) return false;
   if (a.nextGamblerSerial !== b.nextGamblerSerial) return false;
-  for (let i = 0; i < a.slots.length; i++) {
-    const sa = a.slots[i];
-    const sb = b.slots[i];
-    if (sa.kind !== sb.kind) return false;
-    if (sa.kind === 'gambler' && sb.kind === 'gambler') {
-      if (sa.gambler.id !== sb.gambler.id) return false;
-    } else if (sa.kind === 'cooldown' && sb.kind === 'cooldown') {
-      if (sa.readyAt !== sb.readyAt) return false;
-    }
+  for (let i = 0; i < a.gamblers.length; i++) {
+    if (a.gamblers[i].id !== b.gamblers[i].id) return false;
+    if (a.gamblers[i].expiresAt !== b.gamblers[i].expiresAt) return false;
+  }
+  for (let i = 0; i < a.pendingArrivals.length; i++) {
+    if (a.pendingArrivals[i] !== b.pendingArrivals[i]) return false;
   }
   return true;
 }
