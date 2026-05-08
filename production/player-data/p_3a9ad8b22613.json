@@ -1,19 +1,19 @@
 {
   "id": "p_3a9ad8b22613",
   "createdAt": 1775946762703,
-  "updatedAt": 1777933292481,
-  "coins": 1147,
+  "updatedAt": 1778196500041,
+  "coins": 1160,
   "treasures": {
-    "fish": 87,
-    "books": 45,
-    "grapes": 64,
-    "jade": 225,
-    "coffee": 68,
-    "bones": 7,
-    "mushrooms": 59,
-    "amulets": 389,
-    "lanterns": 78,
-    "chalice": 107
+    "fish": 143,
+    "books": 83,
+    "grapes": 111,
+    "jade": 286,
+    "coffee": 136,
+    "bones": 91,
+    "mushrooms": 121,
+    "amulets": 503,
+    "lanterns": 166,
+    "chalice": 150
   },
   "ownedBombermen": [
     {
@@ -30,19 +30,19 @@
       "inventory": {
         "slots": [
           {
-            "type": "delay_tricky",
-            "count": 4
+            "type": "flash",
+            "count": 3
           },
           {
             "type": "ender_pearl",
             "count": 3
           },
           {
-            "type": "flash",
-            "count": 2
+            "type": "bomb_wide",
+            "count": 1
           },
           {
-            "type": "bomb_wide",
+            "type": "shield",
             "count": 5
           }
         ]
@@ -177,54 +177,47 @@
   "gamblerStreet": {
     "gamblers": [
       {
-        "id": "g_morrdwnu_pz",
-        "name": "Elena Pardo",
+        "id": "g_mow3x7ux_6im",
+        "name": "Camille Dubois",
         "treasureType": "bones",
         "treasureAmount": 25,
         "coinReward": 3,
-        "createdAt": 1777932971418,
-        "expiresAt": 1777933178538
+        "createdAt": 1778195892489,
+        "expiresAt": 1778196063538
       },
       {
-        "id": "g_morre0o4_q0",
-        "name": "Wilhelm Krause",
-        "treasureType": "grapes",
-        "treasureAmount": 20,
-        "coinReward": 4,
-        "createdAt": 1777932976612,
-        "expiresAt": 1777933213538
+        "id": "g_mow3xz06_6io",
+        "name": "Sofia Gallo",
+        "treasureType": "amulets",
+        "treasureAmount": 111,
+        "coinReward": 76,
+        "createdAt": 1778195927670,
+        "expiresAt": 1778196133538
       },
       {
-        "id": "g_morre840_q2",
-        "name": "Chiara Ferrari",
+        "id": "g_mow3y09k_6ip",
+        "name": "Céleste Beaumont",
         "treasureType": "fish",
-        "treasureAmount": 25,
-        "coinReward": 3,
-        "createdAt": 1777932986256,
-        "expiresAt": 1777933283538
+        "treasureAmount": 20,
+        "coinReward": 2,
+        "createdAt": 1778195929304,
+        "expiresAt": 1778196168538
       },
       {
-        "id": "g_morreck0_q3",
-        "name": "Henry Blackwood",
-        "treasureType": "jade",
-        "treasureAmount": 59,
-        "coinReward": 34,
-        "createdAt": 1777932992016,
-        "expiresAt": 1777933318538
-      },
-      {
-        "id": "g_morrefne_q4",
-        "name": "Konrad Holz",
-        "treasureType": "lanterns",
-        "treasureAmount": 10,
-        "coinReward": 6,
-        "createdAt": 1777932996026,
-        "expiresAt": 1777933353538
+        "id": "g_mow3y2yy_6iq",
+        "name": "Agnes Sutcliffe",
+        "treasureType": "chalice",
+        "treasureAmount": 23,
+        "coinReward": 12,
+        "createdAt": 1778195932810,
+        "expiresAt": 1778196203538
       }
     ],
-    "pendingArrivals": [],
-    "lastTickedAt": 1777932996218,
-    "nextGamblerSerial": 941
+    "pendingArrivals": [
+      1778195935920
+    ],
+    "lastTickedAt": 1778195933768,
+    "nextGamblerSerial": 8451
   },
   "bombermanShop": {
     "cycleId": "cycle_p_3a9ad8b22613_morreluh",

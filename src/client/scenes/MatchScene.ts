@@ -561,6 +561,11 @@ export class MatchScene extends Phaser.Scene {
     this.slotCountTexts = [];
     this.slotHighlights = [];
     this.slotIcons = [];
+    this.hudTrayBg = null;
+    this.stunHudOverlay = null;
+    this.stunHudLabel = null;
+    this.meleeHudIcon = null;
+    this.lastBuiltSlotCount = -1;
     for (const esc of this.escapeSprites) esc.sprite.destroy();
     this.escapeSprites = [];
     this.hudObjects = [];

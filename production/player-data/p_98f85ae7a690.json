@@ -1,36 +1,56 @@
 {
   "id": "p_98f85ae7a690",
   "createdAt": 1776678029830,
-  "updatedAt": 1776678029830,
+  "updatedAt": 1778099665238,
   "coins": 500,
   "treasures": {},
   "ownedBombermen": [],
   "equippedBombermanId": null,
   "bombStockpile": {},
   "gamblerStreet": {
-    "slots": [
+    "gamblers": [
       {
-        "kind": "cooldown",
-        "readyAt": 1777330178907
+        "id": "g_moj9qfo9_1z3",
+        "name": "Erika Müller",
+        "treasureType": "jade",
+        "treasureAmount": 20,
+        "coinReward": 12,
+        "createdAt": 1777419593433,
+        "expiresAt": 1777419764984
       },
       {
-        "kind": "cooldown",
-        "readyAt": 1777330178907
+        "id": "g_moj9r7kr_1z4",
+        "name": "Marco Bellini",
+        "treasureType": "lanterns",
+        "treasureAmount": 24,
+        "coinReward": 13,
+        "createdAt": 1777419629595,
+        "expiresAt": 1777419799984
       },
       {
-        "kind": "cooldown",
-        "readyAt": 1777330178907
+        "id": "g_moj9ry3o_1z5",
+        "name": "Hilda Brandt",
+        "treasureType": "chalice",
+        "treasureAmount": 26,
+        "coinReward": 13,
+        "createdAt": 1777419663972,
+        "expiresAt": 1777419834984
       },
       {
-        "kind": "cooldown",
-        "readyAt": 1777330178907
-      },
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178907
+        "id": "g_moj9sp40_1z6",
+        "name": "Beatrice Holloway",
+        "treasureType": "fish",
+        "treasureAmount": 75,
+        "coinReward": 8,
+        "createdAt": 1777419698976,
+        "expiresAt": 1777419869984
       }
     ],
-    "lastTickedAt": 1777330178907,
-    "nextGamblerSerial": 1
-  }
+    "pendingArrivals": [
+      1777419733165
+    ],
+    "lastTickedAt": 1778099665236,
+    "nextGamblerSerial": 2563
+  },
+  "bombermanShop": null
 }
