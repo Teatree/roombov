@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import type { MapData } from '@shared/types/map.ts';
-import { hasLineOfSight } from '@shared/systems/LineOfSight.ts';
+import { getSeeThroughTileSet, hasLineOfSight } from '@shared/systems/LineOfSight.ts';
 
 /**
  * Three-stage per-player line-of-sight fog of war.
@@ -27,6 +27,8 @@ export class FogRenderer {
   private closedDoorTiles = new Set<string>();
   /** Tiles occupied by active Shield Walls. LOS treats these as blockers. */
   private shieldWallTiles = new Set<string>();
+  /** Collision tiles that block movement but not LOS. */
+  private seeThroughTiles?: Set<string>;
   /**
    * When true, LoS computation is suppressed — the player sees no newly-
    * visible tiles this update. Everything falls back to 'seen-dim' (if
@@ -40,6 +42,7 @@ export class FogRenderer {
     this.mapData = mapData;
     this.radius = radius;
     this.graphics = scene.add.graphics().setDepth(depth);
+    this.seeThroughTiles = getSeeThroughTileSet(mapData);
   }
 
   /**
@@ -114,7 +117,15 @@ export class FogRenderer {
 
           const toPx = tx * ts + ts / 2;
           const toPy = ty * ts + ts / 2;
-          if (hasLineOfSight(fromPx, fromPy, toPx, toPy, this.mapData.grid, ts, this.closedDoorTiles, this.shieldWallTiles)) {
+          if (hasLineOfSight(
+            fromPx, fromPy,
+            toPx, toPy,
+            this.mapData.grid,
+            ts,
+            this.closedDoorTiles,
+            this.shieldWallTiles,
+            this.seeThroughTiles,
+          )) {
             this.state.set(`${tx},${ty}`, 'visible');
           }
         }

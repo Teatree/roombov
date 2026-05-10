@@ -33,11 +33,14 @@
           {
             "type": "fart_escape",
             "count": 2
-          }
+          },
+          null
         ]
       },
       "purchasedAt": 1776551439618,
-      "sourceTemplateId": "cycle_1776551399032_2_paid"
+      "sourceTemplateId": "cycle_1776551399032_2_paid",
+      "maxCustomSlots": 5,
+      "stackSize": 7
     }
   ],
   "equippedBombermanId": "owned_p_86d38de2dd21_1776551439618_f0n8",
@@ -48,29 +51,16 @@
     "phosphorus": 3
   },
   "gamblerStreet": {
-    "slots": [
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178906
-      },
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178906
-      },
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178906
-      },
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178906
-      },
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178906
-      }
+    "gamblers": [],
+    "pendingArrivals": [
+      1777330178906,
+      1777330178906,
+      1777330178906,
+      1777330178906,
+      1777330178906
     ],
     "lastTickedAt": 1777330178906,
     "nextGamblerSerial": 1
-  }
+  },
+  "bombermanShop": null
 }

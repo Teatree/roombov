@@ -8,29 +8,16 @@
   "equippedBombermanId": null,
   "bombStockpile": {},
   "gamblerStreet": {
-    "slots": [
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178905
-      },
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178905
-      },
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178905
-      },
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178905
-      },
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178905
-      }
+    "gamblers": [],
+    "pendingArrivals": [
+      1777330178905,
+      1777330178905,
+      1777330178905,
+      1777330178905,
+      1777330178905
     ],
     "lastTickedAt": 1777330178905,
     "nextGamblerSerial": 1
-  }
+  },
+  "bombermanShop": null
 }

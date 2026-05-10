@@ -1,56 +1,279 @@
 {
   "id": "p_98f85ae7a690",
   "createdAt": 1776678029830,
-  "updatedAt": 1778099665238,
+  "updatedAt": 1778374130433,
   "coins": 500,
-  "treasures": {},
-  "ownedBombermen": [],
-  "equippedBombermanId": null,
+  "treasures": {
+    "lanterns": 8,
+    "bones": 8,
+    "amulets": 9
+  },
+  "ownedBombermen": [
+    {
+      "id": "owned_p_98f85ae7a690_1778374061599_su9n",
+      "name": "Byrne",
+      "tier": "free",
+      "colors": {
+        "shirt": 7722818,
+        "pants": 9079336,
+        "hair": 6468148
+      },
+      "tint": 12544990,
+      "character": "char2",
+      "maxCustomSlots": 4,
+      "stackSize": 5,
+      "inventory": {
+        "slots": [
+          {
+            "type": "delay_tricky",
+            "count": 2
+          },
+          {
+            "type": "shield",
+            "count": 3
+          },
+          {
+            "type": "flare",
+            "count": 2
+          },
+          {
+            "type": "ender_pearl",
+            "count": 2
+          }
+        ]
+      },
+      "purchasedAt": 1778374061599,
+      "sourceTemplateId": "cycle_p_98f85ae7a690_moz1zzhd_0_free"
+    }
+  ],
+  "equippedBombermanId": "owned_p_98f85ae7a690_1778374061599_su9n",
   "bombStockpile": {},
   "gamblerStreet": {
     "gamblers": [
       {
-        "id": "g_moj9qfo9_1z3",
-        "name": "Erika Müller",
-        "treasureType": "jade",
-        "treasureAmount": 20,
-        "coinReward": 12,
-        "createdAt": 1777419593433,
-        "expiresAt": 1777419764984
-      },
-      {
-        "id": "g_moj9r7kr_1z4",
-        "name": "Marco Bellini",
-        "treasureType": "lanterns",
-        "treasureAmount": 24,
-        "coinReward": 13,
-        "createdAt": 1777419629595,
-        "expiresAt": 1777419799984
-      },
-      {
-        "id": "g_moj9ry3o_1z5",
-        "name": "Hilda Brandt",
-        "treasureType": "chalice",
-        "treasureAmount": 26,
-        "coinReward": 13,
-        "createdAt": 1777419663972,
-        "expiresAt": 1777419834984
-      },
-      {
-        "id": "g_moj9sp40_1z6",
+        "id": "g_mojn2jxx_2gv",
         "name": "Beatrice Holloway",
-        "treasureType": "fish",
-        "treasureAmount": 75,
-        "coinReward": 8,
-        "createdAt": 1777419698976,
-        "expiresAt": 1777419869984
+        "treasureType": "mushrooms",
+        "treasureAmount": 15,
+        "coinReward": 5,
+        "createdAt": 1777441993845,
+        "expiresAt": 1777442164984
+      },
+      {
+        "id": "g_mojn39yf_2gw",
+        "name": "Adèle Charpentier",
+        "treasureType": "amulets",
+        "treasureAmount": 15,
+        "coinReward": 15,
+        "createdAt": 1777442027559,
+        "expiresAt": 1777442199984
+      },
+      {
+        "id": "g_mojn40te_2gx",
+        "name": "Agnes Sutcliffe",
+        "treasureType": "coffee",
+        "treasureAmount": 15,
+        "coinReward": 3,
+        "createdAt": 1777442062370,
+        "expiresAt": 1777442234984
+      },
+      {
+        "id": "g_mojn4s8y_2gy",
+        "name": "Javier Núñez",
+        "treasureType": "grapes",
+        "treasureAmount": 50,
+        "coinReward": 10,
+        "createdAt": 1777442097922,
+        "expiresAt": 1777442269984
       }
     ],
     "pendingArrivals": [
-      1777419733165
+      1777442132675
     ],
-    "lastTickedAt": 1778099665236,
-    "nextGamblerSerial": 2563
+    "lastTickedAt": 1778374060255,
+    "nextGamblerSerial": 3203
   },
-  "bombermanShop": null
+  "bombermanShop": {
+    "cycleId": "cycle_p_98f85ae7a690_moz1zzhd",
+    "startedAt": 1778374060897,
+    "endsAt": 1778374180897,
+    "bombermen": [
+      {
+        "id": "cycle_p_98f85ae7a690_moz1zzhd_0_free",
+        "name": "Byrne",
+        "tier": "free",
+        "price": 0,
+        "colors": {
+          "shirt": 7722818,
+          "pants": 9079336,
+          "hair": 6468148
+        },
+        "tint": 12544990,
+        "character": "char2",
+        "maxCustomSlots": 4,
+        "stackSize": 5,
+        "inventory": {
+          "slots": [
+            {
+              "type": "delay_tricky",
+              "count": 4
+            },
+            {
+              "type": "shield",
+              "count": 3
+            },
+            {
+              "type": "flare",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_98f85ae7a690_moz1zzhd_1_free",
+        "name": "Donnelly",
+        "tier": "free",
+        "price": 0,
+        "colors": {
+          "shirt": 14014274,
+          "pants": 9054255,
+          "hair": 8041012
+        },
+        "tint": 8830950,
+        "character": "char1",
+        "maxCustomSlots": 4,
+        "stackSize": 5,
+        "inventory": {
+          "slots": [
+            {
+              "type": "banana",
+              "count": 4
+            },
+            {
+              "type": "fart_escape",
+              "count": 3
+            },
+            {
+              "type": "bomb_wide",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_98f85ae7a690_moz1zzhd_2_paid",
+        "name": "Big Jake",
+        "tier": "paid",
+        "price": 240,
+        "colors": {
+          "shirt": 14139970,
+          "pants": 2656885,
+          "hair": 11699764
+        },
+        "tint": 15394724,
+        "character": "char5",
+        "maxCustomSlots": 5,
+        "stackSize": 6,
+        "inventory": {
+          "slots": [
+            {
+              "type": "bomb_wide",
+              "count": 4
+            },
+            {
+              "type": "banana",
+              "count": 4
+            },
+            {
+              "type": "fart_escape",
+              "count": 3
+            },
+            {
+              "type": "shield",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_98f85ae7a690_moz1zzhd_3_paid",
+        "name": "Rattlesnake",
+        "tier": "paid",
+        "price": 225,
+        "colors": {
+          "shirt": 4349911,
+          "pants": 9054331,
+          "hair": 3453560
+        },
+        "tint": 15117158,
+        "character": "char3",
+        "maxCustomSlots": 5,
+        "stackSize": 7,
+        "inventory": {
+          "slots": [
+            {
+              "type": "bomb",
+              "count": 4
+            },
+            {
+              "type": "bomb_wide",
+              "count": 4
+            },
+            {
+              "type": "shield",
+              "count": 3
+            },
+            {
+              "type": "flare",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_98f85ae7a690_moz1zzhd_4_paid_expensive",
+        "name": "Athena",
+        "tier": "paid_expensive",
+        "price": 425,
+        "colors": {
+          "shirt": 14107327,
+          "pants": 5122186,
+          "hair": 11678792
+        },
+        "tint": 15828174,
+        "character": "char2",
+        "maxCustomSlots": 6,
+        "stackSize": 8,
+        "inventory": {
+          "slots": [
+            {
+              "type": "delay_tricky",
+              "count": 4
+            },
+            {
+              "type": "banana",
+              "count": 4
+            },
+            {
+              "type": "bomb_wide",
+              "count": 4
+            },
+            {
+              "type": "flare",
+              "count": 4
+            },
+            null,
+            null
+          ]
+        }
+      }
+    ],
+    "boughtTemplateIds": [
+      "cycle_p_98f85ae7a690_moz1zzhd_0_free"
+    ]
+  }
 }

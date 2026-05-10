@@ -37,35 +37,24 @@
         ]
       },
       "purchasedAt": 1776594958250,
-      "sourceTemplateId": "cycle_1776594940811_1_free"
+      "sourceTemplateId": "cycle_1776594940811_1_free",
+      "maxCustomSlots": 4,
+      "stackSize": 5
     }
   ],
   "equippedBombermanId": "owned_p_5ddddd91004a_1776594958250_nyp7",
   "bombStockpile": {},
   "gamblerStreet": {
-    "slots": [
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178905
-      },
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178905
-      },
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178905
-      },
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178905
-      },
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178905
-      }
+    "gamblers": [],
+    "pendingArrivals": [
+      1777330178905,
+      1777330178905,
+      1777330178905,
+      1777330178905,
+      1777330178905
     ],
     "lastTickedAt": 1777330178905,
     "nextGamblerSerial": 1
-  }
+  },
+  "bombermanShop": null
 }

@@ -119,6 +119,27 @@ describe('hasLineOfSight', () => {
       expect(los(grid, 1, 1, 8, 8)).toBe(true);
     });
 
+    it('test_los_passes_through_see_through_wall', () => {
+      // Arrange
+      const grid = makeGrid(10, 10);
+      grid[5][6] = TileType.WALL;
+      const seeThrough = new Set<string>(['6,5']);
+
+      // Act
+      const result = hasLineOfSight(
+        pxCenter(4, TS), pxCenter(5, TS),
+        pxCenter(8, TS), pxCenter(5, TS),
+        grid,
+        TS,
+        undefined,
+        undefined,
+        seeThrough,
+      );
+
+      // Assert
+      expect(result).toBe(true);
+    });
+
     it('test_los_blocked_by_closed_door', () => {
       // Arrange
       const grid = makeGrid(10, 10);

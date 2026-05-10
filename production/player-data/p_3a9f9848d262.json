@@ -13,29 +13,16 @@
     "big_huge": 2
   },
   "gamblerStreet": {
-    "slots": [
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178904
-      },
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178904
-      },
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178904
-      },
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178904
-      },
-      {
-        "kind": "cooldown",
-        "readyAt": 1777330178904
-      }
+    "gamblers": [],
+    "pendingArrivals": [
+      1777330178904,
+      1777330178904,
+      1777330178904,
+      1777330178904,
+      1777330178904
     ],
     "lastTickedAt": 1777330178904,
     "nextGamblerSerial": 1
-  }
+  },
+  "bombermanShop": null
 }

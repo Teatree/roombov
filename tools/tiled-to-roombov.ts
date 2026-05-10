@@ -36,8 +36,27 @@ interface TiledMap {
   height: number;
   tilewidth: number;
   tileheight: number;
-  tilesets: { firstgid: number; name?: string; source?: string }[];
+  tilesets: TiledTileset[];
   layers: TiledLayer[];
+}
+
+interface TiledProperty {
+  name: string;
+  type?: string;
+  value?: unknown;
+}
+
+interface TiledTilesetTile {
+  id: number;
+  properties?: TiledProperty[];
+}
+
+interface TiledTileset {
+  firstgid: number;
+  name?: string;
+  source?: string;
+  tiles?: TiledTilesetTile[];
+  [key: string]: unknown;
 }
 
 type TiledLayer = TiledTileLayer | TiledObjectLayer | TiledGroupLayer;
@@ -62,6 +81,7 @@ interface TiledTileLayer {
   width: number;
   height: number;
   visible: boolean;
+  properties?: TiledProperty[];
 }
 
 interface TiledObjectLayer {
@@ -96,6 +116,7 @@ interface BombermanMap {
   height: number;
   tileSize: number;
   grid: number[][];
+  seeThroughTiles?: { x: number; y: number }[];
   spawns: { id: number; x: number; y: number }[];
   escapeTiles: { id: number; x: number; y: number }[];
   chest1Zones: { x: number; y: number; w: number; h: number }[];
@@ -199,6 +220,82 @@ function readGid(layer: TiledTileLayer, tileX: number, tileY: number): number {
   return 0;
 }
 
+const GID_FLIP_MASK = 0x0fffffff;
+
+function stripGidFlags(gid: number): number {
+  return gid & GID_FLIP_MASK;
+}
+
+function isTruthyProperty(value: unknown): boolean {
+  if (value === true) return true;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on';
+  }
+  return false;
+}
+
+function isSeeThroughName(name: string): boolean {
+  const normalized = name.toLowerCase().replace(/[_\-\s]/g, '');
+  return normalized === 'seethrough' || normalized === 'seetrough';
+}
+
+function hasTruthySeeThrough(properties: TiledProperty[] | undefined): boolean {
+  return (properties ?? []).some(prop => isSeeThroughName(prop.name) && isTruthyProperty(prop.value));
+}
+
+function extractXmlAttr(attrs: string, attrName: string): string | undefined {
+  const match = new RegExp(`\\b${attrName}="([^"]*)"`).exec(attrs);
+  return match?.[1];
+}
+
+function extractSeeThroughLocalIdsFromTsx(text: string): number[] {
+  const ids: number[] = [];
+  const tileRe = /<tile\b([^>]*)>([\s\S]*?)<\/tile>/g;
+  for (const tileMatch of text.matchAll(tileRe)) {
+    const id = Number(extractXmlAttr(tileMatch[1], 'id'));
+    if (!Number.isFinite(id)) continue;
+
+    const body = tileMatch[2];
+    const propertyRe = /<property\b([^>]*)\/?>/g;
+    for (const propertyMatch of body.matchAll(propertyRe)) {
+      const name = extractXmlAttr(propertyMatch[1], 'name');
+      if (!name || !isSeeThroughName(name)) continue;
+      const value = extractXmlAttr(propertyMatch[1], 'value') ?? true;
+      if (isTruthyProperty(value)) {
+        ids.push(id);
+        break;
+      }
+    }
+  }
+  return ids;
+}
+
+function collectSeeThroughGids(tilesets: TiledTileset[]): Set<number> {
+  const gids = new Set<number>();
+  for (const tileset of tilesets) {
+    for (const tile of tileset.tiles ?? []) {
+      if (hasTruthySeeThrough(tile.properties)) {
+        gids.add(tileset.firstgid + tile.id);
+      }
+    }
+
+    if (!tileset.source) continue;
+    const tsxPath = join(dirname(inputPath), String(tileset.source));
+    if (!existsSync(tsxPath)) continue;
+    try {
+      const text = readFileSync(tsxPath, 'utf8');
+      for (const localId of extractSeeThroughLocalIdsFromTsx(text)) {
+        gids.add(tileset.firstgid + localId);
+      }
+    } catch (err) {
+      console.warn(`  ⚠ failed to read seeThrough properties from ${tileset.source}:`, err);
+    }
+  }
+  return gids;
+}
+
 /**
  * For infinite (chunked) maps, derive the true map dimensions from the
  * union of all tile layer chunks. The header's width/height is just a
@@ -243,17 +340,28 @@ if (isInfinite) {
 
 // Build the walkability grid
 const grid: number[][] = [];
+const seeThroughTiles: { x: number; y: number }[] = [];
 
 const collisionLayer = tileLayers.find(l => l.name.toLowerCase() === 'collision');
+const seeThroughGids = collectSeeThroughGids(tiled.tilesets);
 
 if (collisionLayer) {
   // Mode 1: Collision layer. Any non-zero gid = wall (1), zero = floor (0).
   console.log(`Using Collision layer for walkability`);
+  const entireLayerSeeThrough = hasTruthySeeThrough(collisionLayer.properties);
   for (let row = 0; row < finalH; row++) {
     const gridRow: number[] = [];
     for (let col = 0; col < finalW; col++) {
       const gid = readGid(collisionLayer, col, row);
-      gridRow.push(gid === 0 ? 0 : 1);
+      if (gid === 0) {
+        gridRow.push(0);
+        continue;
+      }
+      gridRow.push(1);
+      const baseGid = stripGidFlags(gid);
+      if (entireLayerSeeThrough || seeThroughGids.has(baseGid)) {
+        seeThroughTiles.push({ x: col, y: row });
+      }
     }
     grid.push(gridRow);
   }
@@ -279,6 +387,9 @@ if (collisionLayer) {
     }
     grid.push(gridRow);
   }
+}
+if (seeThroughTiles.length > 0) {
+  console.log(`See-through collision tiles: ${seeThroughTiles.length}`);
 }
 
 // Count walkable vs blocked
@@ -446,6 +557,7 @@ const output: BombermanMap = {
   height: finalH,
   tileSize: ts,
   grid,
+  ...(seeThroughTiles.length > 0 ? { seeThroughTiles } : {}),
   spawns,
   escapeTiles,
   chest1Zones,

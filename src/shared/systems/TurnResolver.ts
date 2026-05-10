@@ -33,7 +33,7 @@ import type {
 import type { MapData } from '../types/map.ts';
 import { TileType } from '../types/map.ts';
 import { resolveBombTrigger, shapeTiles, type Tile } from './BombResolver.ts';
-import { hasLineOfSight } from './LineOfSight.ts';
+import { getSeeThroughTileSet, hasLineOfSight } from './LineOfSight.ts';
 import { findPath } from './Pathfinding.ts';
 import { createSeededRandom } from '../utils/seeded-random.ts';
 import {
@@ -257,6 +257,7 @@ export function resolveTurn(
 ): TurnResolveResult {
   const state = cloneState(prev);
   const events: TurnEvent[] = [];
+  const seeThroughTiles = getSeeThroughTileSet(map);
 
   // Per-turn flags reset before any step runs. `teleportedThisTurn` is set in
   // step 5 when an Ender Pearl lands its thrower somewhere new; the step 2
@@ -358,7 +359,7 @@ export function resolveTurn(
     return hasLineOfSight(
       fromX * mts + mts / 2, fromY * mts + mts / 2,
       toX * mts + mts / 2, toY * mts + mts / 2,
-      map.grid, mts, meleeClosedDoors, meleeShieldTiles,
+      map.grid, mts, meleeClosedDoors, meleeShieldTiles, seeThroughTiles,
     );
   };
   if (trapModeBombermen.length >= 2) {
@@ -630,7 +631,7 @@ export function resolveTurn(
         return hasLineOfSight(
           bomberman.x * ts + ts / 2, bomberman.y * ts + ts / 2,
           other.x * ts + ts / 2, other.y * ts + ts / 2,
-          map.grid, ts, closedDoorsForLos, shieldTilesForLos,
+          map.grid, ts, closedDoorsForLos, shieldTilesForLos, seeThroughTiles,
         );
       });
       // Bomb landed nearby: same rule — only cancel OOC for bombs the
@@ -643,7 +644,7 @@ export function resolveTurn(
         return hasLineOfSight(
           bomberman.x * ts + ts / 2, bomberman.y * ts + ts / 2,
           bomb.x * ts + ts / 2, bomb.y * ts + ts / 2,
-          map.grid, ts, closedDoorsForLos, shieldTilesForLos,
+          map.grid, ts, closedDoorsForLos, shieldTilesForLos, seeThroughTiles,
         );
       });
       if (enemyNearby || threw || bombNearby) {
@@ -1384,7 +1385,7 @@ export function resolveTurn(
         return hasLineOfSight(
           mine.x * ts + ts / 2, mine.y * ts + ts / 2,
           b.x * ts + ts / 2, b.y * ts + ts / 2,
-          map.grid, ts, closedDoorsForMine, shieldTilesForMine,
+          map.grid, ts, closedDoorsForMine, shieldTilesForMine, seeThroughTiles,
         );
       });
       if (detected) {

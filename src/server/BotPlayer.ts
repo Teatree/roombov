@@ -16,7 +16,7 @@ import type { MapData } from '../shared/types/map.ts';
 import { TileType } from '../shared/types/map.ts';
 import type { LootBombMsg } from '../shared/types/messages.ts';
 import { findPath } from '../shared/systems/Pathfinding.ts';
-import { hasLineOfSight } from '../shared/systems/LineOfSight.ts';
+import { getSeeThroughTileSet, hasLineOfSight } from '../shared/systems/LineOfSight.ts';
 import { shapeTiles } from '../shared/systems/BombResolver.ts';
 import { BOMB_CATALOG } from '../shared/config/bombs.ts';
 import { BALANCE } from '../shared/config/balance.ts';
@@ -91,6 +91,7 @@ export class BotPlayer {
     const fromPx = me.x * ts + ts / 2;
     const fromPy = me.y * ts + ts / 2;
     const r = BALANCE.match.losRadius;
+    const seeThroughTiles = getSeeThroughTileSet(map);
     // Closed doors block the bot's sight just like walls.
     const closedDoors = new Set<string>();
     for (const d of state.doors ?? []) {
@@ -106,7 +107,7 @@ export class BotPlayer {
         if (Math.max(Math.abs(dx), Math.abs(dy)) > r) continue;
         const toPx = tx * ts + ts / 2;
         const toPy = ty * ts + ts / 2;
-        if (hasLineOfSight(fromPx, fromPy, toPx, toPy, map.grid, ts, closedDoors)) {
+        if (hasLineOfSight(fromPx, fromPy, toPx, toPy, map.grid, ts, closedDoors, undefined, seeThroughTiles)) {
           visible.add(`${tx},${ty}`);
         }
       }

@@ -58,9 +58,11 @@ Path aliases (configured in `vite.config.ts` and `tsconfig.json`): `@shared/*`, 
 
 Socket event map lives on `GameServer` (`auth`, `join_match`, `player_action`, `loot_bomb`, shop events, etc.). All gameplay-affecting events are validated server-side; clients are not trusted.
 
+**Gambler Street** is a meta-progression subsystem (seeded RNG, bet state machine): `src/shared/systems/GamblerStreetEngine.ts` runs pure in shared/; `src/shared/config/gambler-street.ts` holds tuning; `src/client/scenes/GamblerStreetScene.ts` renders the UI. No dedicated server service.
+
 ### Client flow
 
-`src/client/main.ts` registers Phaser scenes (order is significant): `BootScene → MainMenuScene → LobbyScene → BombermanShopScene → BombsShopScene → MatchScene → ResultsScene`, plus `TutorialOverlayScene` which runs in parallel over `MatchScene`.
+`src/client/main.ts` registers Phaser scenes (order is significant): `BootScene → MainMenuScene → LobbyScene → BombermanShopScene → BombsShopScene → GamblerStreetScene → MatchScene → ResultsScene → TutorialOverlayScene → TooltipScene`.
 
 Rendering is split into systems under `src/client/systems/` (`MapRenderer`, `BombRenderer`, `FogRenderer`, `BombermanSpriteSystem`, `BombermanAnimations`, `ActivityIndicator`, etc.). `MatchScene` wires them to state updates.
 
@@ -75,15 +77,15 @@ Rendering is split into systems under `src/client/systems/` (`MapRenderer`, `Bom
 
 ### Data model
 
-See `src/shared/types/match.ts` for the full `MatchState` shape. Key nouns: `BombermanState`, `Chest`, `DoorInstance`, `DroppedBody`, `ActiveFlare`, `BombInstance`, `FireTile`, `LightTile`, `SmokeCloud`, `Mine`, `PhosphorusPending`. All bomb behavior is data-driven from `src/shared/config/bombs.ts` + `BOMB_CATALOG`; balance constants in `src/shared/config/balance.ts`; chest loot (bombs **and** treasures) in `src/shared/config/chests.ts`.
+See `src/shared/types/match.ts` for the full `MatchState` shape. Key nouns: `BombermanState`, `Chest`, `DoorInstance`, `DroppedBody`, `ActiveFlare`, `BombInstance`, `FireTile`, `LightTile`, `SmokeCloud`, `Mine`, `PhosphorusPending`. All bomb behavior is data-driven from `src/shared/config/bombs.ts` + `BOMB_CATALOG`; balance constants in `src/shared/config/balance.ts`; chest loot (bombs **and** treasures) in `src/shared/config/chests.ts`. **Bomberman tiers** (`src/shared/config/bomberman-tiers.ts`) drive inventory slot counts, treasure stack caps, and shop prices per tier — touch this when adjusting character progression.
 
-**Treasures** are the in-match currency picked up from chests + dead bodies (10 types, defined in `src/shared/config/treasures.ts`). Stored as a sparse `TreasureBundle = Partial<Record<TreasureType, number>>` on `Chest`, `DroppedBody`, `BombermanState`, and `PlayerProfile`. Rolled with `rollTreasureLoot` (mirrors `rollBombLoot` — pick K unique types, distribute total by weight). Persistent profile stash is shown by `TreasureListWidget` in MainMenu, MatchScene HUD (top-right), Results, and Gambler Street. Coins (`PlayerProfile.coins`) remain the soft currency for shops but are **not** earned in-match.
+**Treasures** are the in-match currency picked up from chests + dead bodies (10 types, defined in `src/shared/config/treasures.ts`). Stored as a sparse `TreasureBundle = Partial<Record<TreasureType, number>>` on `Chest`, `DroppedBody`, `BombermanState`, and `PlayerProfile`. Rolled with `rollTreasureLoot` (mirrors `rollBombLoot` — pick K unique types, distribute total by weight). Persistent profile stash is shown by `TreasureListWidget` in MainMenu, MatchScene HUD (top-right), Results, and Gambler Street. Coins (`PlayerProfile.coins`) remain the soft currency for shops but are **not** earned in-match. Persistent `PlayerProfile` instances are stored as JSON files under `production/player-data/` by `PlayerStore`.
 
 Maps are JSON under `public/maps/`, authored in Tiled and converted via `npm run convert-map` (`tools/tiled-to-roombov.ts`). The pipeline expects a `Collision` layer.
 
 ### Tests
 
-`tests/` contains Vitest unit tests for the pure systems (`BombResolver`, `LineOfSight`, `Pathfinding`) plus two e2e smoke harnesses. New gameplay logic should be testable as a pure function of state — if it isn't, reconsider the design before adding the test.
+`tests/` contains Vitest unit tests: pure systems (`BombResolver`, `LineOfSight`, `Pathfinding`), economy subsystems (`gambler-street-engine`, `gambler-street-rewards`, `loot-roll`, `treasure-roll`, `shield-bomb`), plus two e2e smoke harnesses (`e2e-match`, `e2e-smoke`). New gameplay logic should be testable as a pure function of state — if it isn't, reconsider the design before adding the test.
 
 ## Conventions
 
@@ -102,3 +104,7 @@ The following files are auto-included by Claude Code and contain standards, coor
 @.claude/docs/context-management.md
 
 **Collaboration protocol** (from the template, still in force here): Question → Options → Decision → Draft → Approval. Ask before writing or editing files the user hasn't asked you to change; show drafts or summaries before large changes; never commit without explicit instruction.
+
+**Project documentation** — the following live in `docs/` and are useful cross-tool references:
+- `docs/PROJECT-SUMMARY.md` — ~530-line full context handoff with economy subsystems, character tiers, and all meta-progression systems
+- `docs/bot-behavior.md` — AI behavior tree and decision-making for `BotPlayer.ts`

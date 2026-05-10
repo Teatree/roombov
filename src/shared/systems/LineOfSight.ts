@@ -1,4 +1,24 @@
-import { TileType } from '../types/map.ts';
+import { TileType, type MapData, type TileCoord } from '../types/map.ts';
+
+const seeThroughCache = new WeakMap<object, Set<string>>();
+
+/**
+ * Build and cache the lookup set used by LoS for collision tiles that should
+ * block movement but not sight.
+ */
+export function getSeeThroughTileSet(map: Pick<MapData, 'seeThroughTiles'>): Set<string> | undefined {
+  const tiles = map.seeThroughTiles;
+  if (!tiles || tiles.length === 0) return undefined;
+
+  const key = map as object;
+  const cached = seeThroughCache.get(key);
+  if (cached) return cached;
+
+  const out = new Set<string>();
+  for (const t of tiles as TileCoord[]) out.add(`${t.x},${t.y}`);
+  seeThroughCache.set(key, out);
+  return out;
+}
 
 /**
  * Check line of sight between two pixel positions using the Amanatides-Woo
@@ -33,6 +53,8 @@ export function hasLineOfSight(
   closedDoorTiles?: Set<string>,
   /** Extra tiles that block sight just like a wall. Used for active Shield Walls. */
   blockingTiles?: Set<string>,
+  /** Collision tiles that block movement but not vision. */
+  seeThroughTiles?: Set<string>,
 ): boolean {
   const startTx = Math.floor(x1 / tileSize);
   const startTy = Math.floor(y1 / tileSize);
@@ -45,10 +67,12 @@ export function hasLineOfSight(
   const isBlocker = (cx: number, cy: number): boolean => {
     if (cx === startTx && cy === startTy) return false;
     if (cx === endTx && cy === endTy) return false;
+    const key = `${cx},${cy}`;
+    if (closedDoorTiles && closedDoorTiles.has(key)) return true;
+    if (blockingTiles && blockingTiles.has(key)) return true;
+    if (seeThroughTiles && seeThroughTiles.has(key)) return false;
     const t = grid[cy]?.[cx];
     if (t === TileType.WALL || t === TileType.FURNITURE) return true;
-    if (closedDoorTiles && closedDoorTiles.has(`${cx},${cy}`)) return true;
-    if (blockingTiles && blockingTiles.has(`${cx},${cy}`)) return true;
     return false;
   };
 

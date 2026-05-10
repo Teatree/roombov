@@ -50,6 +50,12 @@ export interface MapData {
   height: number;
   tileSize: number;
   grid: TileType[][];
+  /**
+   * Collision tiles that block movement but do not block line-of-sight.
+   * Populated by the Tiled converter from Collision-layer tiles whose
+   * tileset tile has a truthy `seeThrough` property.
+   */
+  seeThroughTiles?: TileCoord[];
   spawns: SpawnPoint[];
   escapeTiles: EscapeTile[];
   /** Zones where Tier 1 chests spawn (small: coins + 1 bomb). */
