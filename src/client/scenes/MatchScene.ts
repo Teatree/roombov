@@ -1215,13 +1215,16 @@ export class MatchScene extends Phaser.Scene {
         this.bombermanSpriteSystem?.applyTeleportEvent(playerId, toX, toY);
         // Puff effects at origin and destination (TO puff on pearlDecalLayer = RTS-fog gated)
         this.bombRenderer?.spawnTeleportPuff(fromX, fromY, puffDuration, true);  // FROM: above fog (visible like explosions)
-        this.bombRenderer?.spawnTeleportPuff(toX, toY, puffDuration, false);  // TO: below fog (hidden)
+        this.bombRenderer?.spawnTeleportPuff(toX, toY, puffDuration, false, this.fogRenderer?.isVisible(toX, toY) ?? false);  // TO: suppressed entirely when destination is fogged
       });
       // Stamp decals after the puff finishes (at the end of the transition)
       const teleportSpawnTurn = this.state?.turnNumber ?? 0;
       this.time.delayedCall(explosionStartMs + puffDuration, () => {
-        this.bombRenderer?.stampTeleportDecal(fromX, fromY, teleportSpawnTurn);
-        this.bombRenderer?.stampTeleportDecal(toX, toY, teleportSpawnTurn);
+        // Decals are stamped late in the transition (post-puff) — by then, fog
+        // may have re-fallen. Pass current LOS so the decal is born hidden
+        // when fogged, avoiding a one-frame flash before updatePearlDecalVisibility.
+        this.bombRenderer?.stampTeleportDecal(fromX, fromY, teleportSpawnTurn, this.fogRenderer?.isVisible(fromX, fromY) ?? false);
+        this.bombRenderer?.stampTeleportDecal(toX, toY, teleportSpawnTurn, this.fogRenderer?.isVisible(toX, toY) ?? false);
       });
     }
 
@@ -1333,7 +1336,8 @@ export class MatchScene extends Phaser.Scene {
         const deathMs = isMeleeKill
           ? deathAnimationDurationMs()
           : (this.bombermanSpriteSystem?.applyDeathEvent(playerId, x, y) ?? deathAnimationDurationMs());
-        this.bombRenderer?.emitBloodSplash(x, y);
+        // Death-time blood splash removed by request — only the hurt-trail
+        // puddles (state.bloodTiles) remain.
         if (playerId === this.myPlayerId) {
           this.myDeathAt = Date.now();
           this.inputMode = { kind: 'idle' };
@@ -1596,6 +1600,16 @@ export class MatchScene extends Phaser.Scene {
       this.bloodDecals.set(key, g);
     }
 
+    // Strict LOS gate for blood splats: lesser fog (0.55 alpha) doesn't hide
+    // depth-25 graphics on its own, so hide them explicitly when not in LOS.
+    // Reappear on re-entry. Per "never show over fog of war" rule.
+    for (const [key, g] of this.bloodDecals) {
+      const coords = key.slice(6).split(',');
+      const bx = Number(coords[0]);
+      const by = Number(coords[1]);
+      g.setVisible(this.fogRenderer?.isVisible(bx, by) ?? true);
+    }
+
     // Explosion decals: only visible if tile is currently in LOS (RTS fog)
     this.bombRenderer?.updateDecalVisibility((x, y) => {
       const key = `decal_${x},${y}`;
@@ -1605,6 +1619,10 @@ export class MatchScene extends Phaser.Scene {
       }
       return this.knownEntities.has(key) && (this.fogRenderer?.isDiscovered(x, y) ?? false);
     });
+
+    // Pearl decals: stricter rule than scorch — visible only while currently
+    // in LOS. No seen-dim persistence (would bleed through lesser fog).
+    this.bombRenderer?.updatePearlDecalVisibility((x, y) => this.fogRenderer?.isVisible(x, y) ?? false);
 
     // Path line + staged-action highlight
     this.drawPath();

@@ -399,7 +399,10 @@ export class BombRenderer {
     } else {
       startAnim();
     }
-    this.scene.time.delayedCall(Math.max(0, startDelayMs) + dur, stampAllDecals);
+    // Stamp at the explosion peak (mid-burst) so the decal is mostly faded in
+    // by the time the explosion finishes, instead of starting its fade after.
+    // This avoids the decal materializing under the freshly-fallen fog overlay.
+    this.scene.time.delayedCall(Math.max(0, startDelayMs) + Math.round(dur * 0.5), stampAllDecals);
 
     // Lingering smoke particles after the main burst — visible even after
     // the transition ends, giving the explosion a longer perceived duration.
@@ -478,9 +481,10 @@ export class BombRenderer {
         break;
     }
 
-    // Fade in gradually, 20% transparent at rest
+    // Fade in gradually, 20% transparent at rest. 150% of the original speed
+    // so the decal is fully visible before the turn boundary / fog drop.
     g.setAlpha(0);
-    this.scene.tweens.add({ targets: g, alpha: 0.8, duration: 800, ease: 'Sine.easeIn' });
+    this.scene.tweens.add({ targets: g, alpha: 0.8, duration: 533, ease: 'Sine.easeIn' });
 
     this.decals.set(key, g);
     this.scorchKeys.add(key);
@@ -1216,8 +1220,12 @@ export class BombRenderer {
    * @param aboveFog — if true, renders on explosionLayer (visible through fog);
    *   if false, renders on pearlDecalLayer (RTS-fog gated). FROM puff uses true,
    *   TO puff uses false.
+   * @param isVisible — only consulted when aboveFog=false. When the destination
+   *   tile is not in the local player's LOS, the entire puff (and its sparkles)
+   *   is suppressed so it doesn't bleed through the 0.55-alpha lesser fog.
    */
-  spawnTeleportPuff(tileX: number, tileY: number, durationMs: number, aboveFog = false): void {
+  spawnTeleportPuff(tileX: number, tileY: number, durationMs: number, aboveFog = false, isVisible = true): void {
+    if (!aboveFog && !isVisible) return;
     const ts = this.tileSize;
     const cx = tileX * ts + ts / 2;
     const cy = tileY * ts + ts / 2;
@@ -1262,8 +1270,13 @@ export class BombRenderer {
     }
   }
 
-  /** Stamp a greenish-blue Ender Pearl decal on a tile. */
-  stampTeleportDecal(tileX: number, tileY: number, spawnTurn: number): void {
+  /**
+   * Stamp a greenish-blue Ender Pearl decal on a tile.
+   * @param isVisible — if false, the decal is created hidden so it doesn't
+   *   flash through lesser fog for one frame before rebuildEntities runs.
+   *   Each subsequent rebuildEntities will re-evaluate via updatePearlDecalVisibility.
+   */
+  stampTeleportDecal(tileX: number, tileY: number, spawnTurn: number, isVisible = true): void {
     const key = `${tileX},${tileY}`;
     if (this.decals.has(key)) return;
     const ts = this.tileSize;
@@ -1283,6 +1296,7 @@ export class BombRenderer {
     // Bright center dot
     g.fillStyle(0x33aa88, 0.5);
     g.fillCircle(cx, cy, ts * 0.08);
+    if (!isVisible) g.setVisible(false);
     this.decals.set(key, g);
     this.pearlKeys.add(key);
   }
@@ -1310,6 +1324,20 @@ export class BombRenderer {
    */
   updateDecalVisibility(isVisible: (x: number, y: number) => boolean): void {
     for (const [key, g] of this.decals) {
+      const [sx, sy] = key.split(',').map(Number);
+      g.setVisible(isVisible(sx, sy));
+    }
+  }
+
+  /**
+   * Strict-LOS visibility for pearl decals — hidden whenever the tile isn't
+   * currently in LOS (no seen-dim persistence). Call AFTER updateDecalVisibility
+   * each frame so it overrides the looser scorch-decal rule for pearl keys.
+   */
+  updatePearlDecalVisibility(isVisible: (x: number, y: number) => boolean): void {
+    for (const key of this.pearlKeys) {
+      const g = this.decals.get(key);
+      if (!g) continue;
       const [sx, sy] = key.split(',').map(Number);
       g.setVisible(isVisible(sx, sy));
     }

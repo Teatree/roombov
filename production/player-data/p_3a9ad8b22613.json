@@ -1,102 +1,21 @@
 {
   "id": "p_3a9ad8b22613",
   "createdAt": 1775946762703,
-  "updatedAt": 1778454162862,
+  "updatedAt": 1778542113026,
   "coins": 1160,
   "treasures": {
-    "fish": 158,
-    "books": 91,
-    "grapes": 165,
-    "jade": 346,
-    "coffee": 205,
-    "bones": 136,
-    "mushrooms": 189,
-    "amulets": 541,
-    "lanterns": 189,
-    "chalice": 195
+    "fish": 327,
+    "books": 252,
+    "grapes": 361,
+    "jade": 598,
+    "coffee": 350,
+    "bones": 257,
+    "mushrooms": 312,
+    "amulets": 777,
+    "lanterns": 298,
+    "chalice": 358
   },
   "ownedBombermen": [
-    {
-      "id": "owned_p_3a9ad8b22613_1777922617938_mbej",
-      "name": "Big Jake",
-      "tier": "paid",
-      "colors": {
-        "shirt": 4380518,
-        "pants": 3901992,
-        "hair": 11704372
-      },
-      "tint": 9754348,
-      "character": "char3",
-      "inventory": {
-        "slots": [
-          {
-            "type": "delay_tricky",
-            "count": 4
-          },
-          {
-            "type": "bomb_wide",
-            "count": 4
-          },
-          {
-            "type": "bomb",
-            "count": 4
-          },
-          {
-            "type": "flash",
-            "count": 2
-          },
-          null
-        ]
-      },
-      "purchasedAt": 1777922617938,
-      "sourceTemplateId": "cycle_1777922049769_2_paid",
-      "maxCustomSlots": 5,
-      "stackSize": 7
-    },
-    {
-      "id": "owned_p_3a9ad8b22613_1777927289856_ynv2",
-      "name": "Hera",
-      "tier": "paid_expensive",
-      "colors": {
-        "shirt": 4364503,
-        "pants": 9066280,
-        "hair": 11678784
-      },
-      "tint": 15641473,
-      "character": "char4",
-      "maxCustomSlots": 6,
-      "stackSize": 9,
-      "inventory": {
-        "slots": [
-          {
-            "type": "shield",
-            "count": 1
-          },
-          {
-            "type": "ender_pearl",
-            "count": 5
-          },
-          {
-            "type": "banana",
-            "count": 6
-          },
-          {
-            "type": "flash",
-            "count": 5
-          },
-          {
-            "type": "fart_escape",
-            "count": 2
-          },
-          {
-            "type": "bomb",
-            "count": 9
-          }
-        ]
-      },
-      "purchasedAt": 1777927289856,
-      "sourceTemplateId": "cycle_1777927081469_4_paid_expensive"
-    },
     {
       "id": "owned_p_3a9ad8b22613_1777931508771_k9eb",
       "name": "Duffy",
@@ -114,24 +33,27 @@
         "slots": [
           {
             "type": "fart_escape",
-            "count": 4
+            "count": 3
           },
           {
             "type": "bomb_wide",
-            "count": 3
+            "count": 5
           },
           {
             "type": "banana",
-            "count": 3
+            "count": 4
           },
-          null
+          {
+            "type": "ender_pearl",
+            "count": 5
+          }
         ]
       },
       "purchasedAt": 1777931508771,
       "sourceTemplateId": "cycle_p_3a9ad8b22613_morqiidr_1_free"
     }
   ],
-  "equippedBombermanId": "owned_p_3a9ad8b22613_1777922617938_mbej",
+  "equippedBombermanId": "owned_p_3a9ad8b22613_1777931508771_k9eb",
   "bombStockpile": {
     "flare": 10,
     "delay_tricky": 11,
