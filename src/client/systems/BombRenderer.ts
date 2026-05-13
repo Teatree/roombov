@@ -777,7 +777,10 @@ export class BombRenderer {
     });
   }
 
-  private flareFlash(tile: Tile, durationMs: number): void {
+  /** Public — used by MatchScene to play the flare-flash burst for each
+   *  UAV-spawned flare. Identical to the burst player flares produce on
+   *  detonation (rendered into the explosionLayer). */
+  flareFlash(tile: Tile, durationMs: number): void {
     const ts = this.tileSize;
     const cx = tile.x * ts + ts / 2;
     const cy = tile.y * ts + ts / 2;

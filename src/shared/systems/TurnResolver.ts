@@ -248,7 +248,12 @@ export type TurnEvent =
    * Subject is a bomberman if `playerId` is set, otherwise a bomb (`bombId`).
    * Drives the yellow-teleport vfx + light-gray decal on the client.
    */
-  | { kind: 'shield_pushed'; wallId: string; playerId?: string; bombId?: string; fromX: number; fromY: number; toX: number; toY: number };
+  | { kind: 'shield_pushed'; wallId: string; playerId?: string; bombId?: string; fromX: number; fromY: number; toX: number; toY: number }
+  /** UAV overflight fired this turn; flares were scattered across walkable
+   *  tiles to reveal the whole map for the standard 3-turn flare lifetime.
+   *  `tiles` is the list of flare center positions so the client can play
+   *  the same flash burst VFX a player-thrown flare produces on detonation. */
+  | { kind: 'uav_fired'; turnNumber: number; tiles: Tile[] };
 
 export function resolveTurn(
   prev: MatchState,
@@ -1469,6 +1474,45 @@ export function resolveTurn(
       triggeredBy: by,
       tiles,
     });
+  }
+
+  // --- 5c. UAV overflight (real matches only) ---
+  // On scheduled turns, scatter flares across a 7-tile grid covering the map.
+  // Radius-4 flares with stride 7 means every grid cell overlaps its neighbors
+  // by 2 tiles, guaranteeing full coverage of any walkable tile. Each grid
+  // anchor snaps to its nearest walkable tile via BFS; if a region has no
+  // walkable tile, nothing spawns there. Flares are otherwise identical to
+  // player-thrown flares (initialRadius=4, turnsRemaining=3, default visual).
+  if (!state.isTutorial
+      && state.uavNextFireTurn !== undefined
+      && state.turnNumber === state.uavNextFireTurn) {
+    const stride = 7;
+    const occupied = new Set<string>();
+    const uavTiles: Tile[] = [];
+    for (let cy = Math.floor(stride / 2); cy < map.height; cy += stride) {
+      for (let cx = Math.floor(stride / 2); cx < map.width; cx += stride) {
+        const target = nearestWalkable(map, cx, cy);
+        if (!target) continue;
+        const key = `${target.x},${target.y}`;
+        if (occupied.has(key)) continue;
+        occupied.add(key);
+        const id = `uav_${state.turnNumber}_${target.x}_${target.y}`;
+        state.flares.push({
+          id,
+          x: target.x,
+          y: target.y,
+          initialRadius: 4,
+          turnsRemaining: 3,
+        });
+        uavTiles.push({ x: target.x, y: target.y });
+      }
+    }
+    // Schedule next UAV. Deterministic seed from match + turn so reconnects
+    // and replays agree.
+    const seedBase = hashString(`uav:${state.matchId}:${state.turnNumber}`);
+    const rng = createSeededRandom(seedBase);
+    state.uavNextFireTurn = state.turnNumber + 20 + Math.floor(rng() * 11); // [20, 30]
+    events.push({ kind: 'uav_fired', turnNumber: state.turnNumber, tiles: uavTiles });
   }
 
   // --- 6. Fire-tile standing damage (Bombermen on existing fire tiles) ---

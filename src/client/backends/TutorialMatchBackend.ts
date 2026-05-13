@@ -485,6 +485,8 @@ export class TutorialMatchBackend implements MatchBackend {
       phosphorusPending: [],
       shieldWalls: [],
       shieldShards: [],
+      isTutorial: true,
+      // uavNextFireTurn intentionally omitted — tutorial has no UAV.
     };
   }
 }

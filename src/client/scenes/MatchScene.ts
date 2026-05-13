@@ -189,6 +189,12 @@ export class MatchScene extends Phaser.Scene {
    *  bomberman is in Melee Trap Mode. Disappears instantly on exit. */
   private meleeHudIcon: Phaser.GameObjects.Image | null = null;
   private errorText!: Phaser.GameObjects.Text;
+  // UAV indicator (top HUD) + "UAV is Revealing the whole area" banner.
+  // Hidden in tutorial matches. Throbs when the next UAV is <=3 turns away.
+  private uavText: Phaser.GameObjects.Text | null = null;
+  private uavPulseTween: Phaser.Tweens.Tween | null = null;
+  private uavBannerText: Phaser.GameObjects.Text | null = null;
+  private uavBannerTimer: Phaser.Time.TimerEvent | null = null;
 
   // Loot panel — appears above the bomb tray when standing on loot
   private lootPanelObjects: Phaser.GameObjects.GameObject[] = [];
@@ -565,6 +571,14 @@ export class MatchScene extends Phaser.Scene {
     this.stunHudOverlay = null;
     this.stunHudLabel = null;
     this.meleeHudIcon = null;
+    this.uavText = null;
+    this.uavPulseTween?.stop();
+    this.uavPulseTween?.remove();
+    this.uavPulseTween = null;
+    this.uavBannerText?.destroy();
+    this.uavBannerText = null;
+    this.uavBannerTimer?.remove();
+    this.uavBannerTimer = null;
     this.lastBuiltSlotCount = -1;
     for (const esc of this.escapeSprites) esc.sprite.destroy();
     this.escapeSprites = [];
@@ -966,6 +980,20 @@ export class MatchScene extends Phaser.Scene {
   /** One-shot visuals from the server's authoritative turn resolution. */
   private onTurnResult(events: Array<{ kind: string; [k: string]: unknown }>): void {
     if (!this.bombRenderer) return;
+
+    // UAV banner + flash burst. Per uav_fired event, play the same per-tile
+    // flareFlash burst a player-thrown flare produces on detonation at every
+    // UAV flare's center tile. The persistent flame on each tile is then
+    // drawn by syncFlares once the new state arrives.
+    for (const ev of events) {
+      if (ev.kind !== 'uav_fired') continue;
+      this.showUavBanner();
+      const tiles = (ev.tiles as Array<{ x: number; y: number }>) ?? [];
+      const flashMs = Math.round(BALANCE.match.transitionPhaseSeconds * 1000 * 0.5);
+      for (const t of tiles) {
+        this.bombRenderer.flareFlash({ x: t.x, y: t.y }, flashMs);
+      }
+    }
 
     // Drive Bomberman walk lerps + facing changes from `moved` events.
     // Each lerp lasts the full transition phase so the sprite physically
@@ -2362,6 +2390,12 @@ export class MatchScene extends Phaser.Scene {
       fontSize: '16px', color: '#aaaaaa', fontFamily: 'monospace',
     }).setOrigin(0.5, 0).setDepth(1001));
 
+    // UAV indicator — sits just below the turn counter at the top-center.
+    // Throbs when the next UAV is <=3 turns away; hidden in tutorial matches.
+    this.uavText = this.hud(this.add.text(width / 2, 30, '', {
+      fontSize: '13px', color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5, 0).setDepth(1001).setVisible(false));
+
     this.hpText = this.hud(this.add.text(width - 220, 14, 'HP --', {
       fontSize: '16px', color: '#ff6666', fontFamily: 'monospace', fontStyle: 'bold',
     }).setDepth(1001));
@@ -2520,6 +2554,20 @@ export class MatchScene extends Phaser.Scene {
     this.turnText.setText(`Turn ${this.state.turnNumber} / ${BALANCE.match.turnLimit}`);
     this.turnText.setColor(turnsLeft <= BALANCE.match.turnsLeftWarning ? '#ff6644' : '#aaaaaa');
 
+    // UAV countdown + throb starting 3 turns out. Hidden in tutorial matches
+    // and whenever no UAV is scheduled.
+    const nextFire = this.state.uavNextFireTurn;
+    if (this.state.isTutorial || nextFire === undefined) {
+      this.uavText?.setVisible(false);
+      this.stopUavPulse();
+    } else {
+      const turnsUntil = nextFire - this.state.turnNumber;
+      this.uavText?.setText(`✈ UAV: ${nextFire}`);
+      this.uavText?.setVisible(true);
+      if (turnsUntil <= 3 && turnsUntil > 0) this.startUavPulse();
+      else this.stopUavPulse();
+    }
+
     if (me && me.alive) {
       // Use the sprite system's *displayed* HP so the number tracks the
       // pip bar's delayed post-animation update instead of dropping
@@ -2548,6 +2596,42 @@ export class MatchScene extends Phaser.Scene {
     // while the local bomberman is trapped and crouching.
     const meleeTrap = !!me && me.alive && !!me.meleeTrapMode;
     this.meleeHudIcon?.setVisible(meleeTrap);
+  }
+
+  private startUavPulse(): void {
+    if (this.uavPulseTween || !this.uavText) return;
+    this.uavPulseTween = this.tweens.add({
+      targets: this.uavText,
+      scale: 1.2,
+      duration: 350,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+  }
+
+  private stopUavPulse(): void {
+    if (!this.uavPulseTween) return;
+    this.uavPulseTween.stop();
+    this.uavPulseTween.remove();
+    this.uavPulseTween = null;
+    this.uavText?.setScale(1);
+  }
+
+  private showUavBanner(): void {
+    if (this.uavBannerText) { this.uavBannerText.destroy(); this.uavBannerText = null; }
+    this.uavBannerTimer?.remove();
+    const { width, height } = this.scale;
+    this.uavBannerText = this.hud(this.add.text(width / 2, height / 2 - 60,
+      'UAV is Revealing the whole area',
+      {
+        fontSize: '24px', color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
+        stroke: '#000022', strokeThickness: 5,
+      }).setOrigin(0.5).setDepth(10000));
+    this.uavBannerTimer = this.time.delayedCall(3000, () => {
+      this.uavBannerText?.destroy();
+      this.uavBannerText = null;
+    });
   }
 
   private renderBombSlots(me: BombermanState): void {

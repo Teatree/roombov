@@ -304,6 +304,8 @@ export class MatchRoom {
       smokeClouds: [],
       mines: [],
       phosphorusPending: [],
+      isTutorial: false,
+      uavNextFireTurn: 20 + Math.floor(Math.random() * 11), // first UAV in turns 20-30
     };
   }
 

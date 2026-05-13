@@ -140,4 +140,11 @@ export interface MatchState {
   endReason?: 'all_escaped' | 'all_dead' | 'turn_limit';
   /** Ids of players who successfully escaped. */
   escapedPlayerIds?: string[];
+  /** True only while running inside TutorialMatchBackend. Disables UAV + any
+   *  future "real match only" automatic events. Defaults to false on server. */
+  isTutorial?: boolean;
+  /** Turn number on which the next UAV overflight fires. Undefined in tutorial
+   *  matches (UAV never schedules). Reset to current + [20, 30] whenever the
+   *  UAV fires. */
+  uavNextFireTurn?: number;
 }
