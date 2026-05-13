@@ -119,8 +119,7 @@ interface BombermanMap {
   seeThroughTiles?: { x: number; y: number }[];
   spawns: { id: number; x: number; y: number }[];
   escapeTiles: { id: number; x: number; y: number }[];
-  chest1Zones: { x: number; y: number; w: number; h: number }[];
-  chest2Zones: { x: number; y: number; w: number; h: number }[];
+  chestZones: { x: number; y: number; w: number; h: number }[];
   doors: { id: number; tiles: { x: number; y: number }[]; orientation: 'horizontal' | 'vertical' }[];
   tutorial?: {
     bot1: { x: number; y: number };
@@ -458,14 +457,19 @@ function rectLayerToZones(layer: TiledObjectLayer | undefined): { x: number; y: 
 
 const spawns = pointLayerToTiles(findObjectLayer('Spawns'));
 const escapeTiles = pointLayerToTiles(findObjectLayer('EscapeTiles', 'Exits'));
-// Chest zones — new names preferred, old names as fallback for transition
-const chest1Zones = rectLayerToZones(findObjectLayer('Chest1Zones', 'CoinZones', 'GoodiesZones', 'GoodieZones'));
-const chest2Zones = rectLayerToZones(findObjectLayer('Chest2Zones', 'BombZones', 'TurretZones'));
+// Chest zones — unified into a single type-agnostic list. The preferred
+// Tiled layer is `ChestZones`; the legacy split layers (Chest1Zones /
+// Chest2Zones plus their older aliases) are merged in for back-compat
+// until all maps are re-authored.
+const chestZones = [
+  ...rectLayerToZones(findObjectLayer('ChestZones')),
+  ...rectLayerToZones(findObjectLayer('Chest1Zones', 'CoinZones', 'GoodiesZones', 'GoodieZones')),
+  ...rectLayerToZones(findObjectLayer('Chest2Zones', 'BombZones', 'TurretZones')),
+];
 
 console.log(`\nSpawns: ${spawns.length}${spawns.length > 0 ? ' → ' + spawns.map(s => `(${s.x},${s.y})`).join(', ') : ''}`);
 console.log(`EscapeTiles: ${escapeTiles.length}${escapeTiles.length > 0 ? ' → ' + escapeTiles.map(e => `(${e.x},${e.y})`).join(', ') : ''}`);
-console.log(`Chest1Zones: ${chest1Zones.length}`);
-console.log(`Chest2Zones: ${chest2Zones.length}`);
+console.log(`ChestZones: ${chestZones.length}`);
 
 // Scan "Doors" tile layer — find connected groups of door tiles
 const doorLayer = tileLayers.find(l => l.name.toLowerCase() === 'doors');
@@ -560,8 +564,7 @@ const output: BombermanMap = {
   ...(seeThroughTiles.length > 0 ? { seeThroughTiles } : {}),
   spawns,
   escapeTiles,
-  chest1Zones,
-  chest2Zones,
+  chestZones,
   doors,
   ...(tutorial ? { tutorial } : {}),
 };

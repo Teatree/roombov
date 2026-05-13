@@ -162,7 +162,7 @@ export type TutorialStep =
   | {
       kind: 'spawnChest';
       chestId: string;
-      tier: 1 | 2;
+      tier: 1 | 2 | 3;
       x: number;
       y: number;
       /** Exact treasures to put in the chest (overrides any roll). */

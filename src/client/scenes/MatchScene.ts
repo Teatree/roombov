@@ -212,7 +212,7 @@ export class MatchScene extends Phaser.Scene {
 
   // Chest animated sprites (persistent, like escape hatches)
   private chestSprites: Array<{
-    id: string; x: number; y: number; tier: 1 | 2;
+    id: string; x: number; y: number; tier: 1 | 2 | 3;
     sprite: Phaser.GameObjects.Sprite;
     state: 'closed' | 'opening' | 'open' | 'closing';
     permanentlyOpened: boolean;
@@ -268,6 +268,7 @@ export class MatchScene extends Phaser.Scene {
     // Chests: 64x32 sheets, 4 frames of 16x32 each
     this.load.spritesheet('chest_1', 'sprites/chest_1.png', { frameWidth: 16, frameHeight: 32 });
     this.load.spritesheet('chest_2', 'sprites/chest_2.png', { frameWidth: 16, frameHeight: 32 });
+    this.load.spritesheet('chest_3', 'sprites/chest_3.png', { frameWidth: 16, frameHeight: 32 });
     // Doors: loaded as a plain image, frames added manually in create()
     this.load.image('double_doors', 'sprites/double_doors.png');
     // Sword icon — Melee Trap Mode indicator (HUD + above-head overlay).
@@ -345,7 +346,7 @@ export class MatchScene extends Phaser.Scene {
 
     // Chest animations (same pattern as escape hatches)
     if (!this.anims.exists('chest_1_closed')) {
-      for (const tier of [1, 2] as const) {
+      for (const tier of [1, 2, 3] as const) {
         const key = `chest_${tier}`;
         this.anims.create({ key: `${key}_closed`,  frames: this.anims.generateFrameNumbers(key, { start: 0, end: 0 }), repeat: -1 });
         this.anims.create({ key: `${key}_opening`, frames: this.anims.generateFrameNumbers(key, { start: 0, end: 3 }), frameRate: 8, repeat: 0 });
@@ -1728,7 +1729,7 @@ export class MatchScene extends Phaser.Scene {
     const existingIds = new Set(this.chestSprites.map(cs => cs.id));
     for (const chest of stateChests) {
       if (existingIds.has(chest.id)) continue;
-      const key = `chest_${chest.tier}` as 'chest_1' | 'chest_2';
+      const key = `chest_${chest.tier}` as 'chest_1' | 'chest_2' | 'chest_3';
       const sprite = this.add.sprite(
         chest.x * mapTs + mapTs / 2,
         chest.y * mapTs + mapTs,
@@ -1776,7 +1777,7 @@ export class MatchScene extends Phaser.Scene {
   private updateChests(): void {
     if (!this.state) return;
     for (const cs of this.chestSprites) {
-      const key = `chest_${cs.tier}` as 'chest_1' | 'chest_2';
+      const key = `chest_${cs.tier}` as 'chest_1' | 'chest_2' | 'chest_3';
 
       // RTS fog: chest only visible if tile is in LOS or was previously discovered
       const entityId = `chest_${cs.id}`;

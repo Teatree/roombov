@@ -54,7 +54,7 @@ const UNIFORM_TREASURE_WEIGHTS: Partial<Record<TreasureType, number>> = {
   amulets: 100,
 };
 
-export const CHEST_CONFIG: Record<1 | 2, ChestTierConfig> = {
+export const CHEST_CONFIG: Record<1 | 2 | 3, ChestTierConfig> = {
   1: {
     totalBombs: 5,
     slotCount: [1, 2],
@@ -100,4 +100,50 @@ export const CHEST_CONFIG: Record<1 | 2, ChestTierConfig> = {
     treasureSlotCount: [5, 5],
     treasureWeights: { ...UNIFORM_TREASURE_WEIGHTS },
   },
+  3: {
+    totalBombs: 12,
+    slotCount: [3, 4],
+    weights: {
+      bomb: 30,
+      bomb_wide: 30,
+      delay_tricky: 30,
+      banana: 30,
+      flash: 75,
+      contact: 60,
+      molotov: 75,
+      ender_pearl: 120,
+      fart_escape: 60,
+      motion_detector_flare: 75,
+      flare: 60,
+      phosphorus: 100,
+      cluster_bomb: 100,
+      big_huge: 100,
+      shield: 120,
+    },
+    totalTreasures: 150,
+    treasureSlotCount: [6, 6],
+    treasureWeights: {
+      ...UNIFORM_TREASURE_WEIGHTS,
+      chalice: 250,
+      jade: 200,
+      books: 200,
+      amulets: 175,
+      lanterns: 150,
+    },
+  },
 };
+
+/**
+ * Per-match chest spawn caps. The map exposes `chestZones` (type-agnostic
+ * rectangles); at match start the server picks up to N zones at random and
+ * assigns each zone one chest type from this table. Higher tier = rarer.
+ *
+ * If the map has fewer zones than the sum of `count` values, the excess
+ * chests are dropped from the shuffled pool tail (each type loses chests
+ * roughly in proportion to its count).
+ */
+export const CHEST_SPAWN_TABLE: Array<{ tier: 1 | 2 | 3; count: number }> = [
+  { tier: 1, count: 7 },
+  { tier: 2, count: 3 },
+  { tier: 3, count: 1 },
+];

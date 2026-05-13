@@ -132,15 +132,13 @@
       "y": 3
     }
   ],
-  "chest1Zones": [
+  "chestZones": [
     {
       "x": 5,
       "y": 5,
       "w": 1,
       "h": 1
-    }
-  ],
-  "chest2Zones": [
+    },
     {
       "x": 7,
       "y": 2,

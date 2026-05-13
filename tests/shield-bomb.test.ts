@@ -16,7 +16,7 @@ function openMap(size = 21): MapData {
   }
   return {
     id: 'test_open', name: 'test open', width: size, height: size, tileSize: 16,
-    grid, spawns: [], escapeTiles: [], chest1Zones: [], chest2Zones: [],
+    grid, spawns: [], escapeTiles: [], chestZones: [],
   };
 }
 

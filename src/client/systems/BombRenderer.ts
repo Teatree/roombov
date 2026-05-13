@@ -600,37 +600,95 @@ export class BombRenderer {
     const cx = tile.x * ts + ts / 2;
     const cy = tile.y * ts + ts / 2;
 
-    const g = this.scene.add.graphics();
-    this.explosionLayer.add(g);
+    // Short bright flash on impact — sells the "hard hit" beat. ~25% of total
+    // duration, fully gone before the dust cloud finishes expanding.
+    const flashMs = Math.max(80, Math.min(durationMs * 0.3, 180));
+    const flash = this.scene.add.graphics();
+    this.explosionLayer.add(flash);
     this.scene.tweens.add({
-      targets: g,
+      targets: flash,
+      duration: flashMs,
+      ease: 'Cubic.easeOut',
+      onUpdate: (tw) => {
+        const t = tw.progress;
+        flash.clear();
+        // Hot inner core
+        flash.fillStyle(0xffeecc, (1 - t) * 0.9);
+        flash.fillCircle(cx, cy, ts * (0.18 + 0.18 * t));
+        // Warm outer halo
+        flash.fillStyle(0xffaa66, (1 - t) * 0.5);
+        flash.fillCircle(cx, cy, ts * (0.3 + 0.25 * t));
+      },
+      onComplete: () => flash.destroy(),
+    });
+
+    // Fast outward shockwave ring — snaps to ~1 tile in the first half of the
+    // duration, then fades. Communicates "impact" much more than the slow
+    // gray puff did.
+    const shock = this.scene.add.graphics();
+    this.explosionLayer.add(shock);
+    const shockMs = Math.min(durationMs * 0.6, 320);
+    this.scene.tweens.add({
+      targets: shock,
+      duration: shockMs,
+      ease: 'Cubic.easeOut',
+      onUpdate: (tw) => {
+        const t = tw.progress;
+        shock.clear();
+        shock.lineStyle(3, 0xddccaa, (1 - t) * 0.9);
+        shock.strokeCircle(cx, cy, ts * (0.1 + 0.65 * t));
+      },
+      onComplete: () => shock.destroy(),
+    });
+
+    // Thicker, bigger dust cloud — replaces the small subtle puff. Two
+    // overlapping circles give it volume without resorting to particles.
+    const cloud = this.scene.add.graphics();
+    this.explosionLayer.add(cloud);
+    this.scene.tweens.add({
+      targets: cloud,
       duration: durationMs,
       ease: 'Cubic.easeOut',
       onUpdate: (tw) => {
         const t = tw.progress;
-        g.clear();
-        g.fillStyle(0xaaaaaa, (1 - t) * 0.7);
-        g.fillCircle(cx, cy, ts * (0.2 + 0.25 * t));
-        g.lineStyle(2, 0x776655, (1 - t) * 0.8);
-        g.strokeCircle(cx, cy, ts * (0.15 + 0.3 * t));
+        cloud.clear();
+        cloud.fillStyle(0xbbaa99, (1 - t) * 0.75);
+        cloud.fillCircle(cx, cy, ts * (0.25 + 0.35 * t));
+        cloud.fillStyle(0x887766, (1 - t) * 0.55);
+        cloud.fillCircle(cx + ts * 0.08, cy - ts * 0.06, ts * (0.18 + 0.25 * t));
+        cloud.fillCircle(cx - ts * 0.1, cy + ts * 0.07, ts * (0.15 + 0.22 * t));
       },
-      onComplete: () => g.destroy(),
+      onComplete: () => cloud.destroy(),
     });
 
-    // A few dust motes
-    for (let i = 0; i < 4; i++) {
-      const angle = Math.random() * Math.PI * 2;
+    // Debris spray — bigger dust motes flung further out. Mix sizes/colors
+    // for a chunkier feel; some launched at a slight upward bias to read as
+    // bouncing pebbles rather than a flat 2D ring.
+    const moteCount = 10;
+    for (let i = 0; i < moteCount; i++) {
+      const angle = (i / moteCount) * Math.PI * 2 + Math.random() * 0.4;
+      const dist = ts * (0.55 + Math.random() * 0.35);
+      const size = 1.5 + Math.random() * 1.8;
+      const isStone = Math.random() < 0.4;
       const dot = this.scene.add.graphics();
       this.explosionLayer.add(dot);
-      dot.fillStyle(0x998877, 0.8);
-      dot.fillCircle(0, 0, 1.5);
+      dot.fillStyle(isStone ? 0x665544 : 0xbbaa99, 0.95);
+      if (isStone) {
+        // Tiny rect for stone chip
+        dot.fillRect(-size / 2, -size / 2, size, size);
+      } else {
+        dot.fillCircle(0, 0, size);
+      }
       dot.setPosition(cx, cy);
+      const targetX = cx + Math.cos(angle) * dist;
+      const targetY = cy + Math.sin(angle) * dist - (Math.random() * ts * 0.15);
       this.scene.tweens.add({
         targets: dot,
-        x: cx + Math.cos(angle) * ts * 0.4,
-        y: cy + Math.sin(angle) * ts * 0.4,
+        x: targetX,
+        y: targetY,
         alpha: 0,
-        duration: durationMs,
+        duration: durationMs * (0.7 + Math.random() * 0.3),
+        ease: 'Quad.easeOut',
         onComplete: () => dot.destroy(),
       });
     }

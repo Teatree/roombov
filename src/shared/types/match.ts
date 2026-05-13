@@ -33,7 +33,7 @@ export interface MatchListing {
  *  steps on it. */
 export interface Chest {
   id: string;
-  tier: 1 | 2;
+  tier: 1 | 2 | 3;
   x: number;
   y: number;
   /** Remaining treasures — emptied after the first player steps on the tile. */

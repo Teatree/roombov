@@ -1652,8 +1652,7 @@
       "y": 5
     }
   ],
-  "chest1Zones": [],
-  "chest2Zones": [
+  "chestZones": [
     {
       "x": 10,
       "y": 9,

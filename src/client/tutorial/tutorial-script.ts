@@ -327,12 +327,12 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   // Skip the long walk from the ambush corner to the hatch — drop the
   // player right next to it so the escape beat stays punchy.
   { kind: 'panCamera', focus: { x: 25, y: 5 }, durationMs: 900 },
-  { kind: 'dialogue', portrait: 'char4_neutral', text: 'That is the hatch. Walk onto it, then wait one turn.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'That is the hatch. Step onto it to escape.' },
   { kind: 'highlight', target: { kind: 'tile', x: 25, y: 5, shape: 'circle' } },
-  // Click the hatch — client BFS-walks there.
+  // Reaching the hatch hard-ends the tutorial — we deliberately do NOT
+  // wait for the resolver to fire the actual escape, because the idle-wait
+  // here was unreliable and left players stuck on the hatch tile.
   { kind: 'waitForAction', expected: { kind: 'reachTile', x: 25, y: 5 } },
-  { kind: 'dialogue', portrait: 'char4_neutral', text: 'On the hatch. Now wait one turn.' },
-  { kind: 'waitForAction', expected: { kind: 'idle' } },
   { kind: 'clearHighlight' },
   { kind: 'dialogue', portrait: 'char4_neutral', text: 'Extracted. You keep everything you carried.' },
 

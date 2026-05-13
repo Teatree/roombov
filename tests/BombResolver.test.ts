@@ -24,7 +24,7 @@ function openMap(size = 40): MapData {
   }
   return {
     id: 'test_open', name: 'test open', width: size, height: size, tileSize: 16,
-    grid, spawns: [], escapeTiles: [], chest1Zones: [], chest2Zones: [],
+    grid, spawns: [], escapeTiles: [], chestZones: [],
   };
 }
 
@@ -38,7 +38,7 @@ function blankMap(width: number, height: number): MapData {
   }
   return {
     id: 'test_blank', name: 'test blank', width, height, tileSize: 16,
-    grid, spawns: [], escapeTiles: [], chest1Zones: [], chest2Zones: [],
+    grid, spawns: [], escapeTiles: [], chestZones: [],
   };
 }
 

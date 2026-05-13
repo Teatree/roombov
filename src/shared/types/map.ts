@@ -58,10 +58,13 @@ export interface MapData {
   seeThroughTiles?: TileCoord[];
   spawns: SpawnPoint[];
   escapeTiles: EscapeTile[];
-  /** Zones where Tier 1 chests spawn (small: coins + 1 bomb). */
-  chest1Zones: Zone[];
-  /** Zones where Tier 2 chests spawn (large: more coins + 2 bombs). */
-  chest2Zones: Zone[];
+  /**
+   * Zones where chests can spawn. Chest type is rolled per-match from
+   * CHEST_SPAWN_TABLE (see src/shared/config/chests.ts); the zone itself
+   * is type-agnostic. Multi-tile zones spawn a chest on one random
+   * walkable tile inside the rectangle.
+   */
+  chestZones: Zone[];
   /** Double doors detected from the Doors tile layer. */
   doors: DoorDef[];
   /** Optional tutorial-specific point references parsed from the Tutorial object layer. */

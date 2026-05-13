@@ -21,7 +21,7 @@ import { CHARACTER_VARIANTS } from '../shared/types/bomberman.ts';
 import type { MapData } from '../shared/types/map.ts';
 import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import { BALANCE } from '../shared/config/balance.ts';
-import { CHEST_CONFIG } from '../shared/config/chests.ts';
+import { CHEST_CONFIG, CHEST_SPAWN_TABLE } from '../shared/config/chests.ts';
 import type { BombType } from '../shared/types/bombs.ts';
 import { BotPlayer } from './BotPlayer.ts';
 import { rollBombermanName } from '../shared/config/bomberman-names.ts';
@@ -247,7 +247,9 @@ export class MatchRoom {
       };
     });
 
-    // Seeded chests: 1 per zone, tier matches the zone type
+    // Seeded chests: zones are type-agnostic. Expand CHEST_SPAWN_TABLE into
+    // a flat tier pool (e.g. [1,1,1,1,1,1,1, 2,2,2, 3]), shuffle both the
+    // pool and the zone list, then pair them. Excess zones stay empty.
     const chests: Chest[] = [];
     const pickWalkable = (zone: { x: number; y: number; w: number; h: number }): { x: number; y: number } | null => {
       const candidates: { x: number; y: number }[] = [];
@@ -261,22 +263,26 @@ export class MatchRoom {
       return candidates.length > 0 ? candidates[seededRandInt(rng, 0, candidates.length)] : null;
     };
 
-    const spawnChest = (zone: { x: number; y: number; w: number; h: number }, tier: 1 | 2): void => {
+    const tierPool: (1 | 2 | 3)[] = [];
+    for (const entry of CHEST_SPAWN_TABLE) {
+      for (let i = 0; i < entry.count; i++) tierPool.push(entry.tier);
+    }
+    const shuffledZones = seededShuffle(rng, this.map.chestZones);
+    const shuffledTiers = seededShuffle(rng, tierPool);
+    const pairCount = Math.min(shuffledZones.length, shuffledTiers.length);
+
+    for (let i = 0; i < pairCount; i++) {
+      const zone = shuffledZones[i];
+      const tier = shuffledTiers[i];
       const pick = pickWalkable(zone);
-      if (!pick) return;
+      if (!pick) continue;
       const cfg = CHEST_CONFIG[tier];
-      // Pick unique-slot counts uniformly inside the configured ranges, then
-      // roll bomb + treasure bundles with weighted distribution
-      // (utils/loot-roll.ts).
       const slots = seededRandInt(rng, cfg.slotCount[0], cfg.slotCount[1] + 1);
       const bombs = rollBombLoot(cfg.weights, cfg.totalBombs, slots, rng);
       const treasureSlots = seededRandInt(rng, cfg.treasureSlotCount[0], cfg.treasureSlotCount[1] + 1);
       const treasures = rollTreasureLoot(cfg.treasureWeights, cfg.totalTreasures, treasureSlots, rng);
       chests.push({ id: `chest_${chests.length}`, tier, x: pick.x, y: pick.y, treasures, bombs, opened: false });
-    };
-
-    for (const zone of this.map.chest1Zones) spawnChest(zone, 1);
-    for (const zone of this.map.chest2Zones) spawnChest(zone, 2);
+    }
 
     return {
       matchId: this.config.id,
