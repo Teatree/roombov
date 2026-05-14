@@ -307,6 +307,7 @@ export class MatchRoom {
       flares: [],
       bloodTiles: [],
       escapeTiles: this.map.escapeTiles.map(t => ({ x: t.x, y: t.y })),
+      brokenHatches: [],
       smokeClouds: [],
       mines: [],
       phosphorusPending: [],

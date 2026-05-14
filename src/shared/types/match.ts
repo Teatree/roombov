@@ -136,6 +136,12 @@ export interface MatchState {
   bloodTiles: { x: number; y: number }[];
   /** Escape points from the map (copied for client rendering). */
   escapeTiles: { x: number; y: number }[];
+  /**
+   * Coordinates of escape hatches that have already been used. A hatch can be
+   * used exactly once per match; subsequent attempts to escape from a broken
+   * hatch are blocked in TurnResolver step 9.5. Coord-keyed (no IDs).
+   */
+  brokenHatches: { x: number; y: number }[];
   /** Match end data, populated once phase === 'ended'. */
   endReason?: 'all_escaped' | 'all_dead' | 'turn_limit';
   /** Ids of players who successfully escaped. */

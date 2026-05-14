@@ -100,6 +100,7 @@ function cloneState(s: MatchState): MatchState {
     flares: s.flares.map(f => ({ ...f })),
     bloodTiles: s.bloodTiles.map(t => ({ ...t })),
     escapeTiles: s.escapeTiles.map(t => ({ ...t })),
+    brokenHatches: (s.brokenHatches ?? []).map(t => ({ ...t })),
     escapedPlayerIds: s.escapedPlayerIds ? [...s.escapedPlayerIds] : undefined,
     smokeClouds: (s.smokeClouds ?? []).map(c => ({ ...c, tiles: c.tiles.map(t => ({ ...t })) })),
     mines: (s.mines ?? []).map(m => ({ ...m })),
@@ -213,7 +214,7 @@ export type TurnEvent =
   | { kind: 'bomb_triggered'; bombId: string; type: BombType; x: number; y: number; tiles: Tile[] }
   | { kind: 'damaged'; playerId: string; hpRemaining: number }
   | { kind: 'died'; playerId: string; x: number; y: number; killerId: string | null }
-  | { kind: 'escaped'; playerId: string; treasures: TreasureBundle }
+  | { kind: 'escaped'; playerId: string; treasures: TreasureBundle; hatchX: number; hatchY: number }
   | { kind: 'treasures_collected'; playerId: string; treasures: TreasureBundle }
   | { kind: 'body_looted'; playerId: string; bodyId: string; treasures: TreasureBundle }
   | { kind: 'teleport'; playerId: string; fromX: number; fromY: number; toX: number; toY: number }
@@ -1686,7 +1687,8 @@ export function resolveTurn(
     if (!b.alive || b.escaped) continue;
     const action = effectiveActions.get(b.playerId) ?? { kind: 'idle' };
     const onHatch = state.escapeTiles.some(t => t.x === b.x && t.y === b.y);
-    if (onHatch && action.kind === 'idle') {
+    const onBrokenHatch = state.brokenHatches.some(t => t.x === b.x && t.y === b.y);
+    if (onHatch && !onBrokenHatch && action.kind === 'idle') {
       b.onHatchIdleTurns += 1;
       if (b.onHatchIdleTurns >= 1) {
         b.escaped = true;
@@ -1697,9 +1699,16 @@ export function resolveTurn(
   }
 
   // --- 10. Escapes (remove from future action but keep in list for scoring) ---
+  // The bomberman's hatch coordinates are captured here (before any later
+  // mutation) and pushed into brokenHatches so the hatch is single-use for
+  // the rest of the match.
   for (const b of state.bombermen) {
     if (b.alive && b.escaped) {
-      events.push({ kind: 'escaped', playerId: b.playerId, treasures: { ...b.treasures } });
+      const hatchX = b.x;
+      const hatchY = b.y;
+      events.push({ kind: 'escaped', playerId: b.playerId, treasures: { ...b.treasures }, hatchX, hatchY });
+      const already = state.brokenHatches.some(t => t.x === hatchX && t.y === hatchY);
+      if (!already) state.brokenHatches.push({ x: hatchX, y: hatchY });
     }
   }
 

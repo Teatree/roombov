@@ -174,6 +174,9 @@ export class MatchScene extends Phaser.Scene {
   private timerText!: Phaser.GameObjects.Text;
   private phaseText!: Phaser.GameObjects.Text;
   private turnText!: Phaser.GameObjects.Text;
+  /** Tiny red label shown just right of the turn counter while the local
+   *  player is standing on a broken (already-used) escape hatch. */
+  private brokenHatchText: Phaser.GameObjects.Text | null = null;
   private hpText!: Phaser.GameObjects.Text;
   private treasureList!: TreasureListWidget;
   private slotRects: Phaser.GameObjects.Rectangle[] = [];
@@ -204,10 +207,21 @@ export class MatchScene extends Phaser.Scene {
   private lootPendingSwap: { sourceKind: 'chest' | 'body'; sourceId: string; bombType: import('@shared/types/bombs.ts').BombType; count: number } | null = null;
 
   // Escape hatch animated sprites
+  // States:
+  //   intact   — default closed-hatch frame, animated spritesheet still bound
+  //   opening  — playing hatch_opening (triggered by a local 'escaped' event
+  //              for this hatch with LOS on the tile at the moment of escape)
+  //   closing  — playing hatch_closing (chained after opening completes)
+  //   broken   — final state; texture swapped to escape_hatch_broken (static)
+  //
+  // `memoryBroken` is the per-client "last known" broken state for fog-of-war:
+  // updated only when this client has LOS on the hatch. Once true, the broken
+  // texture stays even when the tile is in seen-dim fog.
   private escapeSprites: Array<{
     x: number; y: number;
     sprite: Phaser.GameObjects.Sprite;
-    state: 'closed' | 'opening' | 'open' | 'closing';
+    state: 'intact' | 'opening' | 'closing' | 'broken';
+    memoryBroken: boolean;
   }> = [];
 
   // Chest animated sprites (persistent, like escape hatches)
@@ -262,6 +276,12 @@ export class MatchScene extends Phaser.Scene {
     this.tiledInfo = preloadTiledMap(this, mapIdForPreload);
     // Escape hatch: 288x32 sheet, 6 frames of 48x32
     this.load.spritesheet('escape_hatch', 'sprites/escape_hatch.png', {
+      frameWidth: 48,
+      frameHeight: 32,
+    });
+    // Broken hatch: 288x32 spritesheet, same layout as escape_hatch — we use
+    // frame 0 only, as a 1:1 replacement for the closed-hatch frame.
+    this.load.spritesheet('escape_hatch_broken', 'sprites/escape_hatch_broken.png', {
       frameWidth: 48,
       frameHeight: 32,
     });
@@ -573,6 +593,7 @@ export class MatchScene extends Phaser.Scene {
     this.stunHudLabel = null;
     this.meleeHudIcon = null;
     this.uavText = null;
+    this.brokenHatchText = null;
     this.uavPulseTween?.stop();
     this.uavPulseTween?.remove();
     this.uavPulseTween = null;
@@ -670,7 +691,7 @@ export class MatchScene extends Phaser.Scene {
           sprite.setOrigin(0.5, 1);
           sprite.play('hatch_closed');
           if (this.hudCamera) this.hudCamera.ignore(sprite);
-          this.escapeSprites.push({ x: esc.x, y: esc.y, sprite, state: 'closed' });
+          this.escapeSprites.push({ x: esc.x, y: esc.y, sprite, state: 'intact', memoryBroken: false });
         }
         // Initial chest-sprite build — subsequent syncs happen below on every
         // state update so tutorial-spawned chests also get sprites.
@@ -1378,6 +1399,38 @@ export class MatchScene extends Phaser.Scene {
       });
     }
 
+    // Per-hatch escape animation. Plays opening → closing → swap-to-broken,
+    // but only if this client has LOS on the hatch tile at the moment the
+    // event arrives. Clients without LOS (including those who only have the
+    // tile under seen-dim fog) skip the animation entirely and never update
+    // their memory — they'll see the broken state silently next time they
+    // regain LOS via updateEscapeHatches(). Idempotent against the resolver's
+    // habit of re-emitting `escaped` for already-escaped players every turn.
+    if (this.fogRenderer) {
+      for (const ev of events) {
+        if (ev.kind !== 'escaped') continue;
+        const e = ev as { hatchX?: number; hatchY?: number };
+        if (typeof e.hatchX !== 'number' || typeof e.hatchY !== 'number') continue;
+        const esc = this.escapeSprites.find(s => s.x === e.hatchX && s.y === e.hatchY);
+        if (!esc) continue;
+        if (esc.memoryBroken) continue;
+        if (esc.state !== 'intact') continue;
+        if (!this.fogRenderer.isVisible(e.hatchX, e.hatchY)) continue;
+        esc.state = 'opening';
+        esc.sprite.play('hatch_opening');
+        esc.sprite.once('animationcomplete', () => {
+          esc.state = 'closing';
+          esc.sprite.play('hatch_closing');
+          esc.sprite.once('animationcomplete', () => {
+            esc.state = 'broken';
+            esc.memoryBroken = true;
+            esc.sprite.anims.stop();
+            esc.sprite.setTexture('escape_hatch_broken');
+          });
+        });
+      }
+    }
+
     // Local escape — jump to Results without waiting for match_end.
     // The server only broadcasts match_end once ALL players are dead or
     // escaped; in a multi-player match we need to exit the scene on our own
@@ -1659,49 +1712,33 @@ export class MatchScene extends Phaser.Scene {
   }
 
   /**
-   * Escape hatch state machine.
-   * - closed (default): frame 0, idle
-   * - Any alive Bomberman within 1 tile → play opening → stay open
-   * - Bomberman escapes on that tile → play closing → back to closed
-   * - Bomberman walks away without escaping → play closing
+   * Escape hatch state machine — memory-aware, fog-of-war respecting.
+   *
+   * The opening/closing animations are triggered exclusively by the local
+   * 'escaped' event handler in resolveTurnEvents — never by passive bomberman
+   * proximity. This update method only handles the lazy "snap to broken on
+   * LOS re-acquire" case: if our local memory still says intact but we just
+   * regained LOS on a hatch that is authoritatively broken, swap the texture
+   * silently (no animation — we missed the moment of escape).
+   *
+   * If the tile is currently outside LOS, this method does nothing — the
+   * sprite continues to render whatever its last-known state was (intact or
+   * broken), which is exactly the fog-of-war memory the spec requires.
    */
   private updateEscapeHatches(): void {
-    if (!this.state) return;
+    if (!this.state || !this.fogRenderer) return;
     for (const esc of this.escapeSprites) {
-      // Check if any alive non-escaped Bomberman is within Chebyshev distance 1
-      const nearby = this.state.bombermen.some(b =>
-        b.alive && !b.escaped &&
-        Math.max(Math.abs(b.x - esc.x), Math.abs(b.y - esc.y)) <= 1,
-      );
-      // Check if someone just escaped ON this tile
-      const justEscaped = this.state.bombermen.some(b =>
-        b.escaped && b.x === esc.x && b.y === esc.y,
-      );
-
-      if (justEscaped && esc.state === 'open') {
-        // Bomberman entered — close the hatch
-        esc.state = 'closing';
-        esc.sprite.play('hatch_closing');
-        esc.sprite.once('animationcomplete', () => {
-          esc.state = 'closed';
-          esc.sprite.play('hatch_closed');
-        });
-      } else if (nearby && esc.state === 'closed') {
-        // Someone is approaching — open the hatch
-        esc.state = 'opening';
-        esc.sprite.play('hatch_opening');
-        esc.sprite.once('animationcomplete', () => {
-          esc.state = 'open';
-          esc.sprite.play('hatch_open');
-        });
-      } else if (!nearby && !justEscaped && esc.state === 'open') {
-        // Everyone walked away — close it
-        esc.state = 'closing';
-        esc.sprite.play('hatch_closing');
-        esc.sprite.once('animationcomplete', () => {
-          esc.state = 'closed';
-          esc.sprite.play('hatch_closed');
-        });
+      // Don't interrupt in-flight animations.
+      if (esc.state === 'opening' || esc.state === 'closing') continue;
+      const visibleNow = this.fogRenderer.isVisible(esc.x, esc.y);
+      if (!visibleNow) continue;
+      const authBroken = this.state.brokenHatches.some(t => t.x === esc.x && t.y === esc.y);
+      if (authBroken && !esc.memoryBroken) {
+        // LOS re-acquired after a missed escape: snap to broken, no animation.
+        esc.state = 'broken';
+        esc.memoryBroken = true;
+        esc.sprite.anims.stop();
+        esc.sprite.setTexture('escape_hatch_broken', 0);
       }
     }
   }
@@ -2203,9 +2240,17 @@ export class MatchScene extends Phaser.Scene {
       return { kind: 'tileFog' };
     }
 
-    // Escape hatch
+    // Escape hatch — broken hatches use a separate key so the tooltip
+    // reflects the "single-use" state with a darker icon and warning text.
+    // We honor the per-client memory (escapeSprites[].memoryBroken) rather
+    // than the authoritative state, so a player who never observed the
+    // escape still sees the intact tooltip until they regain LOS.
     for (const e of this.mapData.escapeTiles) {
-      if (e.x === tx && e.y === ty) return { kind: 'tileHatch' };
+      if (e.x === tx && e.y === ty) {
+        const spr = this.escapeSprites.find(s => s.x === tx && s.y === ty);
+        const broken = !!spr?.memoryBroken;
+        return { kind: broken ? 'tileHatchBroken' : 'tileHatch' };
+      }
     }
     // Chest
     for (const c of this.state.chests) {
@@ -2391,6 +2436,12 @@ export class MatchScene extends Phaser.Scene {
       fontSize: '16px', color: '#aaaaaa', fontFamily: 'monospace',
     }).setOrigin(0.5, 0).setDepth(1001));
 
+    // Broken-hatch warning, anchored just to the right of the turn counter.
+    // Visible only while the local bomberman is standing on a broken hatch.
+    this.brokenHatchText = this.hud(this.add.text(width / 2 + 90, 16, 'This Hatch is Broken, you won’t be able to Escape from it', {
+      fontSize: '11px', color: '#ff4040', fontFamily: 'monospace',
+    }).setOrigin(0, 0).setDepth(1001).setVisible(false));
+
     // UAV indicator — sits just below the turn counter at the top-center.
     // Throbs when the next UAV is <=3 turns away; hidden in tutorial matches.
     this.uavText = this.hud(this.add.text(width / 2, 30, '', {
@@ -2554,6 +2605,15 @@ export class MatchScene extends Phaser.Scene {
     const turnsLeft = BALANCE.match.turnLimit - this.state.turnNumber;
     this.turnText.setText(`Turn ${this.state.turnNumber} / ${BALANCE.match.turnLimit}`);
     this.turnText.setColor(turnsLeft <= BALANCE.match.turnsLeftWarning ? '#ff6644' : '#aaaaaa');
+
+    // Broken-hatch warning: visible only while the local player is alive,
+    // not escaped, and standing on a hatch tile that's been used already.
+    if (this.brokenHatchText) {
+      const me = this.state.bombermen.find(b => b.playerId === this.myPlayerId);
+      const onBroken = !!me && me.alive && !me.escaped &&
+        this.state.brokenHatches.some(t => t.x === me.x && t.y === me.y);
+      this.brokenHatchText.setVisible(onBroken);
+    }
 
     // UAV countdown + throb starting 3 turns out. Hidden in tutorial matches
     // and whenever no UAV is scheduled.

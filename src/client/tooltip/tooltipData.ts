@@ -3,7 +3,7 @@ import { BOMB_CATALOG } from '@shared/config/bombs.ts';
 
 export type TooltipIcon =
   | { kind: 'bomb'; bombType: BombType }
-  | { kind: 'shape'; shape: 'heart' | 'coin' | 'hourglass' | 'clock' | 'tile' | 'wall' | 'door' | 'chest' | 'body' | 'hatch' | 'flame' | 'blood' | 'pearl' | 'mess' | 'fog' | 'arrow' | 'pearl_icon' | 'flare_icon' };
+  | { kind: 'shape'; shape: 'heart' | 'coin' | 'hourglass' | 'clock' | 'tile' | 'wall' | 'door' | 'chest' | 'body' | 'hatch' | 'hatchBroken' | 'flame' | 'blood' | 'pearl' | 'mess' | 'fog' | 'arrow' | 'pearl_icon' | 'flare_icon' };
 
 export interface TooltipData {
   icon: TooltipIcon;
@@ -31,6 +31,7 @@ export type TooltipKey =
   | { kind: 'tileChest' }
   | { kind: 'tileBody' }
   | { kind: 'tileHatch' }
+  | { kind: 'tileHatchBroken' }
   | { kind: 'tileFog' }
   | { kind: 'targetThrow'; bombType: BombType }
   | { kind: 'targetTeleport' }
@@ -161,6 +162,17 @@ export function tooltipDataFor(key: TooltipKey): TooltipData {
       return {
         icon: { kind: 'shape', shape: 'hatch' },
         parts: [{ text: 'Stand on it to ' }, { text: 'Escape', bold: true }, { text: '.' }],
+      };
+    case 'tileHatchBroken':
+      return {
+        icon: { kind: 'shape', shape: 'hatchBroken' },
+        parts: [
+          { text: 'This Hatch is ' },
+          { text: 'Broken', bold: true },
+          { text: ', you won’t be able to ' },
+          { text: 'Escape', bold: true },
+          { text: ' from it.' },
+        ],
       };
     case 'tileFog':
       return {

@@ -326,6 +326,16 @@ function drawShapeIcon(g: Phaser.GameObjects.Graphics, shape: string, x: number,
       g.fillCircle(cx, cy, 2);
       return;
     }
+    case 'hatchBroken': {
+      // Same shape as 'hatch', colors halved for the "darker / disabled" look.
+      g.fillStyle(0x333333, 1);
+      g.fillRect(cx - r, cy - r * 0.5, r * 2, r);
+      g.lineStyle(2, 0x555555, 1);
+      g.strokeRect(cx - r, cy - r * 0.5, r * 2, r);
+      g.fillStyle(0x806c22, 1);
+      g.fillCircle(cx, cy, 2);
+      return;
+    }
     case 'flame': {
       g.fillStyle(0xff6622, 1);
       g.fillTriangle(cx - r * 0.7, cy + r * 0.7, cx + r * 0.7, cy + r * 0.7, cx, cy - r);

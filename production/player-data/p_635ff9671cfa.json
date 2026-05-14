@@ -1,19 +1,19 @@
 {
   "id": "p_635ff9671cfa",
   "createdAt": 1778099676227,
-  "updatedAt": 1778100950709,
+  "updatedAt": 1778776136559,
   "coins": 500,
   "treasures": {
     "fish": 75,
-    "chalice": 55,
-    "jade": 77,
+    "chalice": 85,
+    "jade": 92,
     "books": 92,
     "coffee": 77,
-    "grapes": 114,
-    "lanterns": 45,
-    "bones": 83,
-    "mushrooms": 94,
-    "amulets": 38
+    "grapes": 129,
+    "lanterns": 75,
+    "bones": 113,
+    "mushrooms": 109,
+    "amulets": 53
   },
   "ownedBombermen": [
     {
@@ -33,7 +33,7 @@
         "slots": [
           {
             "type": "bomb_wide",
-            "count": 4
+            "count": 5
           },
           {
             "type": "bomb",

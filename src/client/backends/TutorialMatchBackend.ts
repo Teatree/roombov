@@ -480,6 +480,7 @@ export class TutorialMatchBackend implements MatchBackend {
       flares: [],
       bloodTiles: [],
       escapeTiles: map.escapeTiles.map(t => ({ x: t.x, y: t.y })),
+      brokenHatches: [],
       smokeClouds: [],
       mines: [],
       phosphorusPending: [],

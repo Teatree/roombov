@@ -58,7 +58,7 @@ Path aliases (configured in `vite.config.ts` and `tsconfig.json`): `@shared/*`, 
 
 Socket event map lives on `GameServer` (`auth`, `join_match`, `player_action`, `loot_bomb`, shop events, etc.). All gameplay-affecting events are validated server-side; clients are not trusted.
 
-**Gambler Street** is a meta-progression subsystem (seeded RNG, bet state machine): `src/shared/systems/GamblerStreetEngine.ts` runs pure in shared/; `src/shared/config/gambler-street.ts` holds tuning; `src/client/scenes/GamblerStreetScene.ts` renders the UI. No dedicated server service.
+**Gambler Street** is a meta-progression subsystem (seeded RNG, bet state machine): `src/shared/systems/GamblerStreetEngine.ts` runs pure in shared/; `src/shared/config/gambler-street.ts` holds tuning; `src/server/GamblerStreetService.ts` is the authoritative wrapper (lazy ticking, bet resolution, persistence via `PlayerStore`); `src/client/scenes/GamblerStreetScene.ts` renders the UI.
 
 ### Client flow
 
@@ -81,7 +81,7 @@ See `src/shared/types/match.ts` for the full `MatchState` shape. Key nouns: `Bom
 
 **Treasures** are the in-match currency picked up from chests + dead bodies (10 types, defined in `src/shared/config/treasures.ts`). Stored as a sparse `TreasureBundle = Partial<Record<TreasureType, number>>` on `Chest`, `DroppedBody`, `BombermanState`, and `PlayerProfile`. Rolled with `rollTreasureLoot` (mirrors `rollBombLoot` — pick K unique types, distribute total by weight). Persistent profile stash is shown by `TreasureListWidget` in MainMenu, MatchScene HUD (top-right), Results, and Gambler Street. Coins (`PlayerProfile.coins`) remain the soft currency for shops but are **not** earned in-match. Persistent `PlayerProfile` instances are stored as JSON files under `production/player-data/` by `PlayerStore`.
 
-Maps are JSON under `public/maps/`, authored in Tiled and converted via `npm run convert-map` (`tools/tiled-to-roombov.ts`). The pipeline expects a `Collision` layer.
+Maps are authored in Tiled (`public/maps/*.tmj`) and converted to JSON under `src/shared/maps/` via `npm run convert-map` (`tools/tiled-to-roombov.ts`); the pipeline expects a `Collision` layer. At runtime, `src/shared/maps/map-loader.ts` resolves a map by ID through three strategies in order: static imports (`STATIC_MAPS` — must be edited when adding a shippable map), Vite `import.meta.glob` (browser only, for iteration), and a Node `fs` fallback (server only).
 
 ### Tests
 

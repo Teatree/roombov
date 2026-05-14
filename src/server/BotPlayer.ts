@@ -200,6 +200,8 @@ export class BotPlayer {
     let bestEscape: { x: number; y: number } | null = null;
     let bestDist = Infinity;
     for (const esc of state.escapeTiles) {
+      // Broken hatches are single-use and can't extract anyone; skip them.
+      if (state.brokenHatches.some(b => b.x === esc.x && b.y === esc.y)) continue;
       const d = Math.max(Math.abs(esc.x - me.x), Math.abs(esc.y - me.y));
       if (d < bestDist) { bestDist = d; bestEscape = esc; }
     }
@@ -559,6 +561,9 @@ export class BotPlayer {
   }
 
   private isEscapeTile(x: number, y: number, state: MatchState): boolean {
+    // Broken hatches are no longer functional escape points — treat them as
+    // ordinary floor so the bot can path through them freely in early game.
+    if (state.brokenHatches.some(b => b.x === x && b.y === y)) return false;
     return state.escapeTiles.some(e => e.x === x && e.y === y);
   }
 

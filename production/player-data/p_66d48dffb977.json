@@ -1,11 +1,49 @@
 {
   "id": "p_66d48dffb977",
   "createdAt": 1777246461874,
-  "updatedAt": 1777246461874,
-  "coins": 500,
+  "updatedAt": 1778775223464,
+  "coins": 285,
   "treasures": {},
-  "ownedBombermen": [],
-  "equippedBombermanId": null,
+  "ownedBombermen": [
+    {
+      "id": "owned_p_66d48dffb977_1778775223464_x2l2",
+      "name": "El Diablo",
+      "tier": "paid",
+      "colors": {
+        "shirt": 14107231,
+        "pants": 2644106,
+        "hair": 3453505
+      },
+      "tint": 15752890,
+      "character": "char2",
+      "maxCustomSlots": 5,
+      "stackSize": 7,
+      "inventory": {
+        "slots": [
+          {
+            "type": "flare",
+            "count": 4
+          },
+          {
+            "type": "bomb",
+            "count": 4
+          },
+          {
+            "type": "bomb_wide",
+            "count": 3
+          },
+          {
+            "type": "shield",
+            "count": 3
+          },
+          null
+        ]
+      },
+      "purchasedAt": 1778775223464,
+      "sourceTemplateId": "cycle_p_66d48dffb977_mp5ou9p7_2_paid"
+    }
+  ],
+  "equippedBombermanId": "owned_p_66d48dffb977_1778775223464_x2l2",
   "bombStockpile": {},
   "gamblerStreet": {
     "gamblers": [],
@@ -19,5 +57,187 @@
     "lastTickedAt": 1777330178906,
     "nextGamblerSerial": 1
   },
-  "bombermanShop": null
+  "bombermanShop": {
+    "cycleId": "cycle_p_66d48dffb977_mp5ou9p7",
+    "startedAt": 1778775222427,
+    "endsAt": 1778775342427,
+    "bombermen": [
+      {
+        "id": "cycle_p_66d48dffb977_mp5ou9p7_0_free",
+        "name": "Tierney",
+        "tier": "free",
+        "price": 0,
+        "colors": {
+          "shirt": 13845207,
+          "pants": 3443240,
+          "hair": 11678892
+        },
+        "tint": 11770342,
+        "character": "char3",
+        "maxCustomSlots": 4,
+        "stackSize": 4,
+        "inventory": {
+          "slots": [
+            {
+              "type": "fart_escape",
+              "count": 4
+            },
+            {
+              "type": "ender_pearl",
+              "count": 3
+            },
+            {
+              "type": "bomb",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_66d48dffb977_mp5ou9p7_1_free",
+        "name": "Quinn",
+        "tier": "free",
+        "price": 0,
+        "colors": {
+          "shirt": 4349143,
+          "pants": 9073704,
+          "hair": 11686452
+        },
+        "tint": 6473964,
+        "character": "char6",
+        "maxCustomSlots": 4,
+        "stackSize": 4,
+        "inventory": {
+          "slots": [
+            {
+              "type": "flare",
+              "count": 4
+            },
+            {
+              "type": "delay_tricky",
+              "count": 3
+            },
+            {
+              "type": "bomb_wide",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_66d48dffb977_mp5ou9p7_2_paid",
+        "name": "El Diablo",
+        "tier": "paid",
+        "price": 215,
+        "colors": {
+          "shirt": 14107231,
+          "pants": 2644106,
+          "hair": 3453505
+        },
+        "tint": 15752890,
+        "character": "char2",
+        "maxCustomSlots": 5,
+        "stackSize": 7,
+        "inventory": {
+          "slots": [
+            {
+              "type": "flare",
+              "count": 4
+            },
+            {
+              "type": "bomb",
+              "count": 4
+            },
+            {
+              "type": "bomb_wide",
+              "count": 3
+            },
+            {
+              "type": "shield",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_66d48dffb977_mp5ou9p7_3_paid",
+        "name": "Ringo",
+        "tier": "paid",
+        "price": 270,
+        "colors": {
+          "shirt": 14107218,
+          "pants": 9066280,
+          "hair": 8499764
+        },
+        "tint": 14454129,
+        "character": "char5",
+        "maxCustomSlots": 5,
+        "stackSize": 7,
+        "inventory": {
+          "slots": [
+            {
+              "type": "bomb_wide",
+              "count": 4
+            },
+            {
+              "type": "bomb",
+              "count": 4
+            },
+            {
+              "type": "shield",
+              "count": 3
+            },
+            {
+              "type": "banana",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_66d48dffb977_mp5ou9p7_4_paid_expensive",
+        "name": "Hermes",
+        "tier": "paid_expensive",
+        "price": 350,
+        "colors": {
+          "shirt": 10633943,
+          "pants": 2654602,
+          "hair": 11691060
+        },
+        "tint": 11832562,
+        "character": "char5",
+        "maxCustomSlots": 6,
+        "stackSize": 9,
+        "inventory": {
+          "slots": [
+            {
+              "type": "flash",
+              "count": 4
+            },
+            {
+              "type": "flare",
+              "count": 4
+            },
+            {
+              "type": "bomb",
+              "count": 4
+            },
+            {
+              "type": "banana",
+              "count": 4
+            },
+            null,
+            null
+          ]
+        }
+      }
+    ],
+    "boughtTemplateIds": [
+      "cycle_p_66d48dffb977_mp5ou9p7_2_paid"
+    ]
+  }
 }
