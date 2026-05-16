@@ -120,6 +120,7 @@ interface BombermanMap {
   spawns: { id: number; x: number; y: number }[];
   escapeTiles: { id: number; x: number; y: number }[];
   chestZones: { x: number; y: number; w: number; h: number }[];
+  keySpawns: { x: number; y: number }[];
   doors: { id: number; tiles: { x: number; y: number }[]; orientation: 'horizontal' | 'vertical' }[];
   tutorial?: {
     bot1: { x: number; y: number };
@@ -443,6 +444,28 @@ function pointLayerToTiles(layer: TiledObjectLayer | undefined): { id: number; x
     });
 }
 
+/**
+ * Convert ellipse (circle) objects to tile-center coordinates. Each circle
+ * becomes one tile coord, picked from the ellipse's bounding-box center.
+ * Used for the Keys object layer per docs/keys-system.md §8.
+ */
+function ellipseLayerToTiles(layer: TiledObjectLayer | undefined): { x: number; y: number }[] {
+  if (!layer) return [];
+  const seen = new Set<string>();
+  const out: { x: number; y: number }[] = [];
+  for (const o of layer.objects) {
+    if (!o.ellipse) continue;
+    const cxPx = o.x + o.width / 2;
+    const cyPx = o.y + o.height / 2;
+    const t = toTile(cxPx, cyPx);
+    const key = `${t.x},${t.y}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ x: t.x, y: t.y });
+  }
+  return out;
+}
+
 function rectLayerToZones(layer: TiledObjectLayer | undefined): { x: number; y: number; w: number; h: number }[] {
   if (!layer) return [];
   return layer.objects
@@ -470,6 +493,9 @@ const chestZones = [
 console.log(`\nSpawns: ${spawns.length}${spawns.length > 0 ? ' → ' + spawns.map(s => `(${s.x},${s.y})`).join(', ') : ''}`);
 console.log(`EscapeTiles: ${escapeTiles.length}${escapeTiles.length > 0 ? ' → ' + escapeTiles.map(e => `(${e.x},${e.y})`).join(', ') : ''}`);
 console.log(`ChestZones: ${chestZones.length}`);
+
+const keySpawns = ellipseLayerToTiles(findObjectLayer('Keys'));
+console.log(`Keys: ${keySpawns.length}${keySpawns.length > 0 ? ' → ' + keySpawns.map(k => `(${k.x},${k.y})`).join(', ') : ''}`);
 
 // Scan "Doors" tile layer — find connected groups of door tiles
 const doorLayer = tileLayers.find(l => l.name.toLowerCase() === 'doors');
@@ -565,6 +591,7 @@ const output: BombermanMap = {
   spawns,
   escapeTiles,
   chestZones,
+  keySpawns,
   doors,
   ...(tutorial ? { tutorial } : {}),
 };

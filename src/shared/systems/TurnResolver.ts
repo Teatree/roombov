@@ -101,6 +101,7 @@ function cloneState(s: MatchState): MatchState {
     bloodTiles: s.bloodTiles.map(t => ({ ...t })),
     escapeTiles: s.escapeTiles.map(t => ({ ...t })),
     brokenHatches: (s.brokenHatches ?? []).map(t => ({ ...t })),
+    keys: (s.keys ?? []).map(k => ({ ...k })),
     escapedPlayerIds: s.escapedPlayerIds ? [...s.escapedPlayerIds] : undefined,
     smokeClouds: (s.smokeClouds ?? []).map(c => ({ ...c, tiles: c.tiles.map(t => ({ ...t })) })),
     mines: (s.mines ?? []).map(m => ({ ...m })),
@@ -215,6 +216,7 @@ export type TurnEvent =
   | { kind: 'damaged'; playerId: string; hpRemaining: number }
   | { kind: 'died'; playerId: string; x: number; y: number; killerId: string | null }
   | { kind: 'escaped'; playerId: string; treasures: TreasureBundle; hatchX: number; hatchY: number }
+  | { kind: 'key_pickup'; playerId: string; x: number; y: number; source: 'floor' | 'body'; newCount: number }
   | { kind: 'treasures_collected'; playerId: string; treasures: TreasureBundle }
   | { kind: 'body_looted'; playerId: string; bodyId: string; treasures: TreasureBundle }
   | { kind: 'teleport'; playerId: string; fromX: number; fromY: number; toX: number; toY: number }
@@ -454,6 +456,38 @@ export function resolveTurn(
     const action = effectiveActions.get(bomberman.playerId);
     if (!action || action.kind === 'idle') {
       events.push({ kind: 'idle', playerId: bomberman.playerId, x: bomberman.x, y: bomberman.y });
+    }
+  }
+
+  // --- 1.5. Key auto-pickup (floor + dead bodies) ---
+  // For every tile a bomberman stepped onto this turn (including rush
+  // intermediates), pick up any floor key on it (if under cap), then drain
+  // any body's keys on the same tile (one at a time, up to cap).
+  // Order within a tile: floor first, then body. A bomberman that crosses
+  // through two key tiles in a rush will pick up both, as long as cap allows.
+  {
+    const cap = BALANCE.keys.requiredPerHatch;
+    for (const [playerId, steps] of steppedTilesByPlayer) {
+      const bm = state.bombermen.find(b => b.playerId === playerId);
+      if (!bm || !bm.alive || bm.escaped) continue;
+      for (const step of steps) {
+        // Floor key
+        const floorIdx = state.keys.findIndex(k => k.x === step.x && k.y === step.y);
+        if (floorIdx >= 0 && (bm.keys ?? 0) < cap) {
+          state.keys.splice(floorIdx, 1);
+          bm.keys = (bm.keys ?? 0) + 1;
+          events.push({ kind: 'key_pickup', playerId, x: step.x, y: step.y, source: 'floor', newCount: bm.keys });
+        }
+        // Body keys on the same tile (could be multiple bodies stacked)
+        for (const body of state.bodies) {
+          if (body.x !== step.x || body.y !== step.y) continue;
+          while (body.keys > 0 && (bm.keys ?? 0) < cap) {
+            body.keys -= 1;
+            bm.keys = (bm.keys ?? 0) + 1;
+            events.push({ kind: 'key_pickup', playerId, x: step.x, y: step.y, source: 'body', newCount: bm.keys });
+          }
+        }
+      }
     }
   }
 
@@ -1639,6 +1673,7 @@ export function resolveTurn(
         y: b.y,
         ownerPlayerId: b.playerId,
         treasures: b.treasures,
+        keys: b.keys ?? 0,
         bombs,
         // Inherit the deceased's tier-stat shape so the body's loot panel
         // displays the right number of slots and stack cap.
@@ -1646,6 +1681,7 @@ export function resolveTurn(
         stackSize: b.stackSize,
       });
       b.treasures = {};
+      b.keys = 0;
       // Reset inventory to the bomberman's own slot count (preserve shape
       // even though the corpse is now empty — we'll keep b around as a
       // placeholder until full removal). Use `b.maxCustomSlots` rather than
@@ -1688,10 +1724,16 @@ export function resolveTurn(
     const action = effectiveActions.get(b.playerId) ?? { kind: 'idle' };
     const onHatch = state.escapeTiles.some(t => t.x === b.x && t.y === b.y);
     const onBrokenHatch = state.brokenHatches.some(t => t.x === b.x && t.y === b.y);
-    if (onHatch && !onBrokenHatch && action.kind === 'idle') {
+    // Keys gate: a real match requires the bomberman to be carrying the full
+    // door cost. Tutorial bypasses this — see docs/keys-system.md §10.
+    const keysCap = BALANCE.keys.requiredPerHatch;
+    const hasEnoughKeys = state.isTutorial === true || (b.keys ?? 0) >= keysCap;
+    if (onHatch && !onBrokenHatch && hasEnoughKeys && action.kind === 'idle') {
       b.onHatchIdleTurns += 1;
       if (b.onHatchIdleTurns >= 1) {
         b.escaped = true;
+        // Keys are spent on the hatch.
+        b.keys = 0;
       }
     } else {
       b.onHatchIdleTurns = 0;

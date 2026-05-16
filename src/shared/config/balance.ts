@@ -103,6 +103,12 @@ export const BALANCE = {
     /** Shield Bomb: how many full turns the wall stands AFTER the placement turn. */
     shieldDurationTurns: 3,
   },
+  keys: {
+    /** Number of keys placed on the map at the start of each match. */
+    totalOnMap: 15,
+    /** Keys needed to use an escape hatch. Also the per-bomberman carry cap. */
+    requiredPerHatch: 3,
+  },
   bots: {
     /** Max bots that can be added to a single match. */
     maxPerMatch: 2,

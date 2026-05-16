@@ -231,6 +231,7 @@ export class MatchRoom {
         hp: BALANCE.match.bombermanMaxHp,
         alive: true,
         treasures: {},
+        keys: 0,
         maxCustomSlots,
         stackSize,
         inventory: equipped
@@ -284,6 +285,13 @@ export class MatchRoom {
       chests.push({ id: `chest_${chests.length}`, tier, x: pick.x, y: pick.y, treasures, bombs, opened: false });
     }
 
+    // Seeded keys: shuffle the map's key spawn pool and take the first
+    // BALANCE.keys.totalOnMap. If the map authoring has fewer circles than
+    // the target, we just spawn however many are available.
+    const keySpawnPool = (this.map.keySpawns ?? []).map(k => ({ x: k.x, y: k.y }));
+    const shuffledKeys = seededShuffle(rng, keySpawnPool);
+    const pickedKeys = shuffledKeys.slice(0, BALANCE.keys.totalOnMap);
+
     return {
       matchId: this.config.id,
       mapId: this.config.mapId,
@@ -308,6 +316,7 @@ export class MatchRoom {
       bloodTiles: [],
       escapeTiles: this.map.escapeTiles.map(t => ({ x: t.x, y: t.y })),
       brokenHatches: [],
+      keys: pickedKeys,
       smokeClouds: [],
       mines: [],
       phosphorusPending: [],

@@ -206,6 +206,19 @@ export class MatchScene extends Phaser.Scene {
    * and the next inventory-slot click will swap. */
   private lootPendingSwap: { sourceKind: 'chest' | 'body'; sourceId: string; bombType: import('@shared/types/bombs.ts').BombType; count: number } | null = null;
 
+  // ---- Keys ----
+  /** One sprite per key currently rendered, keyed by "x,y". */
+  private keySprites = new Map<string, Phaser.GameObjects.Image>();
+  /** Per-client fog-of-war memory: was a key on this tile the last time we
+   *  saw it? Updated only when the tile is in current LOS, so a key that
+   *  disappears out of LOS remains visible on this client until we look
+   *  back. Resets each match (cleared in shutdown / on scene init). */
+  private keyMemory = new Map<string, boolean>();
+  /** Small key icon used in the HUD counter widget. */
+  private keysHudIcon: Phaser.GameObjects.Image | null = null;
+  /** "N/3" text shown next to the HUD key icon. */
+  private keysHudText: Phaser.GameObjects.Text | null = null;
+
   // Escape hatch animated sprites
   // States:
   //   intact   — default closed-hatch frame, animated spritesheet still bound
@@ -285,6 +298,8 @@ export class MatchScene extends Phaser.Scene {
       frameWidth: 48,
       frameHeight: 32,
     });
+    // Key collectible — single static image, stretched to fit a full tile.
+    this.load.image('key', 'sprites/key.png');
     // Chests: 64x32 sheets, 4 frames of 16x32 each
     this.load.spritesheet('chest_1', 'sprites/chest_1.png', { frameWidth: 16, frameHeight: 32 });
     this.load.spritesheet('chest_2', 'sprites/chest_2.png', { frameWidth: 16, frameHeight: 32 });
@@ -337,6 +352,8 @@ export class MatchScene extends Phaser.Scene {
     this.myKills = 0;
     this.myKillerName = null;
     this.escapeSprites = [];
+    this.keySprites = new Map();
+    this.keyMemory = new Map();
     this.bloodDecals = new Map();
     this.knownEntities = new Set();
     if (!this.anims.exists('hatch_closed')) {
@@ -604,6 +621,11 @@ export class MatchScene extends Phaser.Scene {
     this.lastBuiltSlotCount = -1;
     for (const esc of this.escapeSprites) esc.sprite.destroy();
     this.escapeSprites = [];
+    for (const s of this.keySprites.values()) s.destroy();
+    this.keySprites = new Map();
+    this.keyMemory = new Map();
+    this.keysHudIcon = null;
+    this.keysHudText = null;
     this.hudObjects = [];
     if (this.hudCamera) {
       this.cameras.remove(this.hudCamera);
@@ -1431,6 +1453,23 @@ export class MatchScene extends Phaser.Scene {
       }
     }
 
+    // Key pickup — flying icon over the picker (only for the local player)
+    // to mirror the treasure popup pattern. Keys for other players don't
+    // show a popup; they update the world sprite via the next state sync.
+    if (this.mapData) {
+      const ts = this.mapData.tileSize;
+      for (const ev of events) {
+        if (ev.kind !== 'key_pickup') continue;
+        const e = ev as unknown as { playerId: string; x: number; y: number };
+        if (e.playerId !== this.myPlayerId) continue;
+        const bm = this.state?.bombermen.find(b => b.playerId === e.playerId);
+        if (!bm) continue;
+        const baseX = bm.x * ts + ts / 2;
+        const baseY = bm.y * ts + ts / 2 - ts * 0.5;
+        this.spawnKeyPopup(baseX, baseY);
+      }
+    }
+
     // Local escape — jump to Results without waiting for match_end.
     // The server only broadcasts match_end once ALL players are dead or
     // escaped; in a multi-player match we need to exit the scene on our own
@@ -1517,6 +1556,30 @@ export class MatchScene extends Phaser.Scene {
         }
       }
     }
+  }
+
+  /** Floating "+1 [key]" popup mirroring the treasure pickup VFX. */
+  private spawnKeyPopup(worldX: number, worldY: number): void {
+    const POPUP_ICON = 22;
+    const c = this.add.container(worldX, worldY).setDepth(500).setAlpha(0);
+    const icon = this.add.image(0, -8, 'key').setDisplaySize(POPUP_ICON, POPUP_ICON);
+    const text = this.add.text(0, 12, '+1', {
+      fontSize: '16px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
+      stroke: '#000000', strokeThickness: 3,
+    }).setOrigin(0.5, 0.5);
+    c.add(icon);
+    c.add(text);
+    if (this.hudCamera) this.hudCamera.ignore(c);
+    this.tweens.add({ targets: c, alpha: 1, duration: 120 });
+    this.tweens.add({
+      targets: c,
+      y: worldY - 40,
+      alpha: 0,
+      duration: 1200,
+      delay: 120,
+      ease: 'Cubic.easeOut',
+      onComplete: () => c.destroy(),
+    });
   }
 
   /** Floating "+N [icon]" treasure popup that rises and fades out. Staggered
@@ -1655,6 +1718,9 @@ export class MatchScene extends Phaser.Scene {
     // Escape hatch state machine — runs only if you've wired up sprites
     if (this.escapeSprites.length > 0) this.updateEscapeHatches();
 
+    // Key sprite reconcile with per-client fog memory.
+    this.updateKeys();
+
     // Door state machine
     if (this.doorSprites.length > 0) this.updateDoors();
 
@@ -1739,6 +1805,67 @@ export class MatchScene extends Phaser.Scene {
         esc.memoryBroken = true;
         esc.sprite.anims.stop();
         esc.sprite.setTexture('escape_hatch_broken', 0);
+      }
+    }
+  }
+
+  /**
+   * Reconcile key sprites with per-client fog-of-war memory.
+   *
+   * For tiles currently in LOS: trust the authoritative state — if a key is
+   * there, render it (and remember); if not, hide and remember "gone".
+   *
+   * For tiles outside LOS: render based on memory only. A key the player
+   * once saw stays visible to them until they look back (and either confirm
+   * it's still there or notice it was picked up). This matches the spec
+   * scenario from docs/keys-system.md §9.
+   */
+  private updateKeys(): void {
+    if (!this.state || !this.mapData || !this.fogRenderer) return;
+    const ts = this.mapData.tileSize;
+    const fog = this.fogRenderer;
+
+    // Build a quick set of authoritative key positions for fast lookup.
+    const authKeys = new Set<string>();
+    for (const k of this.state.keys) authKeys.add(`${k.x},${k.y}`);
+
+    // Update memory from current LOS — for each key, if its tile is in LOS,
+    // memory says "present"; for tiles in LOS that USED to have a key but
+    // no longer do, mark memory as "gone".
+    // We iterate the union of authoritative keys + remembered tiles so we
+    // catch the "I had it remembered, now I see it's gone" transition.
+    const tilesToCheck = new Set<string>();
+    for (const key of authKeys) tilesToCheck.add(key);
+    for (const key of this.keyMemory.keys()) tilesToCheck.add(key);
+
+    for (const tileKey of tilesToCheck) {
+      const [xs, ys] = tileKey.split(',');
+      const x = Number(xs);
+      const y = Number(ys);
+      if (fog.isVisible(x, y)) {
+        this.keyMemory.set(tileKey, authKeys.has(tileKey));
+      }
+      // Outside LOS: leave memory untouched.
+    }
+
+    // Reconcile sprites: each memory entry with present=true gets a sprite.
+    // Entries with present=false get their sprite (if any) destroyed.
+    for (const [tileKey, present] of this.keyMemory) {
+      const existing = this.keySprites.get(tileKey);
+      if (present) {
+        if (!existing) {
+          const [xs, ys] = tileKey.split(',');
+          const x = Number(xs);
+          const y = Number(ys);
+          const img = this.add.image(x * ts + ts / 2, y * ts + ts / 2, 'key')
+            .setDisplaySize(ts, ts)
+            .setDepth(15);
+          if (this.hudCamera) this.hudCamera.ignore(img);
+          this.keySprites.set(tileKey, img);
+        }
+      } else if (existing) {
+        existing.destroy();
+        this.keySprites.delete(tileKey);
       }
     }
   }
@@ -2240,6 +2367,12 @@ export class MatchScene extends Phaser.Scene {
       return { kind: 'tileFog' };
     }
 
+    // Floor key — checked before fog gates so hovering over a key in LOS
+    // (or one remembered from a prior visit) shows the right hint.
+    if (this.keyMemory.get(`${tx},${ty}`) === true) {
+      return { kind: 'tileKey' };
+    }
+
     // Escape hatch — broken hatches use a separate key so the tooltip
     // reflects the "single-use" state with a darker icon and warning text.
     // We honor the per-client memory (escapeSprites[].memoryBroken) rather
@@ -2249,7 +2382,10 @@ export class MatchScene extends Phaser.Scene {
       if (e.x === tx && e.y === ty) {
         const spr = this.escapeSprites.find(s => s.x === tx && s.y === ty);
         const broken = !!spr?.memoryBroken;
-        return { kind: broken ? 'tileHatchBroken' : 'tileHatch' };
+        if (broken) return { kind: 'tileHatchBroken' };
+        const me = this.state.bombermen.find(b => b.playerId === this.myPlayerId);
+        const held = me?.keys ?? 0;
+        return { kind: 'tileHatch', held, required: BALANCE.keys.requiredPerHatch };
       }
     }
     // Chest
@@ -2466,6 +2602,18 @@ export class MatchScene extends Phaser.Scene {
       pulseOnCount: true,
     });
 
+    // Keys counter — small icon + "N/3" text, sits just left of the
+    // TreasureListWidget. Its own column, per docs/keys-system.md §9.
+    const KEY_ICON = 22;
+    this.keysHudIcon = this.hud(this.add.image(width - 90, 14 + KEY_ICON / 2, 'key')
+      .setOrigin(0.5, 0.5)
+      .setDisplaySize(KEY_ICON, KEY_ICON)
+      .setDepth(1001));
+    this.keysHudText = this.hud(this.add.text(width - 76, 14 + KEY_ICON / 2, `0/${BALANCE.keys.requiredPerHatch}`, {
+      fontSize: '14px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
+      stroke: '#000000', strokeThickness: 3,
+    }).setOrigin(0, 0.5).setDepth(1001));
+
     // Slot tray is built lazily — at this point the local Bomberman state
     // hasn't arrived yet so we don't know `maxCustomSlots`. `renderHud`
     // calls `rebuildSlotTrayIfNeeded()` once state is in.
@@ -2606,13 +2754,33 @@ export class MatchScene extends Phaser.Scene {
     this.turnText.setText(`Turn ${this.state.turnNumber} / ${BALANCE.match.turnLimit}`);
     this.turnText.setColor(turnsLeft <= BALANCE.match.turnsLeftWarning ? '#ff6644' : '#aaaaaa');
 
-    // Broken-hatch warning: visible only while the local player is alive,
-    // not escaped, and standing on a hatch tile that's been used already.
+    // Hatch warning text: broken (precedence) or needs-keys. Visible only
+    // while the local player is alive, not escaped, and standing on a
+    // hatch tile.
     if (this.brokenHatchText) {
       const me = this.state.bombermen.find(b => b.playerId === this.myPlayerId);
-      const onBroken = !!me && me.alive && !me.escaped &&
+      const onHatch = !!me && me.alive && !me.escaped &&
+        this.state.escapeTiles.some(t => t.x === me.x && t.y === me.y);
+      const onBroken = !!me && onHatch &&
         this.state.brokenHatches.some(t => t.x === me.x && t.y === me.y);
-      this.brokenHatchText.setVisible(onBroken);
+      const cap = BALANCE.keys.requiredPerHatch;
+      const heldKeys = me?.keys ?? 0;
+      if (onBroken) {
+        this.brokenHatchText.setText('This Hatch is Broken, you won’t be able to Escape from it');
+        this.brokenHatchText.setVisible(true);
+      } else if (onHatch && heldKeys < cap) {
+        this.brokenHatchText.setText(`This Hatch requires ${heldKeys}/${cap} keys`);
+        this.brokenHatchText.setVisible(true);
+      } else {
+        this.brokenHatchText.setVisible(false);
+      }
+    }
+
+    // Keys counter text — always visible, reflects local bomberman's keys.
+    if (this.keysHudText) {
+      const me = this.state.bombermen.find(b => b.playerId === this.myPlayerId);
+      const heldKeys = me?.keys ?? 0;
+      this.keysHudText.setText(`${heldKeys}/${BALANCE.keys.requiredPerHatch}`);
     }
 
     // UAV countdown + throb starting 3 turns out. Hidden in tutorial matches

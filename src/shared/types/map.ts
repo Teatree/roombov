@@ -65,6 +65,12 @@ export interface MapData {
    * walkable tile inside the rectangle.
    */
   chestZones: Zone[];
+  /**
+   * Key spawn candidates from the Tiled "Keys" object layer. Each circle is
+   * interpreted as a single point at its center, converted to tile coords.
+   * MatchRoom shuffles these and takes BALANCE.keys.totalOnMap at match start.
+   */
+  keySpawns: TileCoord[];
   /** Double doors detected from the Doors tile layer. */
   doors: DoorDef[];
   /** Optional tutorial-specific point references parsed from the Tutorial object layer. */

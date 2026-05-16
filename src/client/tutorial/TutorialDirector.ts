@@ -393,6 +393,7 @@ export class TutorialDirector {
             hp: step.hp ?? 2,
             alive: true,
             treasures: {},
+            keys: 0,
             maxCustomSlots: TUTORIAL_BOT_STATS.maxCustomSlots,
             stackSize: TUTORIAL_BOT_STATS.stackSize,
             inventory: { slots },

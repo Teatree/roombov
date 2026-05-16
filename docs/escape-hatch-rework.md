@@ -1,8 +1,8 @@
 # Escape Hatch Rework — Implementation Spec
 
-**Status:** Pending implementation
+**Status:** Implemented (one-time use + per-client fog memory). **Now further gated by keys** — see `docs/keys-system.md`. A hatch requires the local bomberman to be carrying `BALANCE.keys.requiredPerHatch` keys before the resolver will start counting idle turns; the broken-vs-keys-warning HUD priority is documented in the keys spec.
 **Owner:** Claude Code (this session and future ones)
-**Last updated:** 2026-05-14
+**Last updated:** 2026-05-15
 
 This document is a self-contained handoff for the upcoming Escape Hatch rework. It captures the current behavior, the new requirements, the design decisions, and the concrete code-touch list. A future Claude (or other LLM) reading this should be able to implement the change without re-deriving any of the design.
 

@@ -161,6 +161,10 @@ export interface BombermanState {
   alive: boolean;
   /** Treasures picked up during this match (dropped on death, kept on escape). */
   treasures: TreasureBundle;
+  /** Number of escape-hatch keys currently held. Capped at
+   *  BALANCE.keys.requiredPerHatch. Dropped to the body on death; consumed
+   *  (set to 0) on escape. */
+  keys: number;
   /** Bomberman stats — copied from the equipped OwnedBomberman at match start.
    *  In-match logic (loot panel, equip-to-slot, throws) reads from these. */
   maxCustomSlots: number;

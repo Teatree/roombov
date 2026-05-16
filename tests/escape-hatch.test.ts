@@ -3,6 +3,7 @@ import { resolveTurn } from '../src/shared/systems/TurnResolver.ts';
 import { TileType, type MapData } from '../src/shared/types/map.ts';
 import type { MatchState, PlayerAction } from '../src/shared/types/match.ts';
 import type { BombermanState } from '../src/shared/types/bomberman.ts';
+import { BALANCE } from '../src/shared/config/balance.ts';
 
 /** All-floor map of the given size, with a single escape hatch at the given coord. */
 function mapWithHatch(hatchX: number, hatchY: number, size = 10): MapData {
@@ -18,7 +19,7 @@ function mapWithHatch(hatchX: number, hatchY: number, size = 10): MapData {
   };
 }
 
-function makeBomberman(playerId: string, x: number, y: number): BombermanState {
+function makeBomberman(playerId: string, x: number, y: number, opts: { keys?: number } = {}): BombermanState {
   return {
     playerId,
     x, y,
@@ -34,6 +35,10 @@ function makeBomberman(playerId: string, x: number, y: number): BombermanState {
     onHatchIdleTurns: 0,
     meleeTrapMode: false,
     treasures: {},
+    // Tests in this file pre-date the keys gate; default to "carrying the
+    // door cost" so escape-related assertions still hold without rewriting
+    // every test. New keys-system tests live in tests/keys.test.ts.
+    keys: opts.keys ?? BALANCE.keys.requiredPerHatch,
   } as unknown as BombermanState;
 }
 
@@ -52,6 +57,7 @@ function makeState(bombermen: BombermanState[], escapeTiles: { x: number; y: num
     bloodTiles: [],
     escapeTiles,
     brokenHatches,
+    keys: [],
   };
 }
 

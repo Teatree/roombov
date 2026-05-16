@@ -63,6 +63,9 @@ export interface DroppedBody {
   y: number;
   ownerPlayerId: string;
   treasures: TreasureBundle;
+  /** Keys held by the bomberman at the moment they died. Auto-transferred
+   *  to another bomberman who walks onto this tile, up to their cap. */
+  keys: number;
   bombs: { type: BombType; count: number }[];
   /** Inherited from the deceased's BombermanState. The body loot UI sizes its
    *  slot row to this — Free → 4, Paid → 5, Expensive → 6. (Distinct from
@@ -136,6 +139,12 @@ export interface MatchState {
   bloodTiles: { x: number; y: number }[];
   /** Escape points from the map (copied for client rendering). */
   escapeTiles: { x: number; y: number }[];
+  /**
+   * Escape-hatch keys currently lying on the floor. Picked up by walking
+   * on the tile (including rush intermediates). Capped per-bomberman by
+   * BALANCE.keys.requiredPerHatch.
+   */
+  keys: { x: number; y: number }[];
   /**
    * Coordinates of escape hatches that have already been used. A hatch can be
    * used exactly once per match; subsequent attempts to escape from a broken

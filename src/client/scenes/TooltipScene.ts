@@ -336,6 +336,17 @@ function drawShapeIcon(g: Phaser.GameObjects.Graphics, shape: string, x: number,
       g.fillCircle(cx, cy, 2);
       return;
     }
+    case 'key': {
+      // Simple key silhouette: round head + stubby shaft.
+      g.fillStyle(0xffd944, 1);
+      g.fillCircle(cx - r * 0.4, cy, r * 0.45);
+      g.fillStyle(0x000000, 1);
+      g.fillCircle(cx - r * 0.4, cy, r * 0.18);
+      g.fillStyle(0xffd944, 1);
+      g.fillRect(cx - r * 0.1, cy - r * 0.18, r * 0.9, r * 0.36);
+      g.fillRect(cx + r * 0.55, cy, r * 0.2, r * 0.45);
+      return;
+    }
     case 'flame': {
       g.fillStyle(0xff6622, 1);
       g.fillTriangle(cx - r * 0.7, cy + r * 0.7, cx + r * 0.7, cy + r * 0.7, cx, cy - r);

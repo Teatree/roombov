@@ -196,6 +196,19 @@ export class BotPlayer {
   // ---- Actions ----
 
   private escapeAction(me: BombermanState, state: MatchState, map: MapData): PlayerAction {
+    // Hatches require BALANCE.keys.requiredPerHatch keys before they'll
+    // accept us. If we're short, divert to the nearest known key first.
+    const cap = BALANCE.keys.requiredPerHatch;
+    if ((me.keys ?? 0) < cap) {
+      const keyTarget = this.findNearestKnownKey(me, state);
+      if (keyTarget) {
+        const path = findPath(me.x, me.y, keyTarget.x, keyTarget.y, map);
+        if (path.length > 0) return this.pathStep(me, path, state);
+      }
+      // No reachable known key — fall through to exploration to find more.
+      return this.exploreAction(me, state, map, new Set());
+    }
+
     // Find nearest escape tile
     let bestEscape: { x: number; y: number } | null = null;
     let bestDist = Infinity;
@@ -209,6 +222,18 @@ export class BotPlayer {
 
     const path = findPath(me.x, me.y, bestEscape.x, bestEscape.y, map);
     return this.pathStep(me, path, state);
+  }
+
+  /** Nearest key the bot has observed (in current LOS or seen previously). */
+  private findNearestKnownKey(me: BombermanState, state: MatchState): { x: number; y: number } | null {
+    let best: { x: number; y: number } | null = null;
+    let bestDist = Infinity;
+    for (const k of state.keys) {
+      if (!this.seenTiles.has(`${k.x},${k.y}`)) continue;
+      const d = Math.max(Math.abs(k.x - me.x), Math.abs(k.y - me.y));
+      if (d < bestDist) { bestDist = d; best = k; }
+    }
+    return best;
   }
 
   private fightAction(
@@ -314,6 +339,17 @@ export class BotPlayer {
             return { kind: 'throw', slotIndex: flareSlot, x: darkTarget.x, y: darkTarget.y };
           }
         }
+      }
+    }
+
+    // Prefer a known key target while below cap — keys are gates to the
+    // hatch, so they're a higher-value loot pick than blind exploration.
+    const cap = BALANCE.keys.requiredPerHatch;
+    if ((me.keys ?? 0) < cap) {
+      const keyTarget = this.findNearestKnownKey(me, state);
+      if (keyTarget) {
+        const path = findPath(me.x, me.y, keyTarget.x, keyTarget.y, map);
+        if (path.length > 0) return this.pathStep(me, path, state);
       }
     }
 
