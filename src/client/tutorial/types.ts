@@ -158,6 +158,11 @@ export type TutorialStep =
       tint?: number;
       hp?: number;
       inventory?: Array<{ slot: 0 | 1 | 2 | 3; type: BombType; count: number }>;
+      /** Override the bot's inventory slot count. Defaults to
+       *  TUTORIAL_BOT_STATS.maxCustomSlots (Free tier → 4). Used by the
+       *  ambush bot (5 slots) so the body's loot panel matches a Paid tier
+       *  layout — keeps the Ender Pearl highlight aligned. */
+      maxCustomSlots?: number;
     }
   | {
       kind: 'spawnChest';
@@ -167,6 +172,10 @@ export type TutorialStep =
       y: number;
       /** Exact treasures to put in the chest (overrides any roll). */
       treasures: TreasureBundle;
+      /** Coins in the chest. Defaults to 0 if omitted. */
+      coins?: number;
+      /** Keys in the chest. Defaults to 0 if omitted. */
+      keys?: number;
       bombs: Array<{ type: BombType; count: number }>;
     }
   | { kind: 'equipPlayerBomb'; slot: 0 | 1 | 2 | 3; type: BombType; count: number }

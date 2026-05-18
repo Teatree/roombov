@@ -41,6 +41,7 @@ import { BOMB_CATALOG } from '../shared/config/bombs.ts';
 import { BALANCE } from '../shared/config/balance.ts';
 import { createSeededRandom, seededRandInt } from '../shared/utils/seeded-random.ts';
 import { rollBombLoot } from '../shared/utils/loot-roll.ts';
+import { rollColors, rollTint } from '../shared/utils/cosmetic-color.ts';
 import type { PlayerStore } from './PlayerStore.ts';
 
 export class BombermanShopService {
@@ -91,20 +92,10 @@ export class BombermanShopService {
   private rollBomberman(tier: BombermanTier, rng: () => number, idPrefix: string): BombermanTemplate {
     const cfg = TIER_CONFIG[tier];
 
-    // Colors: random hues projected to 24-bit RGB (used by shop cards)
-    const colors: CosmeticColors = {
-      shirt: hslToRgb(rng() * 360, 0.65, 0.55),
-      pants: hslToRgb(rng() * 360, 0.55, 0.35),
-      hair: hslToRgb(rng() * 360, 0.55, 0.45),
-    };
-
-    // Tint: lighter-leaning palette so the sprites pop against the dark
-    // dungeon floor. High saturation (0.55–0.85) + high lightness (0.62–0.8)
-    // produces vivid pastels — no grays, no muddy darks.
-    const tintHue = rng() * 360;
-    const tintSat = 0.55 + rng() * 0.3;
-    const tintLight = 0.62 + rng() * 0.18;
-    const tint = hslToRgb(tintHue, tintSat, tintLight);
+    // Colors (shop cards) + tint (in-match sprite) share one palette source
+    // in src/shared/utils/cosmetic-color.ts so scavs use the same recipe.
+    const colors: CosmeticColors = rollColors(rng);
+    const tint = rollTint(rng);
 
     // Tier-driven stats: customSlots is fixed per tier; stackSize is rolled
     // uniformly inside the tier's range so two Bombermen of the same tier
@@ -123,11 +114,10 @@ export class BombermanShopService {
 
     const inventory = packInventory(counts, maxCustomSlots, stackSize);
 
-    // Derived price — Free tier is the player's onboarding option and is
-    // pinned at 0 even though the formula would otherwise charge for bombs.
-    const price = tier === 'free'
-      ? 0
-      : computeBombermanPrice(maxCustomSlots, stackSize, inventory);
+    // Derived price — every tier (including free) runs through the same
+    // pricing formula post-NEW_META §6. Free-tier Bombermen now cost
+    // ~50–120 coins driven by their stack roll + bomb inventory.
+    const price = computeBombermanPrice(maxCustomSlots, stackSize, inventory);
 
     const name = rollBombermanName(tier, rng);
 
@@ -264,8 +254,9 @@ function packInventory(
  * with 4 custom slots = 5 total = 0 extra slot premium; 5 custom = 6 total =
  * 1 extra (50c); 6 custom = 7 total = 2 extra (100c).
  *
- * Free tier is special-cased outside this helper (always 0). Callers should
- * skip this for the Free tier.
+ * Post NEW_META §6: free tier runs through this helper too (no special case).
+ * Output is clamped to BOMBERMAN_PRICING.minPrice so even the cheapest rolls
+ * are never sold for less than the configured floor.
  */
 function computeBombermanPrice(
   maxCustomSlots: number,
@@ -288,7 +279,8 @@ function computeBombermanPrice(
 
   const raw = slotCost + stackCost + bombCost;
   const step = Math.max(1, BOMBERMAN_PRICING.roundToNearest);
-  return Math.round(raw / step) * step;
+  const rounded = Math.round(raw / step) * step;
+  return Math.max(BOMBERMAN_PRICING.minPrice, rounded);
 }
 
 function cloneInventory(inv: BombInventory): BombInventory {
@@ -297,21 +289,3 @@ function cloneInventory(inv: BombInventory): BombInventory {
   };
 }
 
-/** HSL → 0xRRGGBB. h in [0,360), s/l in [0,1]. */
-function hslToRgb(h: number, s: number, l: number): number {
-  const c = (1 - Math.abs(2 * l - 1)) * s;
-  const hp = h / 60;
-  const x = c * (1 - Math.abs((hp % 2) - 1));
-  let r = 0, g = 0, b = 0;
-  if (hp < 1) { r = c; g = x; }
-  else if (hp < 2) { r = x; g = c; }
-  else if (hp < 3) { g = c; b = x; }
-  else if (hp < 4) { g = x; b = c; }
-  else if (hp < 5) { r = x; b = c; }
-  else { r = c; b = x; }
-  const m = l - c / 2;
-  const R = Math.round((r + m) * 255);
-  const G = Math.round((g + m) * 255);
-  const B = Math.round((b + m) * 255);
-  return (R << 16) | (G << 8) | B;
-}

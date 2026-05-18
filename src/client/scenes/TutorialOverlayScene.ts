@@ -453,5 +453,13 @@ export class TutorialOverlayScene extends Phaser.Scene {
     this.currentHighlights = [];
     this.flashRect = null;
     this.advanceHandler = null;
+    // Phaser destroys all GameObjects on scene shutdown, but our class
+    // fields still hold dead references. Null them so create() rebuilds
+    // them on the next launch — without this, the second tutorial run
+    // calls setTexture / setVisible on destroyed images and crashes.
+    this.dialoguePortrait = null;
+    this.backend = null;
+    this.matchScene = null;
+    this.inputBlockedUntil = 0;
   }
 }

@@ -112,7 +112,7 @@ describe('UAV — periodic map-wide reveal', () => {
     }
   });
 
-  it('test_uav_afterFiring_reschedulesNextRunWithin20To30Turns', () => {
+  it('test_uav_afterFiring_reschedulesNextRunWithin60To90Turns', () => {
     // Arrange
     const map = openMap();
     const state = makeState({ isTutorial: false, uavNextFireTurn: 5 });
@@ -120,11 +120,11 @@ describe('UAV — periodic map-wide reveal', () => {
     // Act
     const finalState = advance(state, map, 5);
 
-    // Assert — next UAV scheduled 20 to 30 turns out (exclusive of the just-fired turn).
+    // Assert — next UAV scheduled 60 to 90 turns out (exclusive of the just-fired turn).
     expect(finalState.uavNextFireTurn).toBeDefined();
     const gap = finalState.uavNextFireTurn! - 5;
-    expect(gap).toBeGreaterThanOrEqual(20);
-    expect(gap).toBeLessThanOrEqual(30);
+    expect(gap).toBeGreaterThanOrEqual(60);
+    expect(gap).toBeLessThanOrEqual(90);
   });
 
   it('test_uav_emitsUavFiredEvent_onScheduledTurn', () => {

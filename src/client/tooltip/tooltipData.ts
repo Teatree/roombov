@@ -74,8 +74,8 @@ export function tooltipDataFor(key: TooltipKey): TooltipData {
         parts: [
           { text: 'Treasures ' },
           { text: 'looted', bold: true },
-          { text: ' this match. Cash them in at ' },
-          { text: 'Gambler Street', bold: true },
+          { text: ' this match. Spent at ' },
+          { text: 'meta-progression locations', bold: true },
           { text: '.' },
         ],
       };

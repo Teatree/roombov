@@ -1,3 +1,9 @@
+// DISABLED — meta system reset 2026-05-16 (NEW_META §8).
+// Scene unregistered from main.ts and unreachable through normal navigation.
+// File preserved for revival; server-side GamblerStreetService is still
+// running (profile field intact), so flipping the registration back on is
+// the only step needed to bring this back.
+
 import Phaser from 'phaser';
 import { GamblerStreetStore, ProfileStore } from '../ClientState.ts';
 import { TreasureListWidget } from '../systems/TreasureListWidget.ts';

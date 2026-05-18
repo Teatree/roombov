@@ -4,16 +4,10 @@
   "updatedAt": 1778834203016,
   "coins": 500,
   "treasures": {
-    "fish": 75,
-    "chalice": 85,
-    "jade": 92,
-    "books": 100,
     "coffee": 77,
     "grapes": 138,
     "lanterns": 75,
-    "bones": 113,
-    "mushrooms": 117,
-    "amulets": 53
+    "mushrooms": 117
   },
   "ownedBombermen": [
     {

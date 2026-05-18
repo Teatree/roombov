@@ -8,7 +8,9 @@ import { MatchScene } from './scenes/MatchScene.ts';
 import { ResultsScene } from './scenes/ResultsScene.ts';
 import { TutorialOverlayScene } from './scenes/TutorialOverlayScene.ts';
 import { TooltipScene } from './scenes/TooltipScene.ts';
-import { GamblerStreetScene } from './scenes/GamblerStreetScene.ts';
+import { FactoryScene } from './scenes/FactoryScene.ts';
+// GamblerStreetScene unregistered post-NEW_META §8. File preserved for revival.
+// import { GamblerStreetScene } from './scenes/GamblerStreetScene.ts';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -21,7 +23,7 @@ const config: Phaser.Types.Core.GameConfig = {
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
   fps: { target: 30, forceSetTimeOut: true },
-  scene: [BootScene, MainMenuScene, LobbyScene, BombermanShopScene, BombsShopScene, GamblerStreetScene, MatchScene, ResultsScene, TutorialOverlayScene, TooltipScene],
+  scene: [BootScene, MainMenuScene, LobbyScene, BombermanShopScene, BombsShopScene, FactoryScene, MatchScene, ResultsScene, TutorialOverlayScene, TooltipScene],
 };
 
 const game = new Phaser.Game(config);

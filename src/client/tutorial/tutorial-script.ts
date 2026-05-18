@@ -76,14 +76,17 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   { kind: 'dialogue', portrait: 'char4', text: "Now let's find some real bomb!" },
 
   // --- Beat 3: Chest Loot ------------------------------------------------
-  // Hand-placed chest at (10, 10): 3 Chalices, 1 Flare, 1 Bomb.
+  // Hand-placed chest at (10, 10): 75 coins, 1 key, 1 Flare, 1 Bomb.
+  // (Treasures removed in NEW_META §7 to keep the tutorial chest focused.)
   {
     kind: 'spawnChest',
     chestId: 'tut_chest',
     tier: 2,
     x: 10,
     y: 10,
-    treasures: { chalice: 3 },
+    treasures: {},
+    coins: 75,
+    keys: 1,
     bombs: [
       { type: 'flare', count: 1 },
       { type: 'bomb', count: 1 },
@@ -103,8 +106,8 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   { kind: 'highlight', target: { kind: 'lootItem', bombType: 'bomb' } },
   { kind: 'waitForAction', expected: { kind: 'lootBomb', sourceKind: 'chest', bombType: 'bomb' } },
   { kind: 'clearHighlight' },
-  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Good job, notice that the treasures get picked up automatically' },
-  { kind: 'highlight', target: { kind: 'treasureList' } },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Coins go straight to your wallet — you saw them fly in.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: "That key is for the escape hatch. You'll need one to extract. Keep it safe." },
 
   // --- Beat 4: Flare + Bomb kill (Bot1 at (17, 10)) ----------------------
   {
@@ -158,6 +161,9 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
     character: 'char2',
     tint: 0x4488cc,
     hp: 1,
+    // 5 slots (Paid-tier layout) so the body loot panel's Ender Pearl
+    // highlight lands in the same column the tutorial script expects.
+    maxCustomSlots: 5,
     inventory: [{ slot: 0, type: 'ender_pearl', count: 1 }],
   },
   { kind: 'panCamera', focus: 'player', durationMs: 500 },
@@ -231,7 +237,7 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
       b2.hp = 1;
       b2.x = 22;
       b2.y = 8;
-      b2.treasures = { fish: 5, jade: 5, books: 5 };
+      b2.treasures = { mushrooms: 10, coffee: 5, lanterns: 1};
       b2.inventory.slots[0] = { type: 'ender_pearl', count: 1 };
     },
   },

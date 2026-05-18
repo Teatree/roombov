@@ -24,8 +24,20 @@ export type BombermanTier = 'free' | 'paid' | 'paid_expensive';
 export type CharacterVariant =
   | 'char1' | 'char2' | 'char3' | 'char4' | 'char5' | 'char6' | 'char7';
 
+/** Rotatable variants — Bomberman shop + bot fallback roll from this set.
+ *  `char5` is intentionally excluded; it's reserved for Scavenger NPCs. */
 export const CHARACTER_VARIANTS: readonly CharacterVariant[] = [
-  'char1', 'char2', 'char3', 'char4', 'char5', 'char6', 'char7',
+  'char1', 'char2', 'char3', 'char4', 'char6', 'char7',
+];
+
+/** Visual assigned to every Scavenger NPC. Never enters shop rotation. */
+export const SCAV_CHARACTER: CharacterVariant = 'char5';
+
+/** Union of every variant the client must preload assets/animations for —
+ *  rotation pool plus the scav-only variant. */
+export const ALL_RENDERED_VARIANTS: readonly CharacterVariant[] = [
+  ...CHARACTER_VARIANTS,
+  SCAV_CHARACTER,
 ];
 
 /**
@@ -148,6 +160,11 @@ export interface BombermanState {
   /** True if this Bomberman is controlled by a bot (no real socket). Used to
    *  exclude bots from treasure collection — bots do not loot chests or bodies. */
   isBot: boolean;
+  /** True if this Bomberman is a Scavenger NPC spawned mid-match. Implies
+   *  `isBot: true`. Excluded from match-end "alive players" count so scavs
+   *  don't keep a match running after all real players are dead/escaped.
+   *  Defaults to false/undefined for normal bombermen. */
+  isScav?: boolean;
   /** The OwnedBomberman id at the time of match start. */
   bombermanId: string;
   colors: CosmeticColors;
@@ -161,6 +178,10 @@ export interface BombermanState {
   alive: boolean;
   /** Treasures picked up during this match (dropped on death, kept on escape). */
   treasures: TreasureBundle;
+  /** Coins picked up from chests during this match. Transferred to the body
+   *  on death (auto-pickup on body-walk-over, no cap), banked into
+   *  PlayerProfile.coins on escape. See docs/NEW_META.md §2. */
+  coins: number;
   /** Number of escape-hatch keys currently held. Capped at
    *  BALANCE.keys.requiredPerHatch. Dropped to the body on death; consumed
    *  (set to 0) on escape. */

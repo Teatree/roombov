@@ -35,23 +35,26 @@ export interface ChestTierConfig {
   treasureSlotCount: [number, number];
   /** Relative weight of each treasure type. Drives both type pick and per-slot count. */
   treasureWeights: Partial<Record<TreasureType, number>>;
+  /** Coins this chest grants — rolled uniformly in [min, max] inclusive at
+   *  chest spawn time. Auto-collected on chest-open like treasures. See
+   *  docs/NEW_META.md §2. */
+  coinRange: [number, number];
+  /** Relative weight for the 15-keys-per-match distribution. Higher = more
+   *  likely to receive each of the 15 keys. See docs/NEW_META.md §4. */
+  keyWeight: number;
 }
 
 /**
- * Default uniform treasure weights — every type equally likely to appear.
- * Edit individual values per-tier to bias toward specific treasures.
+ * Active treasure pool (post-NEW_META reset, 2026-05-16). Only four
+ * treasures roll from chests now; the other six remain in the type system
+ * for backward compatibility but have weight 0 (i.e. never picked).
+ * See docs/NEW_META.md §3.
  */
-const UNIFORM_TREASURE_WEIGHTS: Partial<Record<TreasureType, number>> = {
-  fish: 100,
-  chalice: 100,
-  jade: 100,
-  books: 100,
-  coffee: 100,
-  grapes: 100,
-  lanterns: 100,
-  bones: 100,
-  mushrooms: 100,
-  amulets: 100,
+const ACTIVE_TREASURE_WEIGHTS: Partial<Record<TreasureType, number>> = {
+  mushrooms: 200,
+  coffee: 50,
+  grapes: 25,
+  lanterns: 10,
 };
 
 export const CHEST_CONFIG: Record<1 | 2 | 3, ChestTierConfig> = {
@@ -74,7 +77,9 @@ export const CHEST_CONFIG: Record<1 | 2 | 3, ChestTierConfig> = {
     },
     totalTreasures: 25,
     treasureSlotCount: [3, 3],
-    treasureWeights: { ...UNIFORM_TREASURE_WEIGHTS },
+    treasureWeights: { ...ACTIVE_TREASURE_WEIGHTS },
+    coinRange: [50, 100],
+    keyWeight: 50,
   },
   2: {
     totalBombs: 8,
@@ -98,7 +103,9 @@ export const CHEST_CONFIG: Record<1 | 2 | 3, ChestTierConfig> = {
     },
     totalTreasures: 75,
     treasureSlotCount: [5, 5],
-    treasureWeights: { ...UNIFORM_TREASURE_WEIGHTS },
+    treasureWeights: { ...ACTIVE_TREASURE_WEIGHTS },
+    coinRange: [75, 150],
+    keyWeight: 75,
   },
   3: {
     totalBombs: 12,
@@ -122,14 +129,9 @@ export const CHEST_CONFIG: Record<1 | 2 | 3, ChestTierConfig> = {
     },
     totalTreasures: 150,
     treasureSlotCount: [6, 6],
-    treasureWeights: {
-      ...UNIFORM_TREASURE_WEIGHTS,
-      chalice: 250,
-      jade: 200,
-      books: 200,
-      amulets: 175,
-      lanterns: 150,
-    },
+    treasureWeights: { ...ACTIVE_TREASURE_WEIGHTS },
+    coinRange: [150, 250],
+    keyWeight: 100,
   },
 };
 

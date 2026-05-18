@@ -446,6 +446,7 @@ export class TutorialMatchBackend implements MatchBackend {
       hp: BALANCE.match.bombermanMaxHp,
       alive: true,
       treasures: {},
+      coins: 0,
       keys: 0,
       maxCustomSlots: TUTORIAL_TIER_STATS.maxCustomSlots,
       stackSize: TUTORIAL_TIER_STATS.stackSize,

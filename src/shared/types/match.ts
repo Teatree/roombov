@@ -38,6 +38,14 @@ export interface Chest {
   y: number;
   /** Remaining treasures — emptied after the first player steps on the tile. */
   treasures: TreasureBundle;
+  /** Remaining coins — auto-picked-up on chest step. Rolled at spawn from
+   *  CHEST_CONFIG[tier].coinRange. See docs/NEW_META.md §2. */
+  coins: number;
+  /** Remaining escape-hatch keys — auto-picked-up on chest step up to the
+   *  picker's cap. Leftover persists for subsequent looters. Distributed at
+   *  match start by tier weight; never visible in the loot UI. See
+   *  docs/NEW_META.md §4. */
+  keys: number;
   /** Remaining bombs available for looting. Entries are removed/decremented as players pick them up. */
   bombs: Array<{ type: BombType; count: number }>;
   /** Permanently true after any player steps on the chest tile. */
@@ -63,6 +71,9 @@ export interface DroppedBody {
   y: number;
   ownerPlayerId: string;
   treasures: TreasureBundle;
+  /** Coins held by the bomberman at the moment they died. Auto-transferred
+   *  to another bomberman who walks onto this tile (no cap). */
+  coins: number;
   /** Keys held by the bomberman at the moment they died. Auto-transferred
    *  to another bomberman who walks onto this tile, up to their cap. */
   keys: number;
@@ -159,7 +170,11 @@ export interface MatchState {
    *  future "real match only" automatic events. Defaults to false on server. */
   isTutorial?: boolean;
   /** Turn number on which the next UAV overflight fires. Undefined in tutorial
-   *  matches (UAV never schedules). Reset to current + [20, 30] whenever the
+   *  matches (UAV never schedules). Reset to current + [60, 90] whenever the
    *  UAV fires. */
   uavNextFireTurn?: number;
+  /** Turn number on which the next Scavenger spawn wave occurs. Undefined in
+   *  tutorial matches (scavs never spawn). Reset to current + [20, 30]
+   *  whenever scavs spawn. See `BALANCE.scavs` and `TurnResolver` step 5d. */
+  scavNextSpawnTurn?: number;
 }

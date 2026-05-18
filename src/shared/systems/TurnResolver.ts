@@ -26,6 +26,8 @@ import type {
   DroppedBody, MatchState, PlayerAction,
 } from '../types/match.ts';
 import type { BombermanState, BombInventory, BombSlot } from '../types/bomberman.ts';
+import { SCAV_CHARACTER } from '../types/bomberman.ts';
+import { rollTint } from '../utils/cosmetic-color.ts';
 import type {
   BombInstance, FireTile, LightTile, BombType,
   SmokeCloud, Mine, PhosphorusPending, StatusEffect,
@@ -216,9 +218,10 @@ export type TurnEvent =
   | { kind: 'damaged'; playerId: string; hpRemaining: number }
   | { kind: 'died'; playerId: string; x: number; y: number; killerId: string | null }
   | { kind: 'escaped'; playerId: string; treasures: TreasureBundle; hatchX: number; hatchY: number }
-  | { kind: 'key_pickup'; playerId: string; x: number; y: number; source: 'floor' | 'body'; newCount: number }
+  | { kind: 'key_pickup'; playerId: string; x: number; y: number; source: 'floor' | 'body' | 'chest'; newCount: number }
   | { kind: 'treasures_collected'; playerId: string; treasures: TreasureBundle }
   | { kind: 'body_looted'; playerId: string; bodyId: string; treasures: TreasureBundle }
+  | { kind: 'coins_picked_up'; playerId: string; amount: number; x: number; y: number; source: 'chest' | 'body' }
   | { kind: 'teleport'; playerId: string; fromX: number; fromY: number; toX: number; toY: number }
   | { kind: 'door_opened'; doorId: number }
   | { kind: 'rush_changed'; playerId: string; active: boolean }
@@ -256,7 +259,11 @@ export type TurnEvent =
    *  tiles to reveal the whole map for the standard 3-turn flare lifetime.
    *  `tiles` is the list of flare center positions so the client can play
    *  the same flash burst VFX a player-thrown flare produces on detonation. */
-  | { kind: 'uav_fired'; turnNumber: number; tiles: Tile[] };
+  | { kind: 'uav_fired'; turnNumber: number; tiles: Tile[] }
+  /** A Scavenger NPC bomberman just spawned at (x, y). Client may use this
+   *  to play a subtle vfx if desired — current spec says no UI surface, so
+   *  this is informational/diagnostic only. */
+  | { kind: 'scav_spawned'; playerId: string; x: number; y: number };
 
 export function resolveTurn(
   prev: MatchState,
@@ -465,8 +472,11 @@ export function resolveTurn(
   // any body's keys on the same tile (one at a time, up to cap).
   // Order within a tile: floor first, then body. A bomberman that crosses
   // through two key tiles in a rush will pick up both, as long as cap allows.
+  // (Floor keys are tutorial-only post-NEW_META; bodies still carry keys.)
   {
-    const cap = BALANCE.keys.requiredPerHatch;
+    const cap = state.isTutorial
+      ? BALANCE.keys.tutorialRequiredPerHatch
+      : BALANCE.keys.requiredPerHatch;
     for (const [playerId, steps] of steppedTilesByPlayer) {
       const bm = state.bombermen.find(b => b.playerId === playerId);
       if (!bm || !bm.alive || bm.escaped) continue;
@@ -547,19 +557,37 @@ export function resolveTurn(
     // bodies, leaving the haul intact for any human who walks over later.
     const canCollectTreasure = !bomberman.isBot;
 
-    // Chest treasures — auto-collect on walk-over; also marks chest as opened
+    // Chest treasures / coins / keys — auto-collect on walk-over. Bots
+    // skip treasures and coins (intentional), but key pickup still applies
+    // to bots since keys gate the escape hatch. Chest marked opened on first
+    // step; leftover keys remain pickable by later visitors.
     const chest = state.chests.find(c => c.x === bomberman.x && c.y === bomberman.y);
-    if (chest && canCollectTreasure) {
-      if (hasAnyTreasure(chest.treasures)) {
-        const picked: TreasureBundle = { ...chest.treasures };
-        mergeTreasures(bomberman.treasures, picked);
-        events.push({ kind: 'treasures_collected', playerId: bomberman.playerId, treasures: picked });
-        chest.treasures = {};
+    if (chest) {
+      if (canCollectTreasure) {
+        if (hasAnyTreasure(chest.treasures)) {
+          const picked: TreasureBundle = { ...chest.treasures };
+          mergeTreasures(bomberman.treasures, picked);
+          events.push({ kind: 'treasures_collected', playerId: bomberman.playerId, treasures: picked });
+          chest.treasures = {};
+        }
+        if (chest.coins > 0) {
+          const amount = chest.coins;
+          bomberman.coins = (bomberman.coins ?? 0) + amount;
+          chest.coins = 0;
+          events.push({ kind: 'coins_picked_up', playerId: bomberman.playerId, amount, x: chest.x, y: chest.y, source: 'chest' });
+        }
+      }
+      // Chest keys — auto-pickup up to cap, regardless of bot status.
+      const keyCap = state.isTutorial ? BALANCE.keys.tutorialRequiredPerHatch : BALANCE.keys.requiredPerHatch;
+      while (chest.keys > 0 && (bomberman.keys ?? 0) < keyCap) {
+        chest.keys -= 1;
+        bomberman.keys = (bomberman.keys ?? 0) + 1;
+        events.push({ kind: 'key_pickup', playerId: bomberman.playerId, x: chest.x, y: chest.y, source: 'chest', newCount: bomberman.keys });
       }
       if (!chest.opened) chest.opened = true;
     }
 
-    // Body treasures — auto-transfer on walk-over (bombs are looted manually via loot panel)
+    // Body treasures + coins — auto-transfer on walk-over (bombs are looted manually via loot panel)
     if (canCollectTreasure) {
       const bodyIdx = state.bodies.findIndex(b => b.x === bomberman.x && b.y === bomberman.y);
       if (bodyIdx >= 0) {
@@ -569,6 +597,12 @@ export function resolveTurn(
           mergeTreasures(bomberman.treasures, picked);
           events.push({ kind: 'body_looted', playerId: bomberman.playerId, bodyId: body.id, treasures: picked });
           body.treasures = {};
+        }
+        if (body.coins > 0) {
+          const amount = body.coins;
+          bomberman.coins = (bomberman.coins ?? 0) + amount;
+          body.coins = 0;
+          events.push({ kind: 'coins_picked_up', playerId: bomberman.playerId, amount, x: body.x, y: body.y, source: 'body' });
         }
       }
     }
@@ -1546,8 +1580,99 @@ export function resolveTurn(
     // and replays agree.
     const seedBase = hashString(`uav:${state.matchId}:${state.turnNumber}`);
     const rng = createSeededRandom(seedBase);
-    state.uavNextFireTurn = state.turnNumber + 20 + Math.floor(rng() * 11); // [20, 30]
+    state.uavNextFireTurn = state.turnNumber + 60 + Math.floor(rng() * 31); // [60, 90]
     events.push({ kind: 'uav_fired', turnNumber: state.turnNumber, tiles: uavTiles });
+  }
+
+  // --- 5d. Scavenger NPC spawn wave (real matches only) ---
+  // On scheduled turns, drop up to `BALANCE.scavs.perSpawn` Scavenger
+  // bombermen at player spawn tiles that no alive bomberman currently has
+  // line of sight on. Skips silently if no spawn tile qualifies. Players
+  // are NOT informed by design — scavs simply appear. MatchRoom listens
+  // to `scav_spawned` events to create a controller (ScavPlayer) for each.
+  if (!state.isTutorial
+      && state.scavNextSpawnTurn !== undefined
+      && state.turnNumber === state.scavNextSpawnTurn) {
+    const scavSeed = hashString(`scav:${state.matchId}:${state.turnNumber}`);
+    const scavRng = createSeededRandom(scavSeed);
+    const losR = BALANCE.match.losRadius;
+    const ts = map.tileSize;
+    const closedDoorTiles = new Set<string>();
+    for (const d of state.doors ?? []) {
+      if (d.opened) continue;
+      for (const t of d.tiles) closedDoorTiles.add(`${t.x},${t.y}`);
+    }
+    // Candidate spawn tiles = `map.spawns` filtered by "no alive bomberman
+    // in Chebyshev-LoS-radius AND no actual line of sight from any
+    // bomberman." Two-stage filter is intentional — Chebyshev first is
+    // cheap and rejects the easy cases without touching the DDA cast.
+    const candidates: { x: number; y: number }[] = [];
+    for (const s of map.spawns) {
+      let hidden = true;
+      for (const b of state.bombermen) {
+        if (!b.alive || b.escaped) continue;
+        if (Math.max(Math.abs(b.x - s.x), Math.abs(b.y - s.y)) > losR) continue;
+        const fromPx = b.x * ts + ts / 2;
+        const fromPy = b.y * ts + ts / 2;
+        const toPx = s.x * ts + ts / 2;
+        const toPy = s.y * ts + ts / 2;
+        if (hasLineOfSight(fromPx, fromPy, toPx, toPy, map.grid, ts, closedDoorTiles, undefined, seeThroughTiles)) {
+          hidden = false;
+          break;
+        }
+      }
+      if (hidden) candidates.push({ x: s.x, y: s.y });
+    }
+    // Seeded Fisher–Yates shuffle so spawn placement is replay-stable.
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(scavRng() * (i + 1));
+      [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+    }
+    const desired = BALANCE.scavs.perSpawn;
+    const picks = candidates.slice(0, Math.min(desired, candidates.length));
+    for (let i = 0; i < picks.length; i++) {
+      const tile = picks[i];
+      const playerId = `scav_${state.matchId}_${state.turnNumber}_${i}`;
+      const tint = rollTint(scavRng);
+      const scav: BombermanState = {
+        playerId,
+        isBot: true,
+        isScav: true,
+        bombermanId: 'scav',
+        colors: { shirt: tint, pants: tint, hair: tint },
+        tint,
+        character: SCAV_CHARACTER,
+        x: tile.x,
+        y: tile.y,
+        hp: BALANCE.match.bombermanMaxHp,
+        alive: true,
+        treasures: {},
+        coins: 0,
+        keys: 0,
+        maxCustomSlots: 4,
+        stackSize: 6,
+        inventory: {
+          slots: [
+            { type: 'flare', count: 2 },
+            { type: 'bomb', count: 6 },
+            { type: 'bomb_wide', count: 3 },
+            { type: 'delay_tricky', count: 3 },
+          ],
+        },
+        bleedingTurns: 0,
+        escaped: false,
+        rushCooldown: 0,
+        rushActive: false,
+        teleportedThisTurn: false,
+        onHatchIdleTurns: 0,
+        statusEffects: [],
+        meleeTrapMode: false,
+      };
+      state.bombermen.push(scav);
+      events.push({ kind: 'scav_spawned', playerId, x: tile.x, y: tile.y });
+    }
+    // Reschedule next wave — old UAV [20, 30] cadence, now repurposed.
+    state.scavNextSpawnTurn = state.turnNumber + 20 + Math.floor(scavRng() * 11);
   }
 
   // --- 6. Fire-tile standing damage (Bombermen on existing fire tiles) ---
@@ -1673,6 +1798,7 @@ export function resolveTurn(
         y: b.y,
         ownerPlayerId: b.playerId,
         treasures: b.treasures,
+        coins: b.coins ?? 0,
         keys: b.keys ?? 0,
         bombs,
         // Inherit the deceased's tier-stat shape so the body's loot panel
@@ -1681,6 +1807,7 @@ export function resolveTurn(
         stackSize: b.stackSize,
       });
       b.treasures = {};
+      b.coins = 0;
       b.keys = 0;
       // Reset inventory to the bomberman's own slot count (preserve shape
       // even though the corpse is now empty — we'll keep b around as a
@@ -1724,10 +1851,12 @@ export function resolveTurn(
     const action = effectiveActions.get(b.playerId) ?? { kind: 'idle' };
     const onHatch = state.escapeTiles.some(t => t.x === b.x && t.y === b.y);
     const onBrokenHatch = state.brokenHatches.some(t => t.x === b.x && t.y === b.y);
-    // Keys gate: a real match requires the bomberman to be carrying the full
-    // door cost. Tutorial bypasses this — see docs/keys-system.md §10.
-    const keysCap = BALANCE.keys.requiredPerHatch;
-    const hasEnoughKeys = state.isTutorial === true || (b.keys ?? 0) >= keysCap;
+    // Keys gate: requires the bomberman to be carrying the hatch unlock cost.
+    // Tutorial uses a reduced requirement (NEW_META §7) — see docs/NEW_META.md.
+    const keysCap = state.isTutorial === true
+      ? BALANCE.keys.tutorialRequiredPerHatch
+      : BALANCE.keys.requiredPerHatch;
+    const hasEnoughKeys = (b.keys ?? 0) >= keysCap;
     if (onHatch && !onBrokenHatch && hasEnoughKeys && action.kind === 'idle') {
       b.onHatchIdleTurns += 1;
       if (b.onHatchIdleTurns >= 1) {
@@ -1759,15 +1888,20 @@ export function resolveTurn(
   // A sole surviving Bomberman does NOT end the match — they must escape or
   // wait out the timer. Per the brief: "If Players all Escape from the Level
   // or all die the Match will end as well."
-  const aliveAndActive = state.bombermen.filter(b => b.alive && !b.escaped);
+  // Scavs are excluded from the alive count — once all real players are
+  // dead/escaped the match ends regardless of remaining scavs (otherwise a
+  // late-spawned scav could keep an otherwise-finished match running).
+  const aliveAndActive = state.bombermen.filter(b => b.alive && !b.escaped && !b.isScav);
   if (aliveAndActive.length === 0) {
     state.phase = 'ended';
     const anyEscaped = state.bombermen.some(b => b.escaped);
     if (anyEscaped) state.endReason = 'all_escaped';
     else state.endReason = 'all_dead';
   } else if (state.turnNumber >= BALANCE.match.turnLimit) {
-    // Everyone still alive dies at the turn limit per the brief
-    for (const b of aliveAndActive) {
+    // Everyone still alive dies at the turn limit per the brief. Scavs
+    // (excluded from aliveAndActive above) also die so deaths get emitted.
+    for (const b of state.bombermen) {
+      if (!b.alive || b.escaped) continue;
       b.alive = false;
       events.push({ kind: 'died', playerId: b.playerId, x: b.x, y: b.y, killerId: null });
     }

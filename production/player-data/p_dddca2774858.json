@@ -1,0 +1,23 @@
+{
+  "id": "p_dddca2774858",
+  "createdAt": 1778966892809,
+  "updatedAt": 1778966892809,
+  "coins": 500,
+  "treasures": {},
+  "ownedBombermen": [],
+  "equippedBombermanId": null,
+  "bombStockpile": {},
+  "gamblerStreet": {
+    "gamblers": [],
+    "pendingArrivals": [
+      1778966892809,
+      1778966892809,
+      1778966892809,
+      1778966892809,
+      1778966892809
+    ],
+    "lastTickedAt": 1778966892809,
+    "nextGamblerSerial": 1
+  },
+  "bombermanShop": null
+}

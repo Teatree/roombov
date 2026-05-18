@@ -366,6 +366,8 @@ export class TutorialDirector {
             x: step.x,
             y: step.y,
             treasures: { ...step.treasures },
+            coins: step.coins ?? 0,
+            keys: step.keys ?? 0,
             bombs: step.bombs.map(b => ({ ...b })),
             opened: false,
           });
@@ -374,8 +376,9 @@ export class TutorialDirector {
 
       case 'spawnBot':
         host.mutateState(s => {
+          const botSlots = step.maxCustomSlots ?? TUTORIAL_BOT_STATS.maxCustomSlots;
           const slots: Array<{ type: import('@shared/types/bombs.ts').BombType; count: number } | null> =
-            new Array(TUTORIAL_BOT_STATS.maxCustomSlots).fill(null);
+            new Array(botSlots).fill(null);
           for (const item of step.inventory ?? []) {
             if (item.slot >= 0 && item.slot < slots.length) {
               slots[item.slot] = { type: item.type, count: item.count };
@@ -393,8 +396,9 @@ export class TutorialDirector {
             hp: step.hp ?? 2,
             alive: true,
             treasures: {},
+            coins: 0,
             keys: 0,
-            maxCustomSlots: TUTORIAL_BOT_STATS.maxCustomSlots,
+            maxCustomSlots: botSlots,
             stackSize: TUTORIAL_BOT_STATS.stackSize,
             inventory: { slots },
             bleedingTurns: 0,

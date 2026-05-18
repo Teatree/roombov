@@ -104,10 +104,15 @@ export const BALANCE = {
     shieldDurationTurns: 3,
   },
   keys: {
-    /** Number of keys placed on the map at the start of each match. */
+    /** Number of keys placed in chests at the start of each match. Post
+     *  NEW_META (2026-05-16) these are distributed across spawned chests
+     *  by tier weight rather than on the map floor — see docs/NEW_META.md §4. */
     totalOnMap: 15,
     /** Keys needed to use an escape hatch. Also the per-bomberman carry cap. */
     requiredPerHatch: 3,
+    /** Tutorial-only override: hatch unlock requirement AND carry cap.
+     *  Used when state.isTutorial === true. See docs/NEW_META.md §7. */
+    tutorialRequiredPerHatch: 1,
   },
   bots: {
     /** Max bots that can be added to a single match. */
@@ -124,5 +129,17 @@ export const BALANCE = {
     predictChance: 0.33,
     /** Turns to chase / guess after target leaves LOS. */
     chaseTurns: 3,
+  },
+  scavs: {
+    /** How many scavs spawn per scheduled spawn wave. */
+    perSpawn: 2,
+    /** Turns to chase / guess after target leaves LOS. Longer than bots — scavs are persistent. */
+    chaseTurns: 6,
+    /** Chance (0-1) to throw at predicted next-tile instead of current. */
+    predictChance: 0.5,
+    /** Chance (0-1) per turn to throw a flare while exploring. */
+    flareChance: 0.25,
+    /** Consecutive turns an enemy must be visible before scavs aggro. 0 = engage immediately. */
+    aggroDelayTurns: 0,
   },
 } as const;

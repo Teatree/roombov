@@ -37,7 +37,7 @@ export interface TierConfig {
 export const TIER_CONFIG: Record<BombermanTier, TierConfig> = {
   free: {
     customSlots: 4,
-    stackSizeRange: [4, 5],
+    stackSizeRange: [6, 7],
     /** 3 unique slots, 10 bombs total */
     totalBombs: 10,
     maxUniqueSlots: 3,
@@ -55,7 +55,7 @@ export const TIER_CONFIG: Record<BombermanTier, TierConfig> = {
   },
   paid: {
     customSlots: 5,
-    stackSizeRange: [6, 7],
+    stackSizeRange: [8, 9],
     /** 4 unique slots, 14 bombs total */
     totalBombs: 14,
     maxUniqueSlots: 4,
@@ -76,7 +76,7 @@ export const TIER_CONFIG: Record<BombermanTier, TierConfig> = {
   },
   paid_expensive: {
     customSlots: 6,
-    stackSizeRange: [8, 10],
+    stackSizeRange: [10, 12],
     /** 4 unique slots, 16 bombs total */
     totalBombs: 16,
     maxUniqueSlots: 4,
@@ -108,24 +108,28 @@ export const TIER_CONFIG: Record<BombermanTier, TierConfig> = {
  *   slotCost  = max(0, totalSlots - SLOT_THRESHOLD) × COIN_PER_EXTRA_SLOT
  *   stackCost = max(0, stackSize  - STACK_THRESHOLD) × COIN_PER_EXTRA_STACK
  *   bombCost  = Σ (slot.count × BOMB_CATALOG[slot.type].price) × BOMB_COST_RATIO
- *   price     = round-to-nearest-5( slotCost + stackCost + bombCost )
+ *   raw       = slotCost + stackCost + bombCost
+ *   price     = max(MIN_PRICE, round-to-nearest-5(raw))
  *
- * Free tier is special-cased at 0 regardless of inventory so the entry-level
- * Bomberman stays accessible to brand-new players.
+ * Post NEW_META §6 (2026-05-16): every tier — including free — runs through
+ * this formula. The minimum-price floor exists to keep free-tier Bombermen
+ * from rolling absurdly cheap; their target band is ~50–120 coins.
  */
 export const BOMBERMAN_PRICING = {
   slotThreshold: 5,
   coinPerExtraSlot: 50,
   stackThreshold: 5,
   coinPerExtraStack: 25,
-  bombCostRatio: 0.30,
+  bombCostRatio: 0.08,
   roundToNearest: 5,
+  /** Lower bound on the computed price. NEW_META §6 — keeps free tier ≥50. */
+  minPrice: 50,
 } as const;
 
 /**
  * Migration helper — gives a deterministic mid-tier value for legacy owned
- * Bombermen that pre-date the per-tier stats system. Free → 4/5, Paid → 5/7,
- * Expensive → 6/9. PlayerStore calls this when backfilling missing fields.
+ * Bombermen that pre-date the per-tier stats system. Free → 4/7, Paid → 5/9,
+ * Expensive → 6/11. PlayerStore calls this when backfilling missing fields.
  */
 export function defaultStatsForTier(tier: BombermanTier): { maxCustomSlots: number; stackSize: number } {
   const cfg = TIER_CONFIG[tier];

@@ -64,7 +64,7 @@ export class MainMenuScene extends Phaser.Scene {
       ['[ TUTORIAL ]', () => this.scene.start('MatchScene', { mode: 'tutorial' })],
       ['[ BOMBERMAN SHOP ]', () => this.scene.start('BombermanShopScene')],
       ['[ BOMBS SHOP ]', () => this.scene.start('BombsShopScene')],
-      ['[ GAMBLER STREET ]', () => this.scene.start('GamblerStreetScene')],
+      ['[ FACTORY ]', () => this.scene.start('FactoryScene')],
     ];
 
     for (let i = 0; i < buttons.length; i++) {

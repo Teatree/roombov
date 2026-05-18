@@ -179,6 +179,14 @@ export class MatchScene extends Phaser.Scene {
   private brokenHatchText: Phaser.GameObjects.Text | null = null;
   private hpText!: Phaser.GameObjects.Text;
   private treasureList!: TreasureListWidget;
+  /** Top-right HUD coin counter (NEW_META §2). Always visible regardless
+   *  of amount, pinned above the treasure list. */
+  private coinHudIcon: Phaser.GameObjects.Graphics | null = null;
+  private coinHudText: Phaser.GameObjects.Text | null = null;
+  /** Running tally of coins the local player has picked up this match.
+   *  Client-authoritative for the Results screen — same pattern as
+   *  myTreasureTally. */
+  private myCoinTally = 0;
   private slotRects: Phaser.GameObjects.Rectangle[] = [];
   private slotLabelTexts: Phaser.GameObjects.Text[] = [];
   private slotCountTexts: Phaser.GameObjects.Text[] = [];
@@ -344,11 +352,15 @@ export class MatchScene extends Phaser.Scene {
     this.inputMode = { kind: 'idle' };
     this.lastPhase = null;
     this.cameraManualOverride = false;
+    // Tutorial scripts toggle this via setCameraLocked; reset on every scene
+    // entry so a second run doesn't start camera-locked from a stale flag.
+    this.cameraTutorialLocked = false;
     this.cameraDragging = false;
     this.myDeathAt = null;
     this.myEscapeAt = null;
     this.myEscapeTreasures = null;
     this.myTreasureTally = {};
+    this.myCoinTally = 0;
     this.myKills = 0;
     this.myKillerName = null;
     this.escapeSprites = [];
@@ -489,7 +501,15 @@ export class MatchScene extends Phaser.Scene {
     // Tutorial-only overlay. Renders dialogue, highlights, pause, etc.
     // above MatchScene's HUD camera. Receives a scene ref so it can query
     // HUD rects and drive camera pans on the main camera.
+    //
+    // Defensive: explicitly stop any lingering instance from a previous
+    // tutorial run before launching. Without this, a second tutorial entry
+    // can hit a Phaser state where the overlay's init/create don't re-run,
+    // leaving the director un-attached and the player frozen on Beat 0.
     if (this.mode === 'tutorial') {
+      if (this.scene.isActive('TutorialOverlayScene') || this.scene.isSleeping('TutorialOverlayScene')) {
+        this.scene.stop('TutorialOverlayScene');
+      }
       this.scene.launch('TutorialOverlayScene', { matchScene: this, backend: this.backend });
     }
 
@@ -1517,6 +1537,24 @@ export class MatchScene extends Phaser.Scene {
       }
     }
 
+    // Coin pickup visuals (NEW_META §2). Flying "+N coin" popup mirroring
+    // treasure pickup, plus tally accumulation for the Results fallback.
+    if (this.mapData) {
+      const ts = this.mapData.tileSize;
+      for (const ev of events) {
+        if (ev.kind !== 'coins_picked_up') continue;
+        const playerId = ev.playerId as string;
+        const amount = ev.amount as number;
+        if (playerId === this.myPlayerId) this.myCoinTally += amount;
+        const bm = this.state?.bombermen.find(b => b.playerId === playerId);
+        if (!bm) continue;
+        if (bm.playerId !== this.myPlayerId) continue;
+        const baseX = bm.x * ts + ts / 2;
+        const baseY = bm.y * ts + ts / 2 - ts * 0.5;
+        this.spawnCoinPopup(baseX, baseY, amount);
+      }
+    }
+
     // Fourth pass: treasure collection visuals. Stagger per type so the
     // player can read each pickup separately (icon + "+N").
     if (this.mapData) {
@@ -1556,6 +1594,39 @@ export class MatchScene extends Phaser.Scene {
         }
       }
     }
+  }
+
+  /** Floating "+N [coin]" popup mirroring the treasure pickup VFX.
+   *  Coin icon drawn inline as Graphics (mirrors tooltip 'coin' shape). */
+  private spawnCoinPopup(worldX: number, worldY: number, amount: number): void {
+    const POPUP_ICON = 22;
+    const c = this.add.container(worldX, worldY).setDepth(500).setAlpha(0);
+    const r = POPUP_ICON / 2;
+    const iconY = -8;
+    const icon = this.add.graphics();
+    icon.fillStyle(0xffd944, 1);
+    icon.fillCircle(0, iconY, r);
+    icon.fillStyle(0xc09020, 1);
+    icon.fillCircle(0, iconY, r * 0.7);
+    icon.fillStyle(0xffd944, 1);
+    icon.fillRect(-r * 0.1, iconY - r * 0.45, r * 0.2, r * 0.9);
+    const text = this.add.text(0, 12, `+${amount}`, {
+      fontSize: '16px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
+      stroke: '#000000', strokeThickness: 3,
+    }).setOrigin(0.5, 0.5);
+    c.add(icon);
+    c.add(text);
+    if (this.hudCamera) this.hudCamera.ignore(c);
+    this.tweens.add({ targets: c, alpha: 1, duration: 120 });
+    this.tweens.add({
+      targets: c,
+      y: worldY - 40,
+      alpha: 0,
+      duration: 1200,
+      delay: 120,
+      ease: 'Cubic.easeOut',
+      onComplete: () => c.destroy(),
+    });
   }
 
   /** Floating "+1 [key]" popup mirroring the treasure pickup VFX. */
@@ -2318,10 +2389,10 @@ export class MatchScene extends Phaser.Scene {
       if (screenX >= 12 && screenX <= 290) return { kind: 'turnsTicks' };
       // turn counter (centered around W/2)
       if (Math.abs(screenX - W / 2) <= 100) return { kind: 'turnLimit' };
-      // hp
-      if (screenX >= W - 230 && screenX <= W - 130) return { kind: 'hp' };
-      // treasure list (top-right)
-      if (screenX >= W - 120 && screenX <= W - 20) return { kind: 'treasureList' };
+      // hp (shifted left to make room for coins+treasures column)
+      if (screenX >= W - 300 && screenX <= W - 200) return { kind: 'hp' };
+      // treasure list + coin row (top-right column)
+      if (screenX >= W - 130 && screenX <= W - 5) return { kind: 'treasureList' };
     }
 
     const hudSlot = this.hitTestHud(screenX, screenY);
@@ -2437,13 +2508,14 @@ export class MatchScene extends Phaser.Scene {
       case 'timer':
         return { x: 170, y: 12, w: 120, h: 28, space: 'hud' };
       case 'hp':
-        return { x: W - 230, y: 12, w: 100, h: 28, space: 'hud' };
+        return { x: W - 300, y: 12, w: 100, h: 28, space: 'hud' };
       case 'treasureList': {
         const r = this.treasureList?.getRect();
         if (r && r.h > 0) return { x: r.x - 4, y: r.y - 4, w: r.w + 8, h: r.h + 8, space: 'hud' };
         // Empty list: highlight the anchor area so the tutorial dialogue
-        // still has somewhere to point at on first encounter.
-        return { x: W - 120, y: 8, w: 100, h: 28, space: 'hud' };
+        // still has somewhere to point at on first encounter. Includes the
+        // coin row that sits above the treasure list.
+        return { x: W - 130, y: 8, w: 125, h: 60, space: 'hud' };
       }
       case 'bombTray': {
         // 5 slots of SLOT_SIZE (64) + 4 gaps of SLOT_GAP (8), bottom-centered.
@@ -2584,17 +2656,50 @@ export class MatchScene extends Phaser.Scene {
       fontSize: '13px', color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5, 0).setDepth(1001).setVisible(false));
 
-    this.hpText = this.hud(this.add.text(width - 220, 14, 'HP --', {
+    // HP / Keys are pushed leftward (NEW_META: top-right reserves space for
+    // the coin row + treasure list column).
+    this.hpText = this.hud(this.add.text(width - 290, 14, 'HP --', {
       fontSize: '16px', color: '#ff6666', fontFamily: 'monospace', fontStyle: 'bold',
     }).setDepth(1001));
 
+    // Coin row (NEW_META §2) — pinned at the top of the top-right column,
+    // always visible regardless of amount. Drawn as a graphics circle to
+    // mirror the tooltip 'coin' shape (no extra texture asset needed).
+    const COIN_ICON_SIZE = 28;
+    const COIN_ROW_Y = 14;
+    const coinIcon = this.add.graphics().setDepth(1001);
+    {
+      const r = COIN_ICON_SIZE / 2;
+      const cx = -r;
+      const cy = r;
+      coinIcon.fillStyle(0xffd944, 1);
+      coinIcon.fillCircle(cx, cy, r);
+      coinIcon.fillStyle(0xc09020, 1);
+      coinIcon.fillCircle(cx, cy, r * 0.7);
+      coinIcon.fillStyle(0xffd944, 1);
+      coinIcon.fillRect(cx - r * 0.1, cy - r * 0.45, r * 0.2, r * 0.9);
+      coinIcon.setPosition(width - 20, COIN_ROW_Y);
+    }
+    this.coinHudIcon = this.hud(coinIcon);
+    this.coinHudText = this.hud(this.add.text(
+      width - 20 - COIN_ICON_SIZE - 6,
+      COIN_ROW_Y + COIN_ICON_SIZE / 2,
+      'x0',
+      {
+        fontSize: '16px',
+        color: '#ffd944',
+        fontFamily: 'monospace',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 3,
+      },
+    ).setOrigin(1, 0.5).setDepth(1001));
+
     // Treasure list — vertical, top-right, fills as the player picks up
-    // treasures during the match. Coins indicator removed: in-match
-    // currency is now treasures only. Icons render at native 32×32 in the
-    // HUD; tweak `iconScale` to taste.
+    // treasures during the match. Anchored below the coin row.
     this.treasureList = new TreasureListWidget(this, {
       x: width - 20,
-      y: 14,
+      y: COIN_ROW_Y + COIN_ICON_SIZE + 6,
       anchor: 'top-right',
       iconScale: 1.0,
       fontSize: 16,
@@ -2603,13 +2708,13 @@ export class MatchScene extends Phaser.Scene {
     });
 
     // Keys counter — small icon + "N/3" text, sits just left of the
-    // TreasureListWidget. Its own column, per docs/keys-system.md §9.
+    // coin row + TreasureListWidget column. Its own column, per docs/keys-system.md §9.
     const KEY_ICON = 22;
-    this.keysHudIcon = this.hud(this.add.image(width - 90, 14 + KEY_ICON / 2, 'key')
+    this.keysHudIcon = this.hud(this.add.image(width - 160, 14 + KEY_ICON / 2, 'key')
       .setOrigin(0.5, 0.5)
       .setDisplaySize(KEY_ICON, KEY_ICON)
       .setDepth(1001));
-    this.keysHudText = this.hud(this.add.text(width - 76, 14 + KEY_ICON / 2, `0/${BALANCE.keys.requiredPerHatch}`, {
+    this.keysHudText = this.hud(this.add.text(width - 146, 14 + KEY_ICON / 2, `0/${BALANCE.keys.requiredPerHatch}`, {
       fontSize: '14px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
       stroke: '#000000', strokeThickness: 3,
     }).setOrigin(0, 0.5).setDepth(1001));
@@ -2805,6 +2910,7 @@ export class MatchScene extends Phaser.Scene {
       this.hpText.setText(`HP ${displayedHp}/${BALANCE.match.bombermanMaxHp}`);
       this.hpText.setColor('#ff6666');
       this.treasureList.setBundle(me.treasures);
+      if (this.coinHudText) this.coinHudText.setText(`x${me.coins ?? 0}`);
       this.renderBombSlots(me);
       this.renderLootPanel(me);
     } else {

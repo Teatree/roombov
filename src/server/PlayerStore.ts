@@ -11,6 +11,27 @@ import { defaultStatsForTier } from '../shared/config/bomberman-tiers.ts';
 import type { BombType } from '../shared/types/bombs.ts';
 import { createEmptyGamblerStreet, type GamblerStreetState } from '../shared/types/gambler-street.ts';
 import { GAMBLER_STREET_GLOBAL } from '../shared/config/gambler-street.ts';
+import type { TreasureBundle, TreasureType } from '../shared/config/treasures.ts';
+
+/**
+ * Treasures dropped from the active pool by the NEW_META reset (2026-05-16).
+ * Stripped from profiles at load time so old data self-heals. The TreasureType
+ * union still includes them for type compatibility, just with zero rolls.
+ * See docs/NEW_META.md §3.
+ */
+const DEPRECATED_TREASURES: ReadonlySet<TreasureType> = new Set([
+  'fish', 'chalice', 'jade', 'books', 'bones', 'amulets',
+]);
+
+function pruneDeprecatedTreasures(raw: unknown): TreasureBundle {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: TreasureBundle = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (DEPRECATED_TREASURES.has(k as TreasureType)) continue;
+    if (typeof v === 'number' && v > 0) out[k as TreasureType] = v;
+  }
+  return out;
+}
 
 /**
  * Rename map for the Apr-2026 bomb catalog cleanup:
@@ -259,7 +280,7 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
     createdAt: raw.createdAt ?? now,
     updatedAt: raw.updatedAt ?? now,
     coins: raw.coins ?? 500,
-    treasures: (raw.treasures && typeof raw.treasures === 'object') ? { ...raw.treasures } : {},
+    treasures: pruneDeprecatedTreasures(raw.treasures),
     ownedBombermen: owned,
     equippedBombermanId: raw.equippedBombermanId ?? null,
     bombStockpile: normalizedStockpile as PlayerProfile['bombStockpile'],

@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import type { CharacterVariant } from '@shared/types/bomberman.ts';
-import { CHARACTER_VARIANTS } from '@shared/types/bomberman.ts';
+import { ALL_RENDERED_VARIANTS, CHARACTER_VARIANTS } from '@shared/types/bomberman.ts';
 
 /**
  * Shared helpers for loading and registering the animated Bomberman
@@ -62,7 +62,8 @@ const STATE_TO_FILENAME: Record<string, string> = {
 
 /** Call from a scene's `preload()` to queue all 21 Bomberman spritesheets. */
 export function preloadBombermanSpritesheets(scene: Phaser.Scene): void {
-  for (const char of CHARACTER_VARIANTS) {
+  // Include the scav-only char5 variant — only the rotation pool excludes it.
+  for (const char of ALL_RENDERED_VARIANTS) {
     for (const [state, filename] of Object.entries(STATE_TO_FILENAME)) {
       const key = `bomber_${state}_${char}`;
       if (scene.textures.exists(key)) continue;
@@ -103,7 +104,7 @@ function registerSet(
 export function ensureBombermanAnims(scene: Phaser.Scene): void {
   if (scene.anims.exists('bomber_idle_char1_down')) return;
 
-  for (const char of CHARACTER_VARIANTS) {
+  for (const char of ALL_RENDERED_VARIANTS) {
     registerSet(scene, `bomber_idle_${char}`,    `bomber_idle_${char}`,    IDLE_FPS,    true);
     registerSet(scene, `bomber_walk_${char}`,    `bomber_walk_${char}`,    WALK_FPS,    true);
     registerSet(scene, `bomber_run_${char}`,     `bomber_run_${char}`,     RUN_FPS,     true);

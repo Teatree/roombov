@@ -24,6 +24,7 @@ import { BALANCE } from '../shared/config/balance.ts';
 import { CHEST_CONFIG, CHEST_SPAWN_TABLE } from '../shared/config/chests.ts';
 import type { BombType } from '../shared/types/bombs.ts';
 import { BotPlayer } from './BotPlayer.ts';
+import { ScavPlayer } from './ScavPlayer.ts';
 import { rollBombermanName } from '../shared/config/bomberman-names.ts';
 import { TIER_CONFIG, defaultStatsForTier } from '../shared/config/bomberman-tiers.ts';
 import { resolveTurn } from '../shared/systems/TurnResolver.ts';
@@ -54,6 +55,10 @@ export class MatchRoom {
   private phaseTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingActions = new Map<string, PlayerAction>();
   private bots: BotPlayer[] = [];
+  /** AI controllers for Scavenger NPCs. Populated lazily after each turn
+   *  resolution — TurnResolver step 5d adds `isScav` bombermen to state and
+   *  we reconcile a ScavPlayer for each in `endInputPhase`. */
+  private scavs: ScavPlayer[] = [];
   /** Snapshot of each escaped Bomberman's treasures, captured **before** the
    *  drain in the escape handler. Used by `match_end` to ship the haul to
    *  every client (the live `b.treasures` is empty by then). */
@@ -231,6 +236,7 @@ export class MatchRoom {
         hp: BALANCE.match.bombermanMaxHp,
         alive: true,
         treasures: {},
+        coins: 0,
         keys: 0,
         maxCustomSlots,
         stackSize,
@@ -282,15 +288,33 @@ export class MatchRoom {
       const bombs = rollBombLoot(cfg.weights, cfg.totalBombs, slots, rng);
       const treasureSlots = seededRandInt(rng, cfg.treasureSlotCount[0], cfg.treasureSlotCount[1] + 1);
       const treasures = rollTreasureLoot(cfg.treasureWeights, cfg.totalTreasures, treasureSlots, rng);
-      chests.push({ id: `chest_${chests.length}`, tier, x: pick.x, y: pick.y, treasures, bombs, opened: false });
+      const coins = seededRandInt(rng, cfg.coinRange[0], cfg.coinRange[1] + 1);
+      chests.push({ id: `chest_${chests.length}`, tier, x: pick.x, y: pick.y, treasures, coins, keys: 0, bombs, opened: false });
     }
 
-    // Seeded keys: shuffle the map's key spawn pool and take the first
-    // BALANCE.keys.totalOnMap. If the map authoring has fewer circles than
-    // the target, we just spawn however many are available.
-    const keySpawnPool = (this.map.keySpawns ?? []).map(k => ({ x: k.x, y: k.y }));
-    const shuffledKeys = seededShuffle(rng, keySpawnPool);
-    const pickedKeys = shuffledKeys.slice(0, BALANCE.keys.totalOnMap);
+    // Keys-in-chests distribution (NEW_META §4): allocate BALANCE.keys.totalOnMap
+    // keys across spawned chests by weighted random pick over CHEST_CONFIG[tier].keyWeight.
+    // Multiple keys on the same chest accumulate. No per-chest cap.
+    if (chests.length > 0) {
+      const chestWeights = chests.map(c => CHEST_CONFIG[c.tier].keyWeight);
+      const totalWeight = chestWeights.reduce((a, b) => a + b, 0);
+      if (totalWeight > 0) {
+        for (let k = 0; k < BALANCE.keys.totalOnMap; k++) {
+          let roll = rng() * totalWeight;
+          for (let j = 0; j < chests.length; j++) {
+            roll -= chestWeights[j];
+            if (roll <= 0) { chests[j].keys += 1; break; }
+          }
+        }
+      }
+    }
+
+    // DISABLED (NEW_META §4): floor-key spawning. Keys now come from chests.
+    // Code preserved for re-enabling — see docs/NEW_META.md §4.
+    // const keySpawnPool = (this.map.keySpawns ?? []).map(k => ({ x: k.x, y: k.y }));
+    // const shuffledKeys = seededShuffle(rng, keySpawnPool);
+    // const pickedKeys = shuffledKeys.slice(0, BALANCE.keys.totalOnMap);
+    const pickedKeys: { x: number; y: number }[] = [];
 
     return {
       matchId: this.config.id,
@@ -321,7 +345,8 @@ export class MatchRoom {
       mines: [],
       phosphorusPending: [],
       isTutorial: false,
-      uavNextFireTurn: 20 + Math.floor(Math.random() * 11), // first UAV in turns 20-30
+      uavNextFireTurn: 60 + Math.floor(Math.random() * 31), // first UAV in turns 60-90
+      scavNextSpawnTurn: 20 + Math.floor(Math.random() * 11), // first scav wave in turns 20-30
     };
   }
 
@@ -460,6 +485,33 @@ export class MatchRoom {
 
     this.state = nextState;
 
+    // Reconcile Scavenger controllers. TurnResolver step 5d pushed new
+    // `isScav: true` bombermen into state this turn; create a `ScavPlayer`
+    // AI for each one we haven't seen yet so the next input phase ticks
+    // them. Stub participant entry too — gives missing-action defaults a
+    // playerId to anchor to and mirrors how bots are wired (socketId: null).
+    for (const bm of this.state.bombermen) {
+      if (!bm.isScav) continue;
+      if (this.scavs.some(s => s.playerId === bm.playerId)) continue;
+      this.scavs.push(new ScavPlayer(bm.playerId));
+      this.participants.push({
+        playerId: bm.playerId,
+        socketId: null,
+        profile: {
+          id: bm.playerId,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          coins: 0,
+          treasures: {},
+          ownedBombermen: [],
+          equippedBombermanId: null,
+          bombStockpile: {},
+          gamblerStreet: createEmptyGamblerStreet(Date.now(), GAMBLER_STREET_GLOBAL.slotCount),
+          bombermanShop: null,
+        },
+      });
+    }
+
     // Immediately strip dead Bombermen from player profiles so a page
     // refresh doesn't let them re-use a dead Bomberman.
     for (const ev of events) {
@@ -501,6 +553,9 @@ export class MatchRoom {
       // haul to clients (`b.treasures` is empty after this point).
       this.escapedTreasureSnapshots.set(escapedPlayerId, { ...bm.treasures });
       mergeTreasures(profile.treasures, bm.treasures);
+      // Bank coins picked up during the match (NEW_META §2).
+      profile.coins += bm.coins;
+      bm.coins = 0;
       // Drain so finalize() doesn't double-count if the match ends this turn.
       bm.treasures = {};
       if (ownedBomberman) {
@@ -559,7 +614,10 @@ export class MatchRoom {
     this.scheduleInputPhaseEnd();
   }
 
-  /** Have each bot compute and submit its action for this input phase. */
+  /** Have each bot (and each Scavenger NPC) compute and submit its action
+   *  for this input phase. Scavs use the same loot callback as bots, but
+   *  ScavPlayer gates loot to "all custom slots empty" so the callback is
+   *  rarely fired. */
   private tickBots(): void {
     for (const bot of this.bots) {
       const action = bot.tick(
@@ -568,6 +626,16 @@ export class MatchRoom {
         (msg) => this.handleLoot(bot.playerId, msg),
       );
       this.submitAction(bot.playerId, action);
+    }
+    for (const scav of this.scavs) {
+      const bm = this.state.bombermen.find(b => b.playerId === scav.playerId);
+      if (!bm || !bm.alive || bm.escaped) continue;
+      const action = scav.tick(
+        this.state,
+        this.map,
+        (msg) => this.handleLoot(scav.playerId, msg),
+      );
+      this.submitAction(scav.playerId, action);
     }
   }
 

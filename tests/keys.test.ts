@@ -212,8 +212,25 @@ describe('Keys system', () => {
     expect(next.bombermen[0].alive).toBe(false);
   });
 
-  it('test_keys_tutorialFlag_bypassesGate', () => {
-    // Arrange — tutorial match, bomberman idles on hatch with 0 keys.
+  it('test_keys_tutorialFlag_requiresOneKey_escapesWith1', () => {
+    // Arrange — tutorial match, bomberman idles on hatch with 1 key
+    // (the tutorial requirement per BALANCE.keys.tutorialRequiredPerHatch
+    // after NEW_META §7).
+    const map = openMap();
+    const bm = makeBomberman('p1', 5, 5, { keys: 1 });
+    const state = makeState({ bombermen: [bm], isTutorial: true });
+
+    // Act
+    const { state: next, events } = resolveTurn(state, idleActions(['p1']), map);
+
+    // Assert — escape goes through with the reduced tutorial cost.
+    expect(next.bombermen[0].escaped).toBe(true);
+    expect(events.filter(e => e.kind === 'escaped')).toHaveLength(1);
+  });
+
+  it('test_keys_tutorialFlag_zeroKeys_blocksEscape', () => {
+    // Arrange — tutorial no longer bypasses keys entirely (NEW_META §7);
+    // 0 keys must still block escape.
     const map = openMap();
     const bm = makeBomberman('p1', 5, 5, { keys: 0 });
     const state = makeState({ bombermen: [bm], isTutorial: true });
@@ -221,9 +238,9 @@ describe('Keys system', () => {
     // Act
     const { state: next, events } = resolveTurn(state, idleActions(['p1']), map);
 
-    // Assert — escape goes through despite zero keys.
-    expect(next.bombermen[0].escaped).toBe(true);
-    expect(events.filter(e => e.kind === 'escaped')).toHaveLength(1);
+    // Assert — escape blocked.
+    expect(next.bombermen[0].escaped).toBe(false);
+    expect(events.filter(e => e.kind === 'escaped')).toHaveLength(0);
   });
 
   it('test_keys_emptyKeysField_isBackfilledByCloneState', () => {
