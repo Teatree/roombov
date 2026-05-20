@@ -1,9 +1,13 @@
 {
   "id": "p_66d48dffb977",
   "createdAt": 1777246461874,
-  "updatedAt": 1778775223464,
+  "updatedAt": 1779313878261,
   "coins": 285,
-  "treasures": {},
+  "treasures": {
+    "coffee": 70,
+    "grapes": 60,
+    "lanterns": 40
+  },
   "ownedBombermen": [
     {
       "id": "owned_p_66d48dffb977_1778775223464_x2l2",
@@ -44,7 +48,16 @@
     }
   ],
   "equippedBombermanId": "owned_p_66d48dffb977_1778775223464_x2l2",
-  "bombStockpile": {},
+  "bombStockpile": {
+    "shield": 2,
+    "flash": 1,
+    "motion_detector_flare": 1,
+    "bomb_wide": 1,
+    "ender_pearl": 1,
+    "delay_tricky": 1,
+    "flare": 1,
+    "bomb": 1
+  },
   "gamblerStreet": {
     "gamblers": [],
     "pendingArrivals": [
@@ -239,5 +252,27 @@
     "boughtTemplateIds": [
       "cycle_p_66d48dffb977_mp5ou9p7_2_paid"
     ]
+  },
+  "factories": {
+    "1": {
+      "firstCycleStartedAt": 1779313869711,
+      "queueLength": 3,
+      "storage": []
+    },
+    "2": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": []
+    },
+    "3": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": []
+    },
+    "4": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": []
+    }
   }
 }

@@ -12,6 +12,8 @@ import type { BombType } from '../shared/types/bombs.ts';
 import { createEmptyGamblerStreet, type GamblerStreetState } from '../shared/types/gambler-street.ts';
 import { GAMBLER_STREET_GLOBAL } from '../shared/config/gambler-street.ts';
 import type { TreasureBundle, TreasureType } from '../shared/config/treasures.ts';
+import type { FactoryId, FactoryState, FactoryStates } from '../shared/types/factory.ts';
+import { createEmptyFactories, FACTORY_IDS } from '../shared/types/factory.ts';
 
 /**
  * Treasures dropped from the active pool by the NEW_META reset (2026-05-16).
@@ -289,7 +291,33 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
     // service generates on first request and persists. Backfill known fields
     // on partial-shape entries so older saves still work.
     bombermanShop: migrateBombermanShop(raw.bombermanShop),
+    factories: migrateFactories(raw.factories),
   };
+}
+
+/**
+ * Backfill factory state for older profiles. New profiles get fresh empty
+ * factories; existing profiles keep their saved state with type-safe defaults
+ * for any missing fields.
+ */
+function migrateFactories(raw: unknown): FactoryStates {
+  if (!raw || typeof raw !== 'object') return createEmptyFactories();
+  const out = createEmptyFactories();
+  const r = raw as Record<string, unknown>;
+  for (const id of FACTORY_IDS) {
+    const slot = r[String(id)];
+    if (!slot || typeof slot !== 'object') continue;
+    const s = slot as Partial<FactoryState>;
+    const startedAt = typeof s.firstCycleStartedAt === 'number' ? s.firstCycleStartedAt : null;
+    const queueLength = typeof s.queueLength === 'number' && s.queueLength >= 0 ? Math.floor(s.queueLength) : 0;
+    const storage = Array.isArray(s.storage) ? s.storage.filter((v) => typeof v === 'string') as FactoryState['storage'] : [];
+    out[id as FactoryId] = {
+      firstCycleStartedAt: queueLength > 0 ? startedAt : null,
+      queueLength: startedAt == null ? 0 : queueLength,
+      storage,
+    };
+  }
+  return out;
 }
 
 function migrateBombermanShop(raw: unknown): PlayerProfile['bombermanShop'] {

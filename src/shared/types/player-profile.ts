@@ -10,6 +10,8 @@ import type { TreasureBundle } from '../config/treasures.ts';
 import type { GamblerStreetState } from './gambler-street.ts';
 import { createEmptyGamblerStreet } from './gambler-street.ts';
 import { GAMBLER_STREET_GLOBAL } from '../config/gambler-street.ts';
+import type { FactoryStates } from './factory.ts';
+import { createEmptyFactories } from './factory.ts';
 
 export interface PlayerProfile {
   id: string;
@@ -48,6 +50,13 @@ export interface PlayerProfile {
    * next batch rolls in) on schedule whether the player is online or not.
    */
   bombermanShop: BombermanShopCycle | null;
+  /**
+   * Per-factory state: queue of paid-for cycles in production and storage
+   * of produced-but-unclaimed bombs. Wall-clock timestamps so production
+   * keeps ticking while the player is offline. Resolved lazily on read by
+   * FactoryService.resolveAll.
+   */
+  factories: FactoryStates;
 }
 
 export function createEmptyProfile(id: string): PlayerProfile {
@@ -63,5 +72,6 @@ export function createEmptyProfile(id: string): PlayerProfile {
     bombStockpile: {},
     gamblerStreet: createEmptyGamblerStreet(now, GAMBLER_STREET_GLOBAL.slotCount),
     bombermanShop: null,
+    factories: createEmptyFactories(),
   };
 }

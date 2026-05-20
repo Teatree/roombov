@@ -32,6 +32,7 @@ import { createSeededRandom, seededRandInt, seededShuffle } from '../shared/util
 import { rollBombLoot, rollTreasureLoot } from '../shared/utils/loot-roll.ts';
 import { mergeTreasures, type TreasureBundle } from '../shared/config/treasures.ts';
 import { createEmptyGamblerStreet } from '../shared/types/gambler-street.ts';
+import { createEmptyFactories } from '../shared/types/factory.ts';
 import { GAMBLER_STREET_GLOBAL } from '../shared/config/gambler-street.ts';
 import { loadMapById } from '../shared/maps/map-loader.ts';
 import type { PlayerStore } from './PlayerStore.ts';
@@ -190,6 +191,7 @@ export class MatchRoom {
           bombStockpile: {},
           gamblerStreet: createEmptyGamblerStreet(Date.now(), GAMBLER_STREET_GLOBAL.slotCount),
           bombermanShop: null,
+          factories: createEmptyFactories(),
         },
       });
     }
@@ -508,6 +510,7 @@ export class MatchRoom {
           bombStockpile: {},
           gamblerStreet: createEmptyGamblerStreet(Date.now(), GAMBLER_STREET_GLOBAL.slotCount),
           bombermanShop: null,
+          factories: createEmptyFactories(),
         },
       });
     }

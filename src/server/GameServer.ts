@@ -1,14 +1,15 @@
 import type { Server, Socket } from 'socket.io';
 import type {
   AuthMsg, BuyBombermanMsg, BuyBombMsg, ClientToServerEvents, EquipBombermanMsg,
-  EquipBombMsg, GamblerStreetBetMsg, JoinMatchMsg, LootBombMsg, PlayerActionMsg,
-  ServerToClientEvents, UnequipBombMsg,
+  EquipBombMsg, FactoryClaimMsg, FactoryStartMsg, GamblerStreetBetMsg, JoinMatchMsg,
+  LootBombMsg, PlayerActionMsg, ServerToClientEvents, UnequipBombMsg,
 } from '../shared/types/messages.ts';
 import type { MatchConfig } from '../shared/types/match.ts';
 import { PlayerStore } from './PlayerStore.ts';
 import { BombermanShopService } from './BombermanShopService.ts';
 import { BombsShopService } from './BombsShopService.ts';
 import { GamblerStreetService } from './GamblerStreetService.ts';
+import { FactoryService } from './FactoryService.ts';
 import { MatchScheduler } from './MatchScheduler.ts';
 import { MatchRoom, loadMapForMatch, type MatchRoomParticipant } from './MatchRoom.ts';
 
@@ -27,6 +28,7 @@ export class GameServer {
   private bombermanShop: BombermanShopService;
   private bombsShop: BombsShopService;
   private gamblerStreet: GamblerStreetService;
+  private factories: FactoryService;
   private matchScheduler: MatchScheduler;
   /** active MatchRooms keyed by matchId */
   private matchRooms = new Map<string, MatchRoom>();
@@ -43,6 +45,7 @@ export class GameServer {
     this.bombermanShop = new BombermanShopService(playerStore);
     this.bombsShop = new BombsShopService(playerStore);
     this.gamblerStreet = new GamblerStreetService(playerStore);
+    this.factories = new FactoryService(playerStore);
     this.matchScheduler = new MatchScheduler();
 
     this.tickInterval = setInterval(() => this.tickLobby(), 1000);
@@ -66,6 +69,9 @@ export class GameServer {
       socket.on('loot_bomb', (msg) => this.onLootBomb(socket, msg));
       socket.on('gambler_street_request', () => this.onGamblerStreetRequest(socket));
       socket.on('gambler_street_bet', (msg) => this.onGamblerStreetBet(socket, msg));
+      socket.on('factory_request', () => this.onFactoryRequest(socket));
+      socket.on('factory_start', (msg) => this.onFactoryStart(socket, msg));
+      socket.on('factory_claim', (msg) => this.onFactoryClaim(socket, msg));
 
       socket.on('disconnect', () => {
         const session = this.sessions.get(socket.id);
@@ -321,6 +327,44 @@ export class GameServer {
     } else {
       socket.emit('gambler_street_bet_result', { ok: false, reason: result.reason });
     }
+  }
+
+  private async onFactoryRequest(socket: TypedSocket): Promise<void> {
+    const profile = this.getProfileForSocket(socket);
+    if (!profile) return;
+    // Lazy resolve. Persist + re-emit profile if anything completed so the
+    // client sees newly-produced bombs in storage right away.
+    const changed = this.factories.resolveAll(profile);
+    if (changed) await this.playerStore.save(profile);
+    socket.emit('profile', { profile });
+  }
+
+  private async onFactoryStart(socket: TypedSocket, msg: FactoryStartMsg): Promise<void> {
+    const profile = this.getProfileForSocket(socket);
+    if (!profile) return;
+    const result = await this.factories.startCycle(profile, msg.factoryId);
+    socket.emit('factory_result', {
+      ok: result.ok,
+      action: 'start',
+      factoryId: msg.factoryId,
+      reason: result.ok ? undefined : result.reason,
+    });
+    if (result.ok) socket.emit('profile', { profile });
+  }
+
+  private async onFactoryClaim(socket: TypedSocket, msg: FactoryClaimMsg): Promise<void> {
+    const profile = this.getProfileForSocket(socket);
+    if (!profile) return;
+    const result = msg.index == null
+      ? await this.factories.claimAll(profile, msg.factoryId)
+      : await this.factories.claimOne(profile, msg.factoryId, msg.index);
+    socket.emit('factory_result', {
+      ok: result.ok,
+      action: 'claim',
+      factoryId: msg.factoryId,
+      reason: result.ok ? undefined : result.reason,
+    });
+    if (result.ok) socket.emit('profile', { profile });
   }
 
   async destroy(): Promise<void> {

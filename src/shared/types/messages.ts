@@ -13,6 +13,7 @@ import type { TurnEvent } from '../systems/TurnResolver.ts';
 import type { TreasureBundle } from '../config/treasures.ts';
 import type { BetOutcome, GamblerStreetState } from './gambler-street.ts';
 import type { BetTier } from '../config/gambler-street.ts';
+import type { FactoryId } from './factory.ts';
 
 // --- Auth / profile (Step 2) ---
 
@@ -163,6 +164,35 @@ export interface GamblerStreetStateMsg {
   state: GamblerStreetState;
 }
 
+// --- Factories ---
+
+/** Client → server: refresh (resolve pending cycles, re-emit profile). */
+export type FactoryRequestMsg = Record<string, never>;
+
+/** Client → server: pay cost and queue one production cycle. */
+export interface FactoryStartMsg {
+  factoryId: FactoryId;
+}
+
+/**
+ * Client → server: claim produced bombs from a factory's storage.
+ *
+ * `index` undefined → claim everything (Take All).
+ * `index` set        → claim that single storage slot.
+ */
+export interface FactoryClaimMsg {
+  factoryId: FactoryId;
+  index?: number;
+}
+
+/** Server → client: outcome of a factory action. */
+export interface FactoryResultMsg {
+  ok: boolean;
+  action: 'start' | 'claim';
+  factoryId: FactoryId;
+  reason?: string;
+}
+
 /** Server → client: result of a bet attempt. */
 export interface GamblerStreetBetResultMsg {
   ok: boolean;
@@ -197,6 +227,7 @@ export interface ServerToClientEvents {
   mine_triggered: (msg: MineTriggeredMsg) => void;
   gambler_street_state: (msg: GamblerStreetStateMsg) => void;
   gambler_street_bet_result: (msg: GamblerStreetBetResultMsg) => void;
+  factory_result: (msg: FactoryResultMsg) => void;
 }
 
 // --- Client → server event map ---
@@ -218,4 +249,7 @@ export interface ClientToServerEvents {
   loot_bomb: (msg: LootBombMsg) => void;
   gambler_street_request: (msg: GamblerStreetRequestMsg) => void;
   gambler_street_bet: (msg: GamblerStreetBetMsg) => void;
+  factory_request: (msg: FactoryRequestMsg) => void;
+  factory_start: (msg: FactoryStartMsg) => void;
+  factory_claim: (msg: FactoryClaimMsg) => void;
 }
