@@ -89,6 +89,7 @@ export class FactoryService {
       if (rolled) state.storage.push(rolled);
     }
 
+    state.sessionDone += completed;
     state.queueLength -= completed;
     if (state.queueLength <= 0) {
       state.queueLength = 0;
@@ -121,6 +122,19 @@ export class FactoryService {
     deductTreasures(profile.treasures, cfg.cost);
 
     const state = profile.factories[factoryId];
+
+    // Session counter: if the factory is fully idle (no queue, no active
+    // cycle, and the previous session is fully resolved), the new
+    // commission starts a fresh "0 / 1 done" session. Otherwise we're
+    // adding to the in-progress session.
+    if (state.queueLength === 0
+        && state.firstCycleStartedAt === null
+        && state.sessionDone >= state.sessionTotal) {
+      state.sessionDone = 0;
+      state.sessionTotal = 0;
+    }
+    state.sessionTotal += 1;
+
     if (state.queueLength <= 0 || state.firstCycleStartedAt == null) {
       state.firstCycleStartedAt = nowMs;
       state.queueLength = 1;

@@ -1,11 +1,11 @@
 {
   "id": "p_66d48dffb977",
   "createdAt": 1777246461874,
-  "updatedAt": 1779313878261,
+  "updatedAt": 1779405962090,
   "coins": 285,
   "treasures": {
-    "coffee": 70,
-    "grapes": 60,
+    "coffee": 55,
+    "grapes": 50,
     "lanterns": 40
   },
   "ownedBombermen": [
@@ -255,9 +255,13 @@
   },
   "factories": {
     "1": {
-      "firstCycleStartedAt": 1779313869711,
-      "queueLength": 3,
-      "storage": []
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [
+        "flare",
+        "bomb",
+        "flare"
+      ]
     },
     "2": {
       "firstCycleStartedAt": null,
@@ -265,8 +269,8 @@
       "storage": []
     },
     "3": {
-      "firstCycleStartedAt": null,
-      "queueLength": 0,
+      "firstCycleStartedAt": 1779405962090,
+      "queueLength": 1,
       "storage": []
     },
     "4": {

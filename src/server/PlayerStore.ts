@@ -311,10 +311,21 @@ function migrateFactories(raw: unknown): FactoryStates {
     const startedAt = typeof s.firstCycleStartedAt === 'number' ? s.firstCycleStartedAt : null;
     const queueLength = typeof s.queueLength === 'number' && s.queueLength >= 0 ? Math.floor(s.queueLength) : 0;
     const storage = Array.isArray(s.storage) ? s.storage.filter((v) => typeof v === 'string') as FactoryState['storage'] : [];
+    const rawSessionDone = typeof s.sessionDone === 'number' && s.sessionDone >= 0 ? Math.floor(s.sessionDone) : 0;
+    const rawSessionTotal = typeof s.sessionTotal === 'number' && s.sessionTotal >= 0 ? Math.floor(s.sessionTotal) : 0;
+    // If the saved profile predates the session fields but has bombs already
+    // in flight, retro-seed the session with sessionTotal = queueLength so the
+    // popup's "X / Y done" header doesn't read "bomb 1 of 0".
+    const effectiveQueue = startedAt == null ? 0 : queueLength;
+    const sessionTotal = rawSessionTotal > 0
+      ? Math.max(rawSessionTotal, rawSessionDone)
+      : Math.max(rawSessionDone, effectiveQueue);
     out[id as FactoryId] = {
       firstCycleStartedAt: queueLength > 0 ? startedAt : null,
-      queueLength: startedAt == null ? 0 : queueLength,
+      queueLength: effectiveQueue,
       storage,
+      sessionDone: rawSessionDone,
+      sessionTotal,
     };
   }
   return out;

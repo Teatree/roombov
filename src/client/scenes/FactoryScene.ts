@@ -121,10 +121,134 @@ function panelWidthFor(cfg: FactoryConfig): number {
     + SECTION_GAP + BAR_W + SECTION_GAP + TARGET_SIZE;
 }
 
+/**
+ * Stable references to every persistent element of the popup. The popup is
+ * built once in `openPopup`; `renderPopup` only mutates properties (text,
+ * fill, width, visibility) on these refs — it never destroys/recreates them.
+ *
+ * Why: Phaser's input plugin loses the cursor-over state for the frame in
+ * which an interactive Game Object is destroyed, causing the cursor to
+ * flicker between pointer and default when a 10 Hz tick wipes/rebuilds the
+ * popup contents under the mouse.
+ *
+ * Two exceptions where we *do* rebuild on demand (not every tick):
+ *   - queue dots (rebuilt when `pendingCount` changes)
+ *   - storage slots (rebuilt when `storageSig` changes)
+ * These changes are server-driven and rare, so the brief rebuild is OK.
+ */
 interface PopupNodes {
   container: Phaser.GameObjects.Container;
   overlay: Phaser.GameObjects.Rectangle;
+  panelBg: Phaser.GameObjects.Rectangle;
+  panelBorder: Phaser.GameObjects.Rectangle;
+  panelTopAccent: Phaser.GameObjects.Rectangle;
+  // Header
+  closeBg: Phaser.GameObjects.Rectangle;
+  closeText: Phaser.GameObjects.Text;
+  // Commission section
+  commissionBg: Phaser.GameObjects.Rectangle;
+  commissionEdge: Phaser.GameObjects.Rectangle;
+  commissionLabel: Phaser.GameObjects.Text;
+  costChipItems: Array<{ icon: Phaser.GameObjects.Image; text: Phaser.GameObjects.Text; type: TreasureType; n: number }>;
+  // Queue section
+  queueStatusText: Phaser.GameObjects.Text;
+  queueBox: Phaser.GameObjects.Container;
+  progressBarFill: Phaser.GameObjects.Rectangle;
+  progressTimeText: Phaser.GameObjects.Text;
+  progressPosText: Phaser.GameObjects.Text;
+  queueDotsContainer: Phaser.GameObjects.Container;
+  queueDashG: Phaser.GameObjects.Graphics;
+  lastPendingCount: number;
+  // Storage section
+  storageReadyText: Phaser.GameObjects.Text;
+  takeAllBg: Phaser.GameObjects.Rectangle;
+  takeAllText: Phaser.GameObjects.Text;
+  storageGridBg: Phaser.GameObjects.Rectangle;
+  storageSlotsContainer: Phaser.GameObjects.Container;
+  storageDashG: Phaser.GameObjects.Graphics;
+  lastStorageSig: string;
+  // State refs (factoryId/cfg cached so update handlers don't need to look them up)
+  factoryId: FactoryId;
+  cfg: FactoryConfig;
 }
+
+/**
+ * Section layout. Y values are offsets from the TOP edge of the panel
+ * (panel uses origin (0.5, 0) so y=0 is its top). Everything above the
+ * Queue section is at a FIXED y — only Queue and Storage grow downward
+ * as content changes, so sections above never shift.
+ */
+const LAYOUT = {
+  HEADER_H: 40,
+  DESC_Y: 40,
+  DESC_H: 30,
+  SCHEM_Y: 86,         // DESC bottom (70) + 16 top pad
+  BLUEPRINT_H: 110,
+  COMMISSION_Y: 212,   // SCHEM_Y + BLUEPRINT_H + 4 schem bottom pad + 12 commission top pad
+  COMMISSION_H: 84,
+  QUEUE_Y: 312,        // COMMISSION_Y + COMMISSION_H + 16 section gap
+  QUEUE_HEADER_H: 22,
+  QUEUE_BOX_H: 60,
+  QUEUE_BOTTOM_PAD: 12,
+  STORAGE_HEADER_H: 40,    // TAKE ALL button is ~26 tall; leaves ~8 px gap before grid
+  STORAGE_GRID_PAD: 8,
+  STORAGE_BOTTOM_PAD: 14,
+} as const;
+
+/**
+ * Color palette + dimensions for the popup. Frozen to keep them addressable
+ * from helpers without re-declaring scopes. Names mirror the design spec.
+ */
+const POPUP = {
+  W: 440,
+  PAD_X: 14,
+  // chrome
+  BG: 0x1a2530,
+  BORDER: 0x324658,
+  ACCENT: 0x4ade80,
+  HEADER_DIVIDER: 0x2a3a48,
+  // text
+  TEXT_BRIGHT: '#e2e8f0',
+  TEXT_MID: '#cbd5e1',
+  TEXT_DIM: '#94a3b8',
+  TEXT_GREEN: '#4ade80',
+  TEXT_BLUEPRINT_LABEL: '#5ab4ed',
+  TEXT_BLUEPRINT_BOMB: '#cbe9ff',
+  // section panels
+  SECTION_BG: 0x0e1820,
+  SECTION_BG_DARKER: 0x0a1218,
+  DESC_BG: 0x16212c,
+  // commission button (very light blue)
+  CBTN_BG: 0xdbeafe,
+  CBTN_BG_HOVER: 0xeaf3fe,
+  CBTN_BG_DOWN: 0xbfd6f5,
+  CBTN_BORDER: 0x93b6e8,
+  CBTN_BORDER_DARK: 0x4a72b8,
+  CBTN_TEXT: '#0f172a',
+  CBTN_BG_DISABLED: 0x475569,
+  CBTN_TEXT_DISABLED: '#94a3b8',
+  // cost chip
+  CHIP_BG: 0xf1f5f9,
+  CHIP_BORDER: 0x94a3b8,
+  CHIP_TEXT: '#0f172a',
+  CHIP_TEXT_DEFICIT: '#ef4444',
+  // blueprint
+  BLUEPRINT_BG: 0x0a3252,
+  BLUEPRINT_BORDER: 0x1e4d75,
+  BLUEPRINT_GRID: 0x38bdf8,
+  // storage
+  SLOT_BG: 0x1a2530,
+  SLOT_BG_EMPTY: 0x0a1218,
+  SLOT_EMPTY_BORDER: 0x2a3a48,
+} as const;
+
+const BLUEPRINT_KEY = 'factory_blueprint_180x110';
+const MINI_BLUEPRINT_KEY = 'factory_blueprint_36x36';
+
+/** Commission button height. Shared by openPopup, renderPopup, and
+ * computePanelHeight so the panel chrome grows with the button when this
+ * value changes. */
+const COMMISSION_H_PX = 84;
 
 export class FactoryScene extends Phaser.Scene {
   private bg!: Phaser.GameObjects.Image;
@@ -508,259 +632,465 @@ export class FactoryScene extends Phaser.Scene {
 
   // --- popup ---
 
+  /**
+   * Open the production popup for `id`. All elements are created once here
+   * with stable refs stored on `this.popup`. `renderPopup` mutates props
+   * (text, fill, width, visibility) on those refs — no destroy/recreate
+   * under the cursor, which would make hover flicker.
+   *
+   * The popup is TOP-anchored: panel origin (0.5, 0), all section Y values
+   * are fixed offsets from the top (via LAYOUT constants). When the queue
+   * box appears or storage grows, only the storage section + panel bottom
+   * extend downward; sections above never move.
+   */
   private openPopup(id: FactoryId): void {
     if (this.popup) this.closePopup();
     this.popupFactoryId = id;
 
-    const { width, height } = this.scale;
-    const overlay = this.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.55)
-      .setInteractive().setDepth(1000);
-    overlay.on('pointerdown', () => this.closePopup());
-
-    const container = this.add.container(width / 2, height / 2).setDepth(1001);
-
-    const panelW = 480;
+    ensureBlueprintTextures(this);
     const cfg = FACTORIES[id];
-    const costEntries = Object.entries(cfg.cost) as Array<[TreasureType, number]>;
-    const baseH = 480;
-    const panelH = baseH + Math.max(0, (costEntries.length - 1) * 4);
 
-    const panelBg = this.add.rectangle(0, 0, panelW, panelH, 0x222238, 0.98)
-      .setStrokeStyle(2, 0x4a4a6a);
-    container.add(panelBg);
+    const { width, height } = this.scale;
 
-    // Header
-    const header = this.add.text(0, -panelH / 2 + 28, cfg.name, {
-      fontSize: '22px', color: '#e0e0e0', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setOrigin(0.5);
-    container.add(header);
-
-    // Close X — text button with hover + press feedback.
-    const closeBtn = this.add.text(panelW / 2 - 18, -panelH / 2 + 18, 'X', {
-      fontSize: '20px', color: '#ff8844', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-    closeBtn.on('pointerover', () => closeBtn.setColor('#ffcc99').setScale(1.15));
-    closeBtn.on('pointerout', () => closeBtn.setColor('#ff8844').setScale(1));
-    closeBtn.on('pointerdown', () => closeBtn.setColor('#cc6622').setScale(0.92));
-    closeBtn.on('pointerup', () => { closeBtn.setColor('#ffcc99').setScale(1.15); this.closePopup(); });
-    container.add(closeBtn);
-
-    // Wallet preview at top-right (re-uses TreasureListWidget for consistency)
-    if (this.wallet) { this.wallet.destroy(); this.wallet = null; }
-    const profile = ProfileStore.get();
-    const walletAnchor = container.getWorldTransformMatrix().transformPoint(panelW / 2 - 48, -panelH / 2 + 56);
-    this.wallet = new TreasureListWidget(this, {
-      x: walletAnchor.x, y: walletAnchor.y,
-      anchor: 'top-right',
-      iconScale: 0.5,
-      fontSize: 11,
-      depth: 1002,
+    // Backdrop. Overlay is interactive — its pointerdown handler closes the
+    // popup unless the click landed inside the panel bounds. (Phaser sorts
+    // hit-tests by each GO's own depth, not the parent container's; panelBg
+    // can't reliably "absorb" clicks above the overlay, so we test bounds
+    // in the overlay handler instead.)
+    const overlay = this.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.6)
+      .setInteractive().setDepth(1000);
+    overlay.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (!this.popup) return;
+      const m = this.popup.container.getWorldTransformMatrix();
+      const local = m.applyInverse(pointer.x, pointer.y);
+      // Popup is top-anchored: y ranges from 0 (top) to panelH (bottom).
+      const inside = Math.abs(local.x) <= POPUP.W / 2 && local.y >= 0 && local.y <= this.popup.panelBg.height;
+      if (!inside) this.closePopup();
     });
-    if (profile) this.wallet.setBundleStatic(profile.treasures);
 
-    // Bomb image (random surprise) — centered just below header.
-    const bombImg = this.add.image(0, -panelH / 2 + 130, BOMB_SURPRISE_KEY).setDisplaySize(80, 80);
-    container.add(bombImg);
+    const profile0 = ProfileStore.get();
+    const state0 = ensureClientFactoryState(profile0?.factories?.[id]);
+    const panelH = computePanelHeight(state0);
+    const containerY = popupTopY(height, panelH);
+    const container = this.add.container(width / 2, containerY).setDepth(1001);
 
-    // BUY button — interactive only when affordable; full hover/press feedback.
-    const canAfford = profile && costEntries.every(([t, n]) => (profile.treasures[t] ?? 0) >= (n ?? 0));
-    const buyBg = this.add.rectangle(0, -panelH / 2 + 200, 200, 36, canAfford ? 0x2a553a : 0x333344, 1)
-      .setStrokeStyle(2, canAfford ? 0x44ff88 : 0x555566);
-    const buyLabel = this.add.text(0, -panelH / 2 + 200,
-      `BUY  (${costEntries.map(([t, n]) => `${displayShort(t)} ×${n}`).join(', ')})`,
-      {
-        fontSize: '13px', color: canAfford ? '#44ff88' : '#888899',
-        fontFamily: 'monospace', fontStyle: 'bold',
-      }).setOrigin(0.5);
-    container.add(buyBg);
-    container.add(buyLabel);
-    if (canAfford) {
-      this.bindRectButton(buyBg, buyLabel, {
-        idle: 0x2a553a, hover: 0x3a7050, down: 0x1f4030,
-        idleStroke: 0x44ff88, hoverStroke: 0x88ffaa, downStroke: 0x2a8855,
-      }, () => {
+    // --- Panel chrome (origin 0.5, 0 = top-center anchored) ---
+    const panelBg = this.add.rectangle(0, 0, POPUP.W, panelH, POPUP.BG, 1).setOrigin(0.5, 0);
+    const panelBorder = this.add.rectangle(0, 0, POPUP.W, panelH).setOrigin(0.5, 0)
+      .setStrokeStyle(1, POPUP.BORDER).setFillStyle();
+    const panelTopAccent = this.add.rectangle(0, 0, POPUP.W, 3, POPUP.ACCENT, 1).setOrigin(0.5, 0);
+    container.add([panelBg, panelBorder, panelTopAccent]);
+
+    // --- Header (chip + name + close button) ---
+    const headerCenterY = LAYOUT.HEADER_H / 2;
+    container.add(this.add.rectangle(0, LAYOUT.HEADER_H, POPUP.W, 1, POPUP.HEADER_DIVIDER, 1).setOrigin(0.5, 1));
+
+    const chipX = -POPUP.W / 2 + POPUP.PAD_X;
+    const chipLabel = this.add.text(7, 0, `FACTORY ${id}`, {
+      fontSize: '11px', color: POPUP.TEXT_DIM, fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0, 0.5);
+    const chipBg = this.add.rectangle(0, 0, chipLabel.width + 14, 20, POPUP.SECTION_BG, 1)
+      .setStrokeStyle(1, POPUP.BORDER).setOrigin(0, 0.5);
+    container.add(this.add.container(chipX, headerCenterY, [chipBg, chipLabel]));
+
+    container.add(this.add.text(chipX + chipBg.width + 10, headerCenterY, cfg.name, {
+      fontSize: '15px', color: POPUP.TEXT_BRIGHT, fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0, 0.5));
+
+    // Close button. Bg is origin (0,0) at (-12, -12) inside the closeBtn
+    // container so the X glyph sits at the visual center, AND auto hit-area
+    // (0, 0, 24, 24) aligns 1:1 with the rendered rect (Phaser passes
+    // hit-test local coords relative to rendered top-left, not origin).
+    const closeX = POPUP.W / 2 - POPUP.PAD_X - 12;
+    const closeBg = this.add.rectangle(-12, -12, 24, 24, 0x000000, 0.01).setOrigin(0, 0)
+      .setStrokeStyle(1, POPUP.BORDER).setInteractive({ useHandCursor: true });
+    const closeText = this.add.text(0, 0, 'X', {
+      fontSize: '13px', color: POPUP.TEXT_DIM, fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5);
+    container.add(this.add.container(closeX, headerCenterY, [closeBg, closeText]));
+    closeBg.on('pointerover', () => { closeBg.setStrokeStyle(1, POPUP.ACCENT); closeText.setColor('#ffffff'); });
+    closeBg.on('pointerout', () => { closeBg.setStrokeStyle(1, POPUP.BORDER); closeText.setColor(POPUP.TEXT_DIM); });
+    closeBg.on('pointerdown', () => this.closePopup());
+
+    // --- Description (italic banner) ---
+    container.add(this.add.rectangle(0, LAYOUT.DESC_Y, POPUP.W, LAYOUT.DESC_H, POPUP.DESC_BG, 1).setOrigin(0.5, 0));
+    container.add(this.add.text(0, LAYOUT.DESC_Y + LAYOUT.DESC_H / 2, cfg.description, {
+      fontSize: '12px', color: POPUP.TEXT_DIM, fontFamily: 'monospace', fontStyle: 'italic',
+    }).setOrigin(0.5));
+    container.add(this.add.rectangle(0, LAYOUT.DESC_Y + LAYOUT.DESC_H, POPUP.W, 1, POPUP.HEADER_DIVIDER, 1).setOrigin(0.5, 1));
+
+    // --- Schematic ---
+    const blueprint = this.add.image(0, LAYOUT.SCHEM_Y, BLUEPRINT_KEY).setOrigin(0.5, 0);
+    container.add(blueprint);
+    container.add(this.add.image(0, LAYOUT.SCHEM_Y + LAYOUT.BLUEPRINT_H / 2, BOMB_SURPRISE_KEY)
+      .setDisplaySize(56, 56).setOrigin(0.5));
+    container.add(this.add.text(-blueprint.displayWidth / 2 + 6, LAYOUT.SCHEM_Y + 4,
+      `SCHEMATIC · ${String(id).padStart(2, '0')}`, {
+        fontSize: '9px', color: POPUP.TEXT_BLUEPRINT_LABEL, fontFamily: 'monospace', fontStyle: 'bold',
+      }).setOrigin(0, 0));
+
+    // --- Commission row (button + cycle indicator) ---
+    const CYCLE_W = 92;
+    const COMMISSION_GAP = 10;
+    const commissionBtnW = POPUP.W - POPUP.PAD_X * 2 - CYCLE_W - COMMISSION_GAP;
+    const commissionLeftX = -POPUP.W / 2 + POPUP.PAD_X;
+    const commissionBg = this.add.rectangle(commissionLeftX, LAYOUT.COMMISSION_Y, commissionBtnW, LAYOUT.COMMISSION_H, POPUP.CBTN_BG, 1)
+      .setOrigin(0, 0).setStrokeStyle(1, POPUP.CBTN_BORDER).setInteractive({ useHandCursor: true });
+    const commissionEdge = this.add.rectangle(commissionLeftX, LAYOUT.COMMISSION_Y + LAYOUT.COMMISSION_H - 3, commissionBtnW, 3, POPUP.CBTN_BORDER_DARK, 1).setOrigin(0, 0);
+    const commissionLabel = this.add.text(commissionLeftX + commissionBtnW / 2, LAYOUT.COMMISSION_Y + 16, 'COMMISSION +1', {
+      fontSize: '22px', color: POPUP.CBTN_TEXT, fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5, 0);
+    container.add([commissionBg, commissionEdge, commissionLabel]);
+
+    // Commission button input handlers — installed once, capture canAfford
+    // by reading a closure-mutable flag updated each render. No remove/re-add
+    // per tick (that was a source of pointer-state flicker).
+    let canAffordRef = true;
+    let pressed = false;
+    commissionBg.on('pointerover', () => commissionBg.setFillStyle(canAffordRef ? POPUP.CBTN_BG_HOVER : POPUP.CBTN_BG_DISABLED, 1));
+    commissionBg.on('pointerout', () => { pressed = false; commissionBg.setFillStyle(canAffordRef ? POPUP.CBTN_BG : POPUP.CBTN_BG_DISABLED, 1); });
+    commissionBg.on('pointerdown', () => { if (canAffordRef) { pressed = true; commissionBg.setFillStyle(POPUP.CBTN_BG_DOWN, 1); } });
+    commissionBg.on('pointerup', () => {
+      commissionBg.setFillStyle(canAffordRef ? POPUP.CBTN_BG_HOVER : POPUP.CBTN_BG_DISABLED, 1);
+      if (canAffordRef && pressed) {
         NetworkManager.track('factory_start', 'factory_result');
         NetworkManager.getSocket().emit('factory_start', { factoryId: id });
-      });
+      }
+      pressed = false;
+    });
+    // Stash on the bg so renderPopup can update it.
+    (commissionBg as unknown as { __setCanAfford?: (v: boolean) => void }).__setCanAfford = (v: boolean) => { canAffordRef = v; };
+
+    // Cost chip items: one icon+text pair per cost entry. Created up-front,
+    // positioned once, text/color updated in renderPopup without recreation.
+    const costEntries = Object.entries(cfg.cost) as Array<[TreasureType, number]>;
+    const chipIconSize = 18;
+    const chipGap = 10;
+    const chipItemFont = { fontSize: '16px', color: POPUP.CHIP_TEXT, fontFamily: 'monospace', fontStyle: 'bold' as const };
+    const costChipItems: PopupNodes['costChipItems'] = [];
+    let totalW = 0;
+    for (const [t, n] of costEntries) {
+      const icon = this.add.image(0, 0, TREASURE_TEXTURE_KEY, treasureIconFrame(t)).setDisplaySize(chipIconSize, chipIconSize);
+      const text = this.add.text(0, 0, `x${n}`, { ...chipItemFont }).setOrigin(0, 0.5);
+      container.add([icon, text]);
+      totalW += chipIconSize + 4 + text.width;
+      costChipItems.push({ icon, text, type: t, n: n ?? 0 });
+    }
+    if (costChipItems.length > 1) totalW += chipGap * (costChipItems.length - 1);
+    const chipCenterY = LAYOUT.COMMISSION_Y + LAYOUT.COMMISSION_H - 18;
+    const chipCenterX = commissionLeftX + commissionBtnW / 2;
+    let cursor = chipCenterX - totalW / 2;
+    for (const it of costChipItems) {
+      it.icon.setPosition(cursor + chipIconSize / 2, chipCenterY).setOrigin(0.5);
+      cursor += chipIconSize + 4;
+      it.text.setPosition(cursor, chipCenterY);
+      cursor += it.text.width + chipGap;
     }
 
-    // Progress section — dynamic, re-renders on tick.
-    // Body left blank here; renderPopup fills it.
-    this.popup = { container, overlay };
+    // Cycle indicator.
+    const cycleX = commissionLeftX + commissionBtnW + COMMISSION_GAP;
+    container.add(this.add.rectangle(cycleX, LAYOUT.COMMISSION_Y, CYCLE_W, LAYOUT.COMMISSION_H, POPUP.SECTION_BG, 1)
+      .setOrigin(0, 0).setStrokeStyle(1, POPUP.BORDER));
+    container.add(this.add.text(cycleX + CYCLE_W / 2, LAYOUT.COMMISSION_Y + 8, 'CYCLE', {
+      fontSize: '11px', color: POPUP.TEXT_DIM, fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5, 0));
+    container.add(this.add.text(cycleX + CYCLE_W / 2, LAYOUT.COMMISSION_Y + 22, fmtCycleTime(cfg.cycleDurationMs), {
+      fontSize: '20px', color: POPUP.TEXT_GREEN, fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5, 0));
+    container.add(this.add.text(cycleX + CYCLE_W / 2, LAYOUT.COMMISSION_Y + 46, 'per bomb', {
+      fontSize: '10px', color: POPUP.TEXT_DIM, fontFamily: 'monospace',
+    }).setOrigin(0.5, 0));
+
+    // --- Queue section ---
+    const queueLeftX = -POPUP.W / 2 + POPUP.PAD_X;
+    const queueRightX = POPUP.W / 2 - POPUP.PAD_X;
+    const queueW = queueRightX - queueLeftX;
+
+    // Header row (always visible).
+    container.add(this.add.text(queueLeftX, LAYOUT.QUEUE_Y, '▸ PRODUCTION QUEUE', {
+      fontSize: '11px', color: POPUP.TEXT_DIM, fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0, 0));
+    const queueStatusText = this.add.text(queueRightX, LAYOUT.QUEUE_Y, '0 / 0 done', {
+      fontSize: '11px', color: POPUP.TEXT_GREEN, fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(1, 0);
+    container.add(queueStatusText);
+
+    // Queue box (toggled visible). All children created up-front.
+    const queueBox = this.add.container(0, LAYOUT.QUEUE_Y + LAYOUT.QUEUE_HEADER_H);
+    queueBox.setVisible(false);
+    container.add(queueBox);
+    const boxBg = this.add.rectangle(queueLeftX, 0, queueW, LAYOUT.QUEUE_BOX_H, POPUP.SECTION_BG, 1)
+      .setOrigin(0, 0).setStrokeStyle(1, POPUP.BORDER);
+    const miniSize = 36;
+    const miniX = queueLeftX + 10;
+    const miniY = (LAYOUT.QUEUE_BOX_H - miniSize) / 2;
+    const miniBg = this.add.image(miniX, miniY, MINI_BLUEPRINT_KEY).setOrigin(0, 0);
+    const miniBomb = this.add.image(miniX + miniSize / 2, miniY + miniSize / 2, BOMB_SURPRISE_KEY)
+      .setDisplaySize(22, 22).setOrigin(0.5);
+    // Progress bar — width recalculated each render based on pending count.
+    // Created at full possible width; both bg and fill get resized in renderPopup.
+    const progLeft = miniX + miniSize + 10;
+    const barH = 8;
+    const barY = LAYOUT.QUEUE_BOX_H / 2 - 10;
+    const progressBarBg = this.add.rectangle(progLeft, barY, 40, barH, POPUP.SECTION_BG_DARKER, 1)
+      .setOrigin(0, 0).setStrokeStyle(1, 0x1e2c38);
+    const progressBarFill = this.add.rectangle(progLeft + 1, barY + 1, 0, barH - 2, POPUP.ACCENT, 1).setOrigin(0, 0);
+    const subY = barY + barH + 5;
+    const progressTimeText = this.add.text(progLeft, subY, '--', {
+      fontSize: '11px', color: POPUP.TEXT_MID, fontFamily: 'monospace',
+    }).setOrigin(0, 0);
+    const progressPosText = this.add.text(progLeft + 40, subY, '--', {
+      fontSize: '11px', color: POPUP.TEXT_DIM, fontFamily: 'monospace',
+    }).setOrigin(1, 0);
+    const queueDotsContainer = this.add.container(0, 0);
+    const queueDashG = this.add.graphics();
+    queueBox.add([boxBg, miniBg, miniBomb, progressBarBg, progressBarFill, progressTimeText, progressPosText, queueDotsContainer, queueDashG]);
+    // Save bg + bar refs for resize-in-place; we don't need to track bg/bar separately since
+    // only fill width changes per tick.
+
+    // --- Storage section ---
+    // Section header (label + ready count + TAKE ALL).
+    const storageY0 = LAYOUT.QUEUE_Y + LAYOUT.QUEUE_HEADER_H + LAYOUT.QUEUE_BOTTOM_PAD; // idle baseline
+    const storageHeaderContainer = this.add.container(0, 0);
+    container.add(storageHeaderContainer);
+    const storageLabel = this.add.text(queueLeftX, 0, '▸ STORAGE', {
+      fontSize: '11px', color: POPUP.TEXT_DIM, fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0, 0);
+    const storageReadyText = this.add.text(queueLeftX + 75, 0, ' · 0 ready', {
+      fontSize: '11px', color: POPUP.TEXT_GREEN, fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0, 0);
+    storageHeaderContainer.add([storageLabel, storageReadyText]);
+
+    const takeAllText = this.add.text(0, 0, 'TAKE ALL', {
+      fontSize: '11px', color: POPUP.TEXT_MID, fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5);
+    const takeBgW = takeAllText.width + 20;
+    const takeBgH = takeAllText.height + 10;
+    const takeAllBg = this.add.rectangle(0, 0, takeBgW, takeBgH, 0x000000, 0.01)
+      .setOrigin(0, 0).setStrokeStyle(1, POPUP.CBTN_BORDER_DARK).setInteractive({ useHandCursor: true });
+    takeAllText.setPosition(takeBgW / 2, takeBgH / 2);
+    storageHeaderContainer.add(this.add.container(queueRightX - takeBgW, 6, [takeAllBg, takeAllText]));
+    takeAllBg.on('pointerover', () => {
+      const enabled = takeAllText.style.color === POPUP.TEXT_MID || takeAllText.style.color === '#ffffff';
+      if (enabled) { takeAllBg.setStrokeStyle(1, POPUP.ACCENT); takeAllText.setColor('#ffffff'); }
+    });
+    takeAllBg.on('pointerout', () => {
+      const enabled = takeAllText.style.color === POPUP.TEXT_MID || takeAllText.style.color === '#ffffff';
+      if (enabled) { takeAllBg.setStrokeStyle(1, POPUP.CBTN_BORDER_DARK); takeAllText.setColor(POPUP.TEXT_MID); }
+    });
+    takeAllBg.on('pointerdown', () => {
+      // Only fire if storage non-empty (text color is the proxy for "enabled").
+      if (takeAllText.style.color !== '#475569') {
+        NetworkManager.track('factory_claim', 'factory_result');
+        NetworkManager.getSocket().emit('factory_claim', { factoryId: id });
+      }
+    });
+
+    // Storage grid bg + slots container. The grid bg + slots are repositioned/
+    // rebuilt only when the storage signature changes — see renderStorage().
+    const storageGridBg = this.add.rectangle(queueLeftX, 0, POPUP.W - POPUP.PAD_X * 2, 0, POPUP.SECTION_BG, 1)
+      .setOrigin(0, 0).setStrokeStyle(1, POPUP.BORDER);
+    const storageSlotsContainer = this.add.container(0, 0);
+    const storageDashG = this.add.graphics();
+    container.add([storageGridBg, storageSlotsContainer, storageDashG]);
+
+    storageHeaderContainer.setPosition(0, storageY0);
+    storageGridBg.setPosition(queueLeftX, storageY0 + LAYOUT.STORAGE_HEADER_H);
+
+    this.popup = {
+      container, overlay, panelBg, panelBorder, panelTopAccent,
+      closeBg, closeText,
+      commissionBg, commissionEdge, commissionLabel, costChipItems,
+      queueStatusText, queueBox,
+      progressBarFill, progressTimeText, progressPosText,
+      queueDotsContainer, queueDashG, lastPendingCount: -1,
+      storageReadyText, takeAllBg, takeAllText,
+      storageGridBg, storageSlotsContainer, storageDashG, lastStorageSig: '',
+      factoryId: id, cfg,
+    };
+    // Store the storage header container so renderPopup can reposition it.
+    (this.popup as unknown as { _storageHeader: Phaser.GameObjects.Container })._storageHeader = storageHeaderContainer;
+    // Store progress bar bg so we can resize it when pending count changes
+    // (different number of queue dots → bar width changes).
+    (this.popup as unknown as { _progressBarBg: Phaser.GameObjects.Rectangle })._progressBarBg = progressBarBg;
+
+    // Wallet widget — pinned to the top-right of the SCREEN.
+    if (this.wallet) { this.wallet.destroy(); this.wallet = null; }
+    this.wallet = new TreasureListWidget(this, {
+      x: width - 18, y: 18, anchor: 'top-right', iconScale: 0.55, fontSize: 16, depth: 1002,
+    });
+    if (profile0) this.wallet.setBundleStatic(profile0.treasures);
+
     this.renderPopup();
   }
 
+  /**
+   * Mutate the popup's stable refs based on the latest factory state.
+   * Never destroys/recreates interactive elements (which would flicker the
+   * cursor). Rebuilds queue dots / storage slots only when their signatures
+   * change (rare, state-driven, not per-tick).
+   */
   private renderPopup(): void {
     if (!this.popup || this.popupFactoryId == null) return;
-    const id = this.popupFactoryId;
-    const cfg = FACTORIES[id];
+    const popup = this.popup;
     const profile = ProfileStore.get();
     if (!profile) return;
-    const state = profile.factories?.[id] ?? { firstCycleStartedAt: null, queueLength: 0, storage: [] as BombType[] };
+    const state = ensureClientFactoryState(profile.factories?.[popup.factoryId]);
+    const cfg = popup.cfg;
 
-    // Keep the popup wallet in sync with the latest treasure bundle. Without
-    // this, a successful BUY leaves the top-right wallet showing pre-buy counts
-    // until the popup is closed and reopened.
     this.wallet?.setBundleStatic(profile.treasures);
 
-    // Drop and re-add the dynamic body each tick. Header/buy/etc stay in
-    // place (they were added to `container` directly); we wipe and rebuild
-    // anything with the `_dyn` flag via the dynLayer container.
-    const dyn = (this.popup.container as Phaser.GameObjects.Container & { _dyn?: Phaser.GameObjects.Container });
-    dyn._dyn?.destroy();
-    const layer = this.add.container(0, 0);
-    dyn._dyn = layer;
-    this.popup.container.add(layer);
+    // --- Cost chip: update text colors based on what the player can afford ---
+    const wallet = profile.treasures;
+    let canAfford = true;
+    for (const item of popup.costChipItems) {
+      const hasEnough = (wallet[item.type] ?? 0) >= item.n;
+      item.text.setColor(hasEnough ? POPUP.CHIP_TEXT : POPUP.CHIP_TEXT_DEFICIT);
+      if (!hasEnough) canAfford = false;
+    }
 
-    const panelW = 480;
-    const costEntries = Object.entries(cfg.cost) as Array<[TreasureType, number]>;
+    // --- Commission button enabled visual ---
+    popup.commissionBg.setFillStyle(canAfford ? POPUP.CBTN_BG : POPUP.CBTN_BG_DISABLED, 1);
+    popup.commissionLabel.setColor(canAfford ? POPUP.CBTN_TEXT : POPUP.CBTN_TEXT_DISABLED);
+    (popup.commissionBg as unknown as { __setCanAfford?: (v: boolean) => void }).__setCanAfford?.(canAfford);
 
-    // Progress section
-    const progY = 60;
+    // --- Queue section ---
+    popup.queueStatusText.setText(`${state.sessionDone} / ${state.sessionTotal} done`);
     const remaining = state.queueLength;
     const isWorking = remaining > 0 && state.firstCycleStartedAt != null;
-    const progress = isWorking ? clamp01(currentCycleProgress(state, cfg, Date.now() + this.serverNowOffset)) : 0;
+    popup.queueBox.setVisible(isWorking);
 
-    // Left: stacked treasure rows (one per cost-treasure-type)
-    const leftX = -panelW / 2 + 24;
-    for (let i = 0; i < costEntries.length; i++) {
-      const [type, perCycle] = costEntries[i];
-      const total = remaining * (perCycle ?? 0);
-      const rowY = progY + (i - (costEntries.length - 1) / 2) * 22;
-      const icon = this.add.image(leftX + 12, rowY, TREASURE_TEXTURE_KEY, treasureIconFrame(type))
-        .setDisplaySize(22, 22);
-      const txt = this.add.text(leftX + 28, rowY, displayCount(total), {
-        fontSize: '14px', color: total > 0 ? '#ffd944' : '#666',
-        fontFamily: 'monospace', fontStyle: 'bold',
-      }).setOrigin(0, 0.5);
-      layer.add(icon);
-      layer.add(txt);
-    }
+    if (isWorking) {
+      const pending = remaining - 1;
+      const queueLeftX = -POPUP.W / 2 + POPUP.PAD_X;
+      const queueRightX = POPUP.W / 2 - POPUP.PAD_X;
+      const dotSize = 22;
+      const dotGap = 4;
+      const dotsW = pending > 0 ? pending * dotSize + (pending - 1) * dotGap : 0;
+      const dotsRight = queueRightX - 10;
+      const dotsLeft = dotsRight - dotsW;
 
-    // Center: progress bar
-    const barX = leftX + 90;
-    const barW = panelW - 90 - 80 - 60;
-    const barBg = this.add.rectangle(barX, progY, barW, 18, 0x111122, 1).setOrigin(0, 0.5).setStrokeStyle(1, 0x4a4a6a);
-    const bar = this.add.rectangle(barX + 1, progY, (barW - 2) * progress, 14, isWorking ? 0x44ff88 : 0x333344, 1).setOrigin(0, 0.5);
-    layer.add(barBg);
-    layer.add(bar);
+      // Resize progress bar to fit the remaining space.
+      const miniX = queueLeftX + 10;
+      const miniSize = 36;
+      const progLeft = miniX + miniSize + 10;
+      const progRight = pending > 0 ? dotsLeft - 10 : dotsRight;
+      const progW = Math.max(40, progRight - progLeft);
+      const progBarBg = (popup as unknown as { _progressBarBg: Phaser.GameObjects.Rectangle })._progressBarBg;
+      if (progBarBg.width !== progW) progBarBg.setSize(progW, progBarBg.height);
+      popup.progressPosText.setPosition(progLeft + progW, popup.progressPosText.y);
 
-    // Time label under bar
-    const cycleMs = cfg.cycleDurationMs;
-    const remainMs = isWorking ? Math.max(0, cycleMs - (cycleMs * progress)) : cycleMs;
-    layer.add(this.add.text(barX + barW / 2, progY + 16, isWorking ? `next: ${fmtMs(remainMs)}` : `cycle: ${fmtMs(cycleMs)}`, {
-      fontSize: '10px', color: '#aaa', fontFamily: 'monospace',
-    }).setOrigin(0.5));
+      const progress = clamp01(currentCycleProgress(state, cfg, Date.now() + this.serverNowOffset));
+      const fillW = Math.max(0, (progW - 2) * progress);
+      popup.progressBarFill.setSize(fillW, popup.progressBarFill.height);
 
-    // Right: target bomb (?)
-    const targetX = barX + barW + 30;
-    const targetIcon = this.add.image(targetX, progY, BOMB_SURPRISE_KEY).setDisplaySize(36, 36).setAlpha(isWorking ? 1 : 0.35);
-    layer.add(targetIcon);
+      const remainMs = Math.max(0, cfg.cycleDurationMs - cfg.cycleDurationMs * progress);
+      popup.progressTimeText.setText(fmtRemain(remainMs));
+      popup.progressPosText.setText(`bomb ${state.sessionDone + 1} of ${state.sessionTotal}`);
 
-    // Storage section
-    const storageTop = progY + 70;
-    const storageW = panelW - 60;
-    const storageH = 100;
-    const storagePanel = this.add.rectangle(0, storageTop + storageH / 2, storageW, storageH, 0x161628, 0.9)
-      .setStrokeStyle(1, 0x3a3a5a);
-    layer.add(storagePanel);
-
-    const storageLabel = this.add.text(0, storageTop - 14, `STORAGE  (${state.storage.length})`, {
-      fontSize: '12px', color: '#aaa', fontFamily: 'monospace',
-    }).setOrigin(0.5);
-    layer.add(storageLabel);
-
-    if (state.storage.length === 0) {
-      layer.add(this.add.text(0, storageTop + storageH / 2, '(empty)', {
-        fontSize: '12px', color: '#555', fontFamily: 'monospace',
-      }).setOrigin(0.5));
-    } else {
-      const iconSize = 28;
-      const iconGap = 6;
-      const startX = -storageW / 2 + 12;
-      const startY = storageTop + 18;
-      for (let i = 0; i < state.storage.length; i++) {
-        const col = i % 12;
-        const row = Math.floor(i / 12);
-        const ix = startX + col * (iconSize + iconGap) + iconSize / 2;
-        const iy = startY + row * (iconSize + iconGap) + iconSize / 2;
-        const bombType = state.storage[i] as BombType;
-        const icon = this.add.image(ix, iy, 'bomb_icons', bombIconFrame(bombType)).setDisplaySize(iconSize, iconSize);
-        icon.setInteractive({ useHandCursor: true });
-        icon.on('pointerover', () => icon.setTint(0x88ccff));
-        icon.on('pointerout', () => icon.clearTint());
-        icon.on('pointerdown', () => {
-          NetworkManager.track('factory_claim', 'factory_result');
-          NetworkManager.getSocket().emit('factory_claim', { factoryId: id, index: i });
-        });
-        layer.add(icon);
+      // Queue dots: only rebuild when pending count changes.
+      if (pending !== popup.lastPendingCount) {
+        popup.queueDotsContainer.removeAll(true);
+        popup.queueDashG.clear();
+        const dotsY = (LAYOUT.QUEUE_BOX_H - dotSize) / 2;
+        for (let i = 0; i < pending; i++) {
+          const dx = dotsLeft + i * (dotSize + dotGap);
+          drawDashedRect(popup.queueDashG, dx, dotsY, dotSize, dotSize, 3, 2, POPUP.ACCENT, 0.33);
+          popup.queueDotsContainer.add(this.add.text(dx + dotSize / 2, dotsY + dotSize / 2, '?', {
+            fontSize: '12px', color: POPUP.TEXT_GREEN, fontFamily: 'monospace', fontStyle: 'bold',
+          }).setOrigin(0.5));
+        }
+        popup.lastPendingCount = pending;
       }
+    } else if (popup.lastPendingCount !== 0) {
+      popup.queueDotsContainer.removeAll(true);
+      popup.queueDashG.clear();
+      popup.lastPendingCount = 0;
     }
 
-    // Take All button — same feedback pattern as BUY.
-    const takeAllY = storageTop + storageH + 28;
-    const canTake = state.storage.length > 0;
-    const takeBg = this.add.rectangle(0, takeAllY, 200, 32, canTake ? 0x2a553a : 0x333344, 1)
-      .setStrokeStyle(2, canTake ? 0x44ff88 : 0x555566);
-    const takeLabel = this.add.text(0, takeAllY, canTake ? `TAKE ALL  (×${state.storage.length})` : 'TAKE ALL', {
-      fontSize: '13px', color: canTake ? '#44ff88' : '#888899',
-      fontFamily: 'monospace', fontStyle: 'bold',
-    }).setOrigin(0.5);
-    layer.add(takeBg);
-    layer.add(takeLabel);
-    if (canTake) {
-      this.bindRectButton(takeBg, takeLabel, {
-        idle: 0x2a553a, hover: 0x3a7050, down: 0x1f4030,
-        idleStroke: 0x44ff88, hoverStroke: 0x88ffaa, downStroke: 0x2a8855,
-      }, () => {
-        NetworkManager.track('factory_claim', 'factory_result');
-        NetworkManager.getSocket().emit('factory_claim', { factoryId: id });
-      });
-    }
-  }
+    // --- Storage section position (depends on isWorking) ---
+    const storageHeaderY = LAYOUT.QUEUE_Y + LAYOUT.QUEUE_HEADER_H + (isWorking ? LAYOUT.QUEUE_BOX_H : 0) + LAYOUT.QUEUE_BOTTOM_PAD;
+    const storageGridY = storageHeaderY + LAYOUT.STORAGE_HEADER_H;
+    (popup as unknown as { _storageHeader: Phaser.GameObjects.Container })._storageHeader.setPosition(0, storageHeaderY);
 
-  /**
-   * Wire a rect+label pair as an interactive button with idle/hover/press
-   * visual states (fill colour, stroke colour, subtle scale on press).
-   * Click fires on pointerup so a press can be cancelled by dragging out.
-   */
-  private bindRectButton(
-    bg: Phaser.GameObjects.Rectangle,
-    label: Phaser.GameObjects.Text,
-    palette: {
-      idle: number; hover: number; down: number;
-      idleStroke: number; hoverStroke: number; downStroke: number;
-    },
-    onClick: () => void,
-  ): void {
-    let pressed = false;
-    bg.setInteractive({ useHandCursor: true });
-    bg.on('pointerover', () => {
-      bg.setFillStyle(palette.hover);
-      bg.setStrokeStyle(2, palette.hoverStroke);
-    });
-    bg.on('pointerout', () => {
-      pressed = false;
-      bg.setFillStyle(palette.idle);
-      bg.setStrokeStyle(2, palette.idleStroke);
-      bg.setScale(1);
-      label.setScale(1);
-    });
-    bg.on('pointerdown', () => {
-      pressed = true;
-      bg.setFillStyle(palette.down);
-      bg.setStrokeStyle(2, palette.downStroke);
-      bg.setScale(0.97);
-      label.setScale(0.97);
-    });
-    bg.on('pointerup', () => {
-      bg.setFillStyle(palette.hover);
-      bg.setStrokeStyle(2, palette.hoverStroke);
-      bg.setScale(1);
-      label.setScale(1);
-      if (pressed) onClick();
-      pressed = false;
-    });
+    // --- Storage section content ---
+    const counts = aggregateStorage(state.storage);
+    const totalCount = state.storage.length;
+    popup.storageReadyText.setText(` · ${totalCount} ready`);
+
+    const canTake = totalCount > 0;
+    popup.takeAllText.setColor(canTake ? POPUP.TEXT_MID : '#475569');
+    popup.takeAllBg.setStrokeStyle(1, canTake ? POPUP.CBTN_BORDER_DARK : POPUP.HEADER_DIVIDER);
+
+    // Storage grid layout.
+    const sig = counts.map(c => `${c.bombType}:${c.count}`).join(',');
+    const cols = 6;
+    const gap = 6;
+    const gridPad = LAYOUT.STORAGE_GRID_PAD;
+    const slotsToShow = Math.max(cols, Math.ceil(counts.length / cols) * cols);
+    const innerW = POPUP.W - POPUP.PAD_X * 2 - gridPad * 2;
+    const slotSize = Math.floor((innerW - (cols - 1) * gap) / cols);
+    const rows = Math.ceil(slotsToShow / cols);
+    const gridH = gridPad * 2 + rows * slotSize + (rows - 1) * gap;
+
+    // Move grid bg, slots container, and dash graphics together. Slots use
+    // LOCAL coords inside `storageSlotsContainer` (and `storageDashG`),
+    // anchored at the same origin — so a single setPosition pair moves the
+    // whole grid + its contents in lockstep when the queue grows/shrinks.
+    const gridLeftX = -POPUP.W / 2 + POPUP.PAD_X;
+    const slotsOriginX = gridLeftX + gridPad;
+    const slotsOriginY = storageGridY + gridPad;
+    popup.storageGridBg.setPosition(gridLeftX, storageGridY);
+    popup.storageGridBg.setSize(POPUP.W - POPUP.PAD_X * 2, gridH);
+    popup.storageSlotsContainer.setPosition(slotsOriginX, slotsOriginY);
+    popup.storageDashG.setPosition(slotsOriginX, slotsOriginY);
+
+    // Rebuild slot children only when the storage signature changes.
+    if (sig !== popup.lastStorageSig) {
+      popup.storageSlotsContainer.removeAll(true);
+      popup.storageDashG.clear();
+      const factoryId = popup.factoryId;
+      for (let i = 0; i < slotsToShow; i++) {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const sx = col * (slotSize + gap);   // local to slotsContainer / dashG
+        const sy = row * (slotSize + gap);
+        const entry = counts[i];
+        if (entry) {
+          const slotBg = this.add.rectangle(sx, sy, slotSize, slotSize, POPUP.SLOT_BG, 1)
+            .setOrigin(0, 0).setStrokeStyle(1, POPUP.BORDER).setInteractive({ useHandCursor: true });
+          const bombIcon = this.add.image(sx + slotSize / 2, sy + slotSize / 2, 'bomb_icons', bombIconFrame(entry.bombType))
+            .setDisplaySize(Math.min(28, slotSize - 10), Math.min(28, slotSize - 10)).setOrigin(0.5);
+          const countText = this.add.text(sx + slotSize - 3, sy + slotSize - 2, `x${entry.count}`, {
+            fontSize: '11px', color: POPUP.TEXT_GREEN, fontFamily: 'monospace', fontStyle: 'bold',
+          }).setOrigin(1, 1);
+          popup.storageSlotsContainer.add([slotBg, bombIcon, countText]);
+          slotBg.on('pointerover', () => slotBg.setStrokeStyle(1, POPUP.ACCENT));
+          slotBg.on('pointerout', () => slotBg.setStrokeStyle(1, POPUP.BORDER));
+          slotBg.on('pointerdown', () => {
+            const liveState = ensureClientFactoryState(ProfileStore.get()?.factories?.[factoryId]);
+            const idx = liveState.storage.findIndex(b => b === entry.bombType);
+            if (idx >= 0) {
+              NetworkManager.track('factory_claim', 'factory_result');
+              NetworkManager.getSocket().emit('factory_claim', { factoryId, index: idx });
+            }
+          });
+        } else {
+          popup.storageSlotsContainer.add(this.add.rectangle(sx, sy, slotSize, slotSize, POPUP.SLOT_BG_EMPTY, 1).setOrigin(0, 0));
+          drawDashedRect(popup.storageDashG, sx, sy, slotSize, slotSize, 3, 2, POPUP.SLOT_EMPTY_BORDER, 1);
+        }
+      }
+      popup.lastStorageSig = sig;
+    }
+
+    // --- Panel chrome: only the height grows downward. Container top is
+    // anchored ONCE at openPopup and never moves on resize, so sections
+    // above queue (header, description, schematic, commission) stay put.
+    const panelH = storageGridY + gridH + LAYOUT.STORAGE_BOTTOM_PAD;
+    if (popup.panelBg.height !== panelH) {
+      popup.panelBg.setSize(POPUP.W, panelH);
+      popup.panelBorder.setSize(POPUP.W, panelH);
+    }
   }
 
   private closePopup(): void {
@@ -810,3 +1140,138 @@ function fmtMs(ms: number): string {
   const r = s % 60;
   return r === 0 ? `${m}m` : `${m}m ${r}s`;
 }
+
+/** Cycle indicator format: "5:00" / "10:00" — minutes and zero-padded seconds. */
+function fmtCycleTime(ms: number): string {
+  const totalS = Math.round(ms / 1000);
+  const m = Math.floor(totalS / 60);
+  const s = totalS % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+/** Live remaining-time label: "3m 26s" or "47s". Clock-icon-free, the spec
+ * draws the icon in HTML; we keep it text-only since we don't have an icon
+ * font in Phaser. */
+function fmtRemain(ms: number): string {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return r === 0 ? `${m}m` : `${m}m ${r}s`;
+}
+
+/** Aggregate storage list into {bombType, count} entries, ordered by first
+ * appearance in storage so newer types push to the right. */
+function aggregateStorage(storage: BombType[]): { bombType: BombType; count: number }[] {
+  const order: BombType[] = [];
+  const counts = new Map<BombType, number>();
+  for (const b of storage) {
+    if (!counts.has(b)) order.push(b);
+    counts.set(b, (counts.get(b) ?? 0) + 1);
+  }
+  return order.map(b => ({ bombType: b, count: counts.get(b)! }));
+}
+
+/** Defensive default for old profiles that pre-date the sessionDone fields. */
+function emptyClientFactoryState(): FactoryState {
+  return { firstCycleStartedAt: null, queueLength: 0, storage: [], sessionDone: 0, sessionTotal: 0 };
+}
+
+/** Backfill missing fields on a factory state from older server shapes. The
+ * server migrates on read, but a dev server running against pre-migration
+ * profile JSON (or transmitted profiles that pre-date the new fields) won't
+ * have them — so we defensively coalesce client-side too. */
+function ensureClientFactoryState(s: Partial<FactoryState> | undefined): FactoryState {
+  if (!s) return emptyClientFactoryState();
+  const queueLength = typeof s.queueLength === 'number' ? s.queueLength : 0;
+  const sessionDone = typeof s.sessionDone === 'number' ? s.sessionDone : 0;
+  const rawSessionTotal = typeof s.sessionTotal === 'number' ? s.sessionTotal : 0;
+  // Mirror the server's migration fallback so a queued-but-untracked legacy
+  // profile reads as `bomb 1 of {queueLength}` rather than `bomb 1 of 0`.
+  const sessionTotal = rawSessionTotal > 0
+    ? Math.max(rawSessionTotal, sessionDone)
+    : Math.max(sessionDone, queueLength);
+  return {
+    firstCycleStartedAt: typeof s.firstCycleStartedAt === 'number' ? s.firstCycleStartedAt : null,
+    queueLength,
+    storage: Array.isArray(s.storage) ? s.storage : [],
+    sessionDone,
+    sessionTotal,
+  };
+}
+
+/** Total height of the popup panel in pixels. All sections above queue have
+ * fixed Y positions (LAYOUT constants); only queue + storage grow downward,
+ * so the panel height = (storage grid bottom) + bottom pad. */
+function computePanelHeight(state: FactoryState): number {
+  const isWorking = state.queueLength > 0 && state.firstCycleStartedAt != null;
+  const storageHeaderY = LAYOUT.QUEUE_Y + LAYOUT.QUEUE_HEADER_H + (isWorking ? LAYOUT.QUEUE_BOX_H : 0) + LAYOUT.QUEUE_BOTTOM_PAD;
+  const storageGridY = storageHeaderY + LAYOUT.STORAGE_HEADER_H;
+
+  const cols = 6;
+  const gap = 6;
+  const gridPad = LAYOUT.STORAGE_GRID_PAD;
+  const innerW = POPUP.W - POPUP.PAD_X * 2 - gridPad * 2;
+  const slotSize = Math.floor((innerW - (cols - 1) * gap) / cols);
+  const counts = aggregateStorage(state.storage);
+  const slotsToShow = Math.max(cols, Math.ceil(counts.length / cols) * cols);
+  const rows = Math.ceil(slotsToShow / cols);
+  const gridH = gridPad * 2 + rows * slotSize + (rows - 1) * gap;
+
+  return storageGridY + gridH + LAYOUT.STORAGE_BOTTOM_PAD;
+}
+
+/** Top Y for the popup container. Vertically centers when the panel fits,
+ * but never above 40 px from the screen top — so a tall panel anchors near
+ * the top instead of overflowing the viewport. */
+function popupTopY(viewportH: number, panelH: number): number {
+  return Math.max(40, viewportH / 2 - panelH / 2);
+}
+
+/** Build the blueprint textures once per scene (cached on the texture
+ * manager). Solid cyan-tinted bg + faint grid lines + 1px border. */
+function ensureBlueprintTextures(scene: Phaser.Scene): void {
+  if (!scene.textures.exists(BLUEPRINT_KEY)) {
+    paintBlueprint(scene, BLUEPRINT_KEY, 180, 110, 14);
+  }
+  if (!scene.textures.exists(MINI_BLUEPRINT_KEY)) {
+    paintBlueprint(scene, MINI_BLUEPRINT_KEY, 36, 36, 8);
+  }
+}
+
+function paintBlueprint(scene: Phaser.Scene, key: string, w: number, h: number, gridSize: number): void {
+  const g = scene.add.graphics();
+  g.fillStyle(POPUP.BLUEPRINT_BG, 1).fillRect(0, 0, w, h);
+  g.lineStyle(1, POPUP.BLUEPRINT_GRID, 0.18);
+  for (let x = gridSize; x < w; x += gridSize) g.lineBetween(x, 0, x, h);
+  for (let y = gridSize; y < h; y += gridSize) g.lineBetween(0, y, w, y);
+  g.lineStyle(1, POPUP.BLUEPRINT_BORDER, 1).strokeRect(0, 0, w, h);
+  g.generateTexture(key, w, h);
+  g.destroy();
+}
+
+/** Draw a dashed-border rectangle into a Graphics object. Used for the empty
+ * storage slots and the pending-queue placeholder dots. Drawn into a shared
+ * Graphics so we only allocate one per render call. */
+function drawDashedRect(
+  g: Phaser.GameObjects.Graphics,
+  x: number, y: number, w: number, h: number,
+  dash: number, gap: number,
+  color: number, alpha: number,
+): void {
+  g.lineStyle(1, color, alpha);
+  const step = dash + gap;
+  // Horizontal edges.
+  for (let i = 0; i < w; i += step) {
+    const len = Math.min(dash, w - i);
+    g.lineBetween(x + i, y, x + i + len, y);
+    g.lineBetween(x + i, y + h, x + i + len, y + h);
+  }
+  // Vertical edges.
+  for (let i = 0; i < h; i += step) {
+    const len = Math.min(dash, h - i);
+    g.lineBetween(x, y + i, x, y + i + len);
+    g.lineBetween(x + w, y + i, x + w, y + i + len);
+  }
+}
+

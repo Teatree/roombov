@@ -24,12 +24,22 @@ export interface FactoryState {
   queueLength: number;
   /** Produced bombs awaiting Claim. */
   storage: BombType[];
+  /**
+   * Session counters for the popup's "X / Y done" display. A session is the
+   * span between idle-with-nothing-queued and the next commission. Both reset
+   * to 0 when the player commissions a new bomb while the factory is fully
+   * idle (queueLength === 0 AND firstCycleStartedAt === null AND
+   * sessionDone === sessionTotal); the new commission then makes it 0 / 1.
+   * sessionDone increments inside resolveOne when bombs roll into storage.
+   */
+  sessionDone: number;
+  sessionTotal: number;
 }
 
 export type FactoryStates = Record<FactoryId, FactoryState>;
 
 export function emptyFactoryState(): FactoryState {
-  return { firstCycleStartedAt: null, queueLength: 0, storage: [] };
+  return { firstCycleStartedAt: null, queueLength: 0, storage: [], sessionDone: 0, sessionTotal: 0 };
 }
 
 export function createEmptyFactories(): FactoryStates {

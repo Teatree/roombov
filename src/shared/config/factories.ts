@@ -19,6 +19,8 @@ export interface FactoryConfig {
   id: FactoryId;
   /** Flavour name shown in the popup header. */
   name: string;
+  /** One-line italic flavour line shown directly under the popup header. */
+  description: string;
   /** Wall-clock ms a single cycle takes. */
   cycleDurationMs: number;
   /** Treasures spent per cycle (paid at queue time). */
@@ -33,6 +35,7 @@ export const FACTORIES: Record<FactoryId, FactoryConfig> = {
   1: {
     id: 1,
     name: 'SPROKKET-5K',
+    description: 'Produces a random weak bomb each cycle.',
     cycleDurationMs: 5 * MIN,
     cost: { mushrooms: 25 },
     bombWeights: {
@@ -45,6 +48,7 @@ export const FACTORIES: Record<FactoryId, FactoryConfig> = {
   2: {
     id: 2,
     name: 'KLANGWERKS-88',
+    description: 'Produces a random tactical bomb each cycle.',
     cycleDurationMs: 10 * MIN,
     cost: { coffee: 10, mushrooms: 25 },
     bombWeights: {
@@ -57,6 +61,7 @@ export const FACTORIES: Record<FactoryId, FactoryConfig> = {
   3: {
     id: 3,
     name: 'GLOMBULATOR',
+    description: 'Produces a random utility bomb each cycle.',
     cycleDurationMs: 20 * MIN,
     cost: { grapes: 10, coffee: 15 },
     bombWeights: {
@@ -70,6 +75,7 @@ export const FACTORIES: Record<FactoryId, FactoryConfig> = {
   4: {
     id: 4,
     name: 'DETONATORIUM',
+    description: 'Produces a random super bomb each cycle.',
     cycleDurationMs: 30 * MIN,
     cost: { lanterns: 8, grapes: 15, mushrooms: 50 },
     bombWeights: {
