@@ -1628,7 +1628,9 @@ export function resolveTurn(
       const j = Math.floor(scavRng() * (i + 1));
       [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
     }
-    const desired = BALANCE.scavs.perSpawn;
+    const aliveScavs = state.bombermen.filter(b => b.isScav && b.alive && !b.escaped).length;
+    const headroom = Math.max(0, BALANCE.scavs.maxAlive - aliveScavs);
+    const desired = Math.min(BALANCE.scavs.perSpawn, headroom);
     const picks = candidates.slice(0, Math.min(desired, candidates.length));
     for (let i = 0; i < picks.length; i++) {
       const tile = picks[i];

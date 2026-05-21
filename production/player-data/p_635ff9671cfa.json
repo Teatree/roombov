@@ -314,5 +314,27 @@
       "cycle_p_635ff9671cfa_mouin5oz_0_free",
       "cycle_p_635ff9671cfa_mouin5oz_1_free"
     ]
+  },
+  "factories": {
+    "1": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": []
+    },
+    "2": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": []
+    },
+    "3": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": []
+    },
+    "4": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": []
+    }
   }
 }

@@ -27,7 +27,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     name: 'Bomb',
     fuseTurns: 1,
     behavior: { kind: 'explode', shape: { kind: 'plus', radius: 4 } },
-    price: 25,
+    price: 200,
     description: '+ pattern, radius 4. Explodes next turn.',
   },
   bomb_wide: {
@@ -35,7 +35,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     name: 'Wide Bomb',
     fuseTurns: 2,
     behavior: { kind: 'explode', shape: { kind: 'circle', radius: 2, rayCast: true } },
-    price: 60,
+    price: 300,
     description: '5x5 area blast (rays from centre — walls block). Takes 2 turns to explode.',
   },
   delay_tricky: {
@@ -43,7 +43,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     name: 'Delay Tricky Bomb',
     fuseTurns: 1,
     behavior: { kind: 'explode', shape: { kind: 'diag', radius: 3 } },
-    price: 50,
+    price: 200,
     description: 'Diagonal pattern, radius 3. Explodes next turn.',
   },
   contact: {
@@ -51,7 +51,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     name: 'Contact Bomb',
     fuseTurns: 0,
     behavior: { kind: 'explode', shape: { kind: 'plus', radius: 1 } },
-    price: 100,
+    price: 750,
     description: '+ pattern, radius 1. Explodes on impact.',
   },
   banana: {
@@ -68,7 +68,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
       ],
       childType: 'banana_child',
     },
-    price: 75,
+    price: 250,
     description: 'Lands, 1 turn later scatters 4 sub-bombs diagonally; each explodes next turn.',
   },
   banana_child: {
@@ -88,7 +88,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     name: 'Flare',
     fuseTurns: 0,
     behavior: { kind: 'light', shape: { kind: 'circle', radius: 4 }, durationTurns: 3 },
-    price: 25,
+    price: 50,
     description: 'Lights up a 9x9 area for 3 turns. No damage. Does not break Rush.',
   },
   molotov: {
@@ -96,7 +96,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     name: 'Molotov',
     fuseTurns: 0,
     behavior: { kind: 'fire', shape: { kind: 'plus', radius: 1 }, durationTurns: 2 },
-    price: 150,
+    price: 800,
     description: 'Sets a + pattern (radius 1) on fire for 2 turns. Damage on landing and each turn.',
   },
   ender_pearl: {
@@ -104,7 +104,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     name: 'Ender Pearl',
     fuseTurns: 0,
     behavior: { kind: 'teleport' },
-    price: 100,
+    price: 200,
     description: 'Teleports you to the landing tile. Does not break Rush.',
   },
   fart_escape: {
@@ -116,7 +116,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
       shape: { kind: 'circle', radius: BALANCE.bombs.fartEscapeSmokeRadius },
       durationTurns: BALANCE.bombs.fartEscapeSmokeTurns,
     },
-    price: 1,
+    price: 100,
     description: 'Escape move: steps 2 tiles toward target and leaves a smoke cloud at your origin.',
   },
   motion_detector_flare: {
@@ -129,7 +129,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
       lifetimeTurns: BALANCE.bombs.motionDetectorLifetime,
       detectionRadius: BALANCE.bombs.motionDetectorRadius,
     },
-    price: 1,
+    price: 25,
     description: 'Proximity mine. Fires a Flare when an enemy comes within 3 tiles + LoS.',
   },
   flash: {
@@ -142,7 +142,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
       shape: { kind: 'circle', radius: 3 },
       stunTurns: BALANCE.bombs.flashStunTurns,
     },
-    price: 1,
+    price: 500,
     description: 'Blue 7x7 blast. Bombermen caught are Stunned for 1 turn.',
   },
   phosphorus: {
@@ -155,7 +155,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
       revealTurns: BALANCE.bombs.phosphorusRevealTurns,
       fireDurationTurns: BALANCE.bombs.phosphorusFireTurns,
     },
-    price: 1,
+    price: 300,
     description: 'SUPER BOMB. Lights up 11x11, then scatters burning tiles next turn.',
   },
   cluster_bomb: {
@@ -167,7 +167,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
       area: { w: BALANCE.bombs.clusterArea.w, h: BALANCE.bombs.clusterArea.h },
       mineCount: BALANCE.bombs.clusterMineCount,
     },
-    price: 1,
+    price: 300,
     description: 'SUPER BOMB. Scatters 25 mines across an 11x11 area. Mines trigger on touch.',
   },
   big_huge: {
@@ -175,7 +175,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     name: 'Big Huge',
     fuseTurns: 2,
     behavior: { kind: 'explode', shape: { kind: 'circle', radius: 5, rayCast: true } },
-    price: 1,
+    price: 1000,
     description: 'SUPER BOMB. 11x11 circle blast (rays from centre — walls block). Takes 2 turns to explode.',
   },
   shield: {
@@ -187,7 +187,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
       shape: { kind: 'plus', radius: 1 },
       durationTurns: BALANCE.bombs.shieldDurationTurns,
     },
-    price: 1,
+    price: 250,
     description: 'Spawns a + shield wall on impact. Blocks movement and explosions for 3 turns. Pushes anyone in the way out (no damage).',
   },
 };

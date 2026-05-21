@@ -177,7 +177,7 @@ export class GameServer {
   private async onBombermanShopRequest(socket: TypedSocket): Promise<void> {
     const profile = this.getProfileForSocket(socket);
     if (!profile) return;
-    const cycle = await this.bombermanShop.getOrGenerateCycle(profile);
+    const cycle = await this.bombermanShop.getCycleForClient(profile);
     socket.emit('bomberman_shop_cycle', cycle);
   }
 
@@ -190,7 +190,9 @@ export class GameServer {
       socket.emit('shop_result', { ok: true, action: 'buy_bomberman', message: 'Purchased!' });
       // Re-broadcast the (now-mutated) cycle so the client knows about the
       // freshly-added bought-template-id and can animate the card out.
-      if (profile.bombermanShop) socket.emit('bomberman_shop_cycle', profile.bombermanShop);
+      if (profile.bombermanShop) {
+        socket.emit('bomberman_shop_cycle', await this.bombermanShop.getCycleForClient(profile));
+      }
     } else {
       socket.emit('shop_result', { ok: false, action: 'buy_bomberman', reason: result.reason });
     }

@@ -66,6 +66,24 @@ export class BombermanShopService {
     return fresh;
   }
 
+  /**
+   * Cycle view sent to the client. Same as `getOrGenerateCycle` but with
+   * per-player hardship discount applied: when the player owns zero
+   * Bombermen AND can't afford the cheapest non-bought one, that cheapest
+   * template's price is rewritten to 0 in the returned clone. Persisted
+   * cycle is untouched so the discount disappears the moment they earn
+   * enough coins or buy a Bomberman.
+   */
+  async getCycleForClient(profile: PlayerProfile, now = Date.now()): Promise<BombermanShopCycle> {
+    const cycle = await this.getOrGenerateCycle(profile, now);
+    const discountedId = hardshipDiscountTemplateId(profile, cycle);
+    if (!discountedId) return cycle;
+    return {
+      ...cycle,
+      bombermen: cycle.bombermen.map(b => (b.id === discountedId ? { ...b, price: 0 } : b)),
+    };
+  }
+
   private generateCycle(playerId: string, now: number): BombermanShopCycle {
     // Seed mixes the player's id and the wall-clock start so each player
     // gets a unique roster and each cycle is fresh.
@@ -158,7 +176,9 @@ export class BombermanShopService {
       return { ok: false, reason: 'roster_full' };
     }
 
-    if (profile.coins < template.price) {
+    const discountedId = hardshipDiscountTemplateId(profile, cycle);
+    const priceToPay = template.id === discountedId ? 0 : template.price;
+    if (profile.coins < priceToPay) {
       return { ok: false, reason: 'insufficient_coins' };
     }
 
@@ -177,7 +197,7 @@ export class BombermanShopService {
       sourceTemplateId: templateId,
     };
 
-    profile.coins -= template.price;
+    profile.coins -= priceToPay;
     profile.ownedBombermen.push(owned);
     cycle.boughtTemplateIds.push(templateId);
 
@@ -287,5 +307,26 @@ function cloneInventory(inv: BombInventory): BombInventory {
   return {
     slots: inv.slots.map(s => (s ? { ...s } : null)),
   };
+}
+
+/**
+ * If the player owns no Bombermen and can't afford the cheapest still-buyable
+ * template, return that template's id (so it can be discounted to free).
+ * Otherwise return null. Already-bought templates and zero-price templates
+ * are ignored when picking the cheapest — if the cheapest still-buyable card
+ * is already free the player is not stuck.
+ */
+function hardshipDiscountTemplateId(
+  profile: PlayerProfile,
+  cycle: BombermanShopCycle,
+): string | null {
+  if (profile.ownedBombermen.length > 0) return null;
+  const bought = new Set(cycle.boughtTemplateIds);
+  const buyable = cycle.bombermen.filter(b => !bought.has(b.id));
+  if (buyable.length === 0) return null;
+  const cheapest = buyable.reduce((a, b) => (b.price < a.price ? b : a));
+  if (cheapest.price === 0) return null;
+  if (profile.coins >= cheapest.price) return null;
+  return cheapest.id;
 }
 

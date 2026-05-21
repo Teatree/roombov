@@ -141,5 +141,7 @@ export const BALANCE = {
     flareChance: 0.25,
     /** Consecutive turns an enemy must be visible before scavs aggro. 0 = engage immediately. */
     aggroDelayTurns: 0,
+    /** Hard cap on alive scavs at any moment. Spawn wave is clamped to (cap - aliveScavs). */
+    maxAlive: 2,
   },
 } as const;

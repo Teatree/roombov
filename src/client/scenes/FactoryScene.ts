@@ -85,6 +85,13 @@ interface MachineNodes {
   statusBadgeText: Phaser.GameObjects.Text;
   statusTreasures: Phaser.GameObjects.Container;
   statusTarget: Phaser.GameObjects.Image;
+  /**
+   * Standalone "ready to claim" dot shown when the factory has no active
+   * production but has finished bombs sitting in storage. Replaces the full
+   * shortcut in that state — sits closer to the machine, no panel.
+   */
+  notifDot: Phaser.GameObjects.Container;
+  notifDotText: Phaser.GameObjects.Text;
 }
 
 /**
@@ -102,11 +109,17 @@ const TARGET_SIZE = 24;
 const SECTION_GAP = 8;
 const PANEL_H = TREASURE_CELL + 2 * PANEL_PAD;  // 38
 
-/** Max width = 3 treasures + bar + target + padding. Fixed for visual consistency. */
-const MAX_TREASURES = 3;
-const PANEL_W = 2 * PANEL_PAD
-  + MAX_TREASURES * TREASURE_CELL + (MAX_TREASURES - 1) * TREASURE_GAP
-  + SECTION_GAP + BAR_W + SECTION_GAP + TARGET_SIZE;  // 184
+/**
+ * Panel width is dynamic per-factory: one treasure cell per cost entry plus
+ * a fixed bar + target slot. Each factory's panel is sized once at build
+ * time from its FACTORIES[id].cost shape.
+ */
+function panelWidthFor(cfg: FactoryConfig): number {
+  const n = Math.max(1, Object.keys(cfg.cost).length);
+  return 2 * PANEL_PAD
+    + n * TREASURE_CELL + (n - 1) * TREASURE_GAP
+    + SECTION_GAP + BAR_W + SECTION_GAP + TARGET_SIZE;
+}
 
 interface PopupNodes {
   container: Phaser.GameObjects.Container;
@@ -325,6 +338,14 @@ export class FactoryScene extends Phaser.Scene {
       screen.x,
       screen.y - hitH / 2 - PANEL_GAP_PX - PANEL_H / 2,
     );
+
+    // Standalone ready-dot sits just outside the machine's top-right corner —
+    // intentionally closer than the full shortcut so it reads as a small,
+    // unobtrusive nudge rather than a HUD element.
+    nodes.notifDot.setPosition(
+      screen.x + hitW / 2 + 4,
+      screen.y - hitH / 2 - 4,
+    );
   }
 
   private buildMachine(id: FactoryId): void {
@@ -340,21 +361,25 @@ export class FactoryScene extends Phaser.Scene {
 
     // Floating status group anchored above the machine. Contents are a single
     // horizontal row centered at y=0 of the group; panel is drawn with
-    // origin (0.5, 0.5), so its center is at (0, 0).
+    // origin (0.5, 0.5), so its center is at (0, 0). Width is per-factory.
+    const cfg = FACTORIES[id];
+    const panelW = panelWidthFor(cfg);
+    const costCount = Math.max(1, Object.keys(cfg.cost).length);
+
     const statusGroup = this.add.container(0, 0);
     statusGroup.setVisible(false);
 
-    const statusPanel = this.add.rectangle(0, 0, PANEL_W, PANEL_H, 0x141420, 0.95)
+    const statusPanel = this.add.rectangle(0, 0, panelW, PANEL_H, 0x141420, 0.95)
       .setOrigin(0.5, 0.5).setStrokeStyle(1, 0x4a4a6a);
     statusGroup.add(statusPanel);
 
     // Treasures cell strip — populated by renderAll. Anchor at the row's left.
-    const treasuresLeft = -PANEL_W / 2 + PANEL_PAD;
+    const treasuresLeft = -panelW / 2 + PANEL_PAD;
     const treasures = this.add.container(treasuresLeft, 0);
     statusGroup.add(treasures);
 
-    // Progress bar — after the (fixed-width) treasures section, at row center.
-    const treasuresW = MAX_TREASURES * TREASURE_CELL + (MAX_TREASURES - 1) * TREASURE_GAP;
+    // Progress bar — placed right after the dynamic-width treasures section.
+    const treasuresW = costCount * TREASURE_CELL + (costCount - 1) * TREASURE_GAP;
     const barLeft = treasuresLeft + treasuresW + SECTION_GAP;
     const statusBarBg = this.add.rectangle(barLeft, 0, BAR_W, BAR_H, 0x0a0a14, 1)
       .setOrigin(0, 0.5).setStrokeStyle(1, 0x4a4a6a);
@@ -370,15 +395,25 @@ export class FactoryScene extends Phaser.Scene {
     statusGroup.add(statusTarget);
 
     // Claim-count badge in upper-right of the panel (overflows above).
-    const badge = this.add.container(PANEL_W / 2 - 6, -PANEL_H / 2);
+    // Only shown when a cycle is still running AND storage > 0.
+    const badge = this.add.container(panelW / 2 - 6, -PANEL_H / 2);
     const badgeBg = this.add.circle(0, 0, 10, 0xff4444).setStrokeStyle(2, 0x000000);
     const badgeText = this.add.text(0, 0, '0', {
-      fontSize: '11px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: '11px', color: '#000000', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5);
     badge.add(badgeBg);
     badge.add(badgeText);
     badge.setVisible(false);
     statusGroup.add(badge);
+
+    // Standalone "ready" dot: shown when storage > 0 AND no active cycle
+    // (factory finished, waiting on claim). Sits at the machine corner.
+    const notifDot = this.add.container(0, 0).setDepth(50).setVisible(false);
+    const notifBg = this.add.circle(0, 0, 11, 0xff4444).setStrokeStyle(2, 0x000000);
+    const notifText = this.add.text(0, 0, '0', {
+      fontSize: '11px', color: '#000000', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5);
+    notifDot.add([notifBg, notifText]);
 
     statusGroup.setDepth(50);
     highlight.setDepth(2);
@@ -390,6 +425,7 @@ export class FactoryScene extends Phaser.Scene {
       statusGroup, statusPanel, statusBar, statusBarBg,
       statusBadge: badge, statusBadgeText: badgeText,
       statusTreasures: treasures, statusTarget,
+      notifDot, notifDotText: notifText,
     };
     this.machines.set(id, nodes);
     this.layoutMachine(id, nodes);
@@ -416,8 +452,17 @@ export class FactoryScene extends Phaser.Scene {
       nodes.workingHighlight.setVisible(isWorking && isHover);
       nodes.highlight.setVisible(!isWorking && isHover);
 
-      // Status panel only visible when machine is producing.
-      nodes.statusGroup.setVisible(isWorking || state.storage.length > 0);
+      // Two display states:
+      //   - producing → full shortcut (progress bar etc), with badge if any
+      //     bombs are already sitting in storage.
+      //   - done (queue empty) but storage > 0 → standalone ready-dot only.
+      const claimable = state.storage.length;
+      const showStandaloneDot = !isWorking && claimable > 0;
+      nodes.statusGroup.setVisible(isWorking);
+      nodes.notifDot.setVisible(showStandaloneDot);
+      if (showStandaloneDot) {
+        nodes.notifDotText.setText(claimable > 99 ? '99+' : String(claimable));
+      }
 
       // Progress bar — fills inside the bar bg, minus 1px inset on each side.
       const progress = isWorking ? clamp01(currentCycleProgress(state, cfg, nowMs)) : 0;
@@ -425,13 +470,12 @@ export class FactoryScene extends Phaser.Scene {
       nodes.statusBar.width = barMax * progress;
       nodes.statusBar.setFillStyle(progress >= 0.999 ? 0xffd944 : 0x44ff88);
 
-      // Treasures-committed: single row of square cells (one per cost type,
-      // up to MAX_TREASURES). Each cell = dark tile + icon centered + small
-      // count text overlaid at the cell's bottom-right.
+      // Treasures-committed: one square cell per cost type, dynamic count.
+      // Each cell = dark tile + icon centered + small count text overlaid
+      // at the cell's bottom-right.
       nodes.statusTreasures.removeAll(true);
       const remaining = state.queueLength;
-      const costEntries = (Object.entries(cfg.cost) as Array<[TreasureType, number]>)
-        .slice(0, MAX_TREASURES);
+      const costEntries = Object.entries(cfg.cost) as Array<[TreasureType, number]>;
       for (let i = 0; i < costEntries.length; i++) {
         const [type, perCycle] = costEntries[i];
         const committed = remaining * (perCycle ?? 0);
@@ -453,9 +497,9 @@ export class FactoryScene extends Phaser.Scene {
       // Target bomb dims when idle, full when working.
       nodes.statusTarget.setAlpha(isWorking ? 1 : 0.4);
 
-      // Claim badge
-      const claimable = state.storage.length;
-      nodes.statusBadge.setVisible(claimable > 0);
+      // In-panel claim badge: only meaningful while the shortcut is visible
+      // (i.e. a cycle is still running) and storage already has bombs.
+      nodes.statusBadge.setVisible(isWorking && claimable > 0);
       nodes.statusBadgeText.setText(claimable > 99 ? '99+' : String(claimable));
     }
 

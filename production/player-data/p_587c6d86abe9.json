@@ -19,5 +19,27 @@
     "lastTickedAt": 1777330178905,
     "nextGamblerSerial": 1
   },
-  "bombermanShop": null
+  "bombermanShop": null,
+  "factories": {
+    "1": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": []
+    },
+    "2": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": []
+    },
+    "3": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": []
+    },
+    "4": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": []
+    }
+  }
 }

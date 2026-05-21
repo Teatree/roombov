@@ -1,164 +1,105 @@
 {
   "id": "p_3a9ad8b22613",
-  "createdAt": 1775946762703,
-  "updatedAt": 1779317266334,
-  "coins": 2578,
+  "createdAt": 1779350893447,
+  "updatedAt": 1779397120036,
+  "coins": 1375,
   "treasures": {
-    "grapes": 504,
-    "coffee": 663,
-    "mushrooms": 937,
-    "lanterns": 519
+    "coffee": 45,
+    "lanterns": 3,
+    "mushrooms": 15,
+    "grapes": 1
   },
   "ownedBombermen": [
     {
-      "id": "owned_p_3a9ad8b22613_1779317037017_d5c2",
-      "name": "Fitzgerald",
+      "id": "owned_p_3a9ad8b22613_1779359571432_o87u",
+      "name": "Duffy",
       "tier": "free",
       "colors": {
-        "shirt": 14107267,
-        "pants": 2656899,
-        "hair": 8139954
+        "shirt": 14128962,
+        "pants": 9054287,
+        "hair": 11685940
       },
-      "tint": 6849763,
-      "character": "char4",
+      "tint": 14643689,
+      "character": "char3",
       "maxCustomSlots": 4,
       "stackSize": 6,
       "inventory": {
         "slots": [
           {
-            "type": "fart_escape",
-            "count": 3
+            "type": "bomb_wide",
+            "count": 5
           },
           {
-            "type": "delay_tricky",
-            "count": 3
+            "type": "flash",
+            "count": 4
           },
-          null,
           {
-            "type": "ender_pearl",
-            "count": 6
+            "type": "shield",
+            "count": 4
+          },
+          {
+            "type": "molotov",
+            "count": 4
           }
         ]
       },
-      "purchasedAt": 1779317037017,
-      "sourceTemplateId": "cycle_p_3a9ad8b22613_mpenf76p_1_free"
+      "purchasedAt": 1779359571432,
+      "sourceTemplateId": "cycle_p_3a9ad8b22613_mpfcqv6n_0_free"
     }
   ],
-  "equippedBombermanId": "owned_p_3a9ad8b22613_1779317037017_d5c2",
+  "equippedBombermanId": "owned_p_3a9ad8b22613_1779359571432_o87u",
   "bombStockpile": {
-    "flare": 10,
-    "delay_tricky": 9,
-    "big_huge": 2,
-    "fart_escape": 1
+    "bomb": 2,
+    "delay_tricky": 1,
+    "flare": 2,
+    "motion_detector_flare": 1,
+    "flash": 1,
+    "banana": 1,
+    "big_huge": 1
   },
   "gamblerStreet": {
-    "gamblers": [
-      {
-        "id": "g_moypaqnt_9z3",
-        "name": "Théo Vidal",
-        "treasureType": "lanterns",
-        "treasureAmount": 35,
-        "coinReward": 19,
-        "createdAt": 1778352727673,
-        "expiresAt": 1778352898538
-      },
-      {
-        "id": "g_moypbiw1_9z4",
-        "name": "Agnes Sutcliffe",
-        "treasureType": "amulets",
-        "treasureAmount": 150,
-        "coinReward": 86,
-        "createdAt": 1778352764257,
-        "expiresAt": 1778352933538
-      },
-      {
-        "id": "g_moypc7df_9z5",
-        "name": "Walter Greaves",
-        "treasureType": "grapes",
-        "treasureAmount": 25,
-        "coinReward": 5,
-        "createdAt": 1778352795987,
-        "expiresAt": 1778352968538
-      },
-      {
-        "id": "g_moypcz0z_9z6",
-        "name": "Sofía Ortega",
-        "treasureType": "bones",
-        "treasureAmount": 25,
-        "coinReward": 3,
-        "createdAt": 1778352831827,
-        "expiresAt": 1778353003538
-      }
-    ],
+    "gamblers": [],
     "pendingArrivals": [
-      1778352867968
+      1779350893447,
+      1779350893447,
+      1779350893447,
+      1779350893447,
+      1779350893447
     ],
-    "lastTickedAt": 1778412692370,
-    "nextGamblerSerial": 12931
+    "lastTickedAt": 1779350893447,
+    "nextGamblerSerial": 1
   },
   "bombermanShop": {
-    "cycleId": "cycle_p_3a9ad8b22613_mpenf76p",
-    "startedAt": 1779317035297,
-    "endsAt": 1779317155297,
+    "cycleId": "cycle_p_3a9ad8b22613_mpfyvfz5",
+    "startedAt": 1779396735137,
+    "endsAt": 1779396855137,
     "bombermen": [
       {
-        "id": "cycle_p_3a9ad8b22613_mpenf76p_0_free",
-        "name": "Murphy",
+        "id": "cycle_p_3a9ad8b22613_mpfyvfz5_0_free",
+        "name": "Flanagan",
         "tier": "free",
-        "price": 80,
+        "price": 175,
         "colors": {
-          "shirt": 4380565,
-          "pants": 3115560,
-          "hair": 3434930
+          "shirt": 4380512,
+          "pants": 2648714,
+          "hair": 3880114
         },
-        "tint": 14773654,
-        "character": "char2",
-        "maxCustomSlots": 4,
-        "stackSize": 7,
-        "inventory": {
-          "slots": [
-            {
-              "type": "flare",
-              "count": 4
-            },
-            {
-              "type": "bomb",
-              "count": 3
-            },
-            {
-              "type": "banana",
-              "count": 3
-            },
-            null
-          ]
-        }
-      },
-      {
-        "id": "cycle_p_3a9ad8b22613_mpenf76p_1_free",
-        "name": "Fitzgerald",
-        "tier": "free",
-        "price": 60,
-        "colors": {
-          "shirt": 14107267,
-          "pants": 2656899,
-          "hair": 8139954
-        },
-        "tint": 6849763,
-        "character": "char4",
+        "tint": 14974916,
+        "character": "char1",
         "maxCustomSlots": 4,
         "stackSize": 6,
         "inventory": {
           "slots": [
             {
-              "type": "banana",
+              "type": "ender_pearl",
               "count": 4
             },
             {
-              "type": "delay_tricky",
+              "type": "fart_escape",
               "count": 3
             },
             {
-              "type": "shield",
+              "type": "banana",
               "count": 3
             },
             null
@@ -166,23 +107,55 @@
         }
       },
       {
-        "id": "cycle_p_3a9ad8b22613_mpenf76p_2_paid",
-        "name": "Doc",
-        "tier": "paid",
-        "price": 185,
+        "id": "cycle_p_3a9ad8b22613_mpfyvfz5_1_free",
+        "name": "Regan",
+        "tier": "free",
+        "price": 125,
         "colors": {
-          "shirt": 14107302,
-          "pants": 3877002,
-          "hair": 11700020
+          "shirt": 14140226,
+          "pants": 2636170,
+          "hair": 11678832
         },
-        "tint": 14933139,
-        "character": "char3",
+        "tint": 9366433,
+        "character": "char6",
+        "maxCustomSlots": 4,
+        "stackSize": 6,
+        "inventory": {
+          "slots": [
+            {
+              "type": "bomb",
+              "count": 4
+            },
+            {
+              "type": "flare",
+              "count": 3
+            },
+            {
+              "type": "fart_escape",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_3a9ad8b22613_mpfyvfz5_2_paid",
+        "name": "Maverick",
+        "tier": "paid",
+        "price": 330,
+        "colors": {
+          "shirt": 4380559,
+          "pants": 7022730,
+          "hair": 3421618
+        },
+        "tint": 10932199,
+        "character": "char6",
         "maxCustomSlots": 5,
         "stackSize": 8,
         "inventory": {
           "slots": [
             {
-              "type": "banana",
+              "type": "delay_tricky",
               "count": 5
             },
             {
@@ -190,41 +163,8 @@
               "count": 5
             },
             {
-              "type": "ender_pearl",
-              "count": 4
-            },
-            null,
-            null
-          ]
-        }
-      },
-      {
-        "id": "cycle_p_3a9ad8b22613_mpenf76p_3_paid",
-        "name": "Slim",
-        "tier": "paid",
-        "price": 210,
-        "colors": {
-          "shirt": 14127426,
-          "pants": 2656825,
-          "hair": 11678798
-        },
-        "tint": 9619183,
-        "character": "char7",
-        "maxCustomSlots": 5,
-        "stackSize": 9,
-        "inventory": {
-          "slots": [
-            {
-              "type": "banana",
-              "count": 4
-            },
-            {
-              "type": "bomb_wide",
-              "count": 4
-            },
-            {
-              "type": "delay_tricky",
-              "count": 4
+              "type": "motion_detector_flare",
+              "count": 2
             },
             {
               "type": "flash",
@@ -235,27 +175,23 @@
         }
       },
       {
-        "id": "cycle_p_3a9ad8b22613_mpenf76p_4_paid_expensive",
-        "name": "Nereus",
-        "tier": "paid_expensive",
-        "price": 285,
+        "id": "cycle_p_3a9ad8b22613_mpfyvfz5_3_paid",
+        "name": "Red",
+        "tier": "paid",
+        "price": 305,
         "colors": {
-          "shirt": 14107275,
-          "pants": 2656848,
-          "hair": 3453496
+          "shirt": 6570711,
+          "pants": 8489512,
+          "hair": 3814578
         },
-        "tint": 10547681,
-        "character": "char4",
-        "maxCustomSlots": 6,
-        "stackSize": 11,
+        "tint": 7268559,
+        "character": "char1",
+        "maxCustomSlots": 5,
+        "stackSize": 8,
         "inventory": {
           "slots": [
             {
-              "type": "flare",
-              "count": 4
-            },
-            {
-              "type": "flash",
+              "type": "fart_escape",
               "count": 4
             },
             {
@@ -263,7 +199,47 @@
               "count": 4
             },
             {
-              "type": "bomb_wide",
+              "type": "banana",
+              "count": 4
+            },
+            {
+              "type": "motion_detector_flare",
+              "count": 2
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_3a9ad8b22613_mpfyvfz5_4_paid_expensive",
+        "name": "Perseus",
+        "tier": "paid_expensive",
+        "price": 400,
+        "colors": {
+          "shirt": 13386455,
+          "pants": 5147176,
+          "hair": 11685172
+        },
+        "tint": 15623622,
+        "character": "char4",
+        "maxCustomSlots": 6,
+        "stackSize": 11,
+        "inventory": {
+          "slots": [
+            {
+              "type": "motion_detector_flare",
+              "count": 4
+            },
+            {
+              "type": "bomb",
+              "count": 4
+            },
+            {
+              "type": "flare",
+              "count": 4
+            },
+            {
+              "type": "ender_pearl",
               "count": 4
             },
             null,
@@ -272,29 +248,27 @@
         }
       }
     ],
-    "boughtTemplateIds": [
-      "cycle_p_3a9ad8b22613_mpenf76p_1_free"
-    ]
+    "boughtTemplateIds": []
   },
   "factories": {
     "1": {
-      "firstCycleStartedAt": 1779316853048,
-      "queueLength": 1,
+      "firstCycleStartedAt": 1779397103770,
+      "queueLength": 5,
       "storage": []
     },
     "2": {
-      "firstCycleStartedAt": null,
-      "queueLength": 0,
+      "firstCycleStartedAt": 1779397108977,
+      "queueLength": 2,
       "storage": []
     },
     "3": {
-      "firstCycleStartedAt": 1779317011262,
+      "firstCycleStartedAt": 1779397117280,
       "queueLength": 1,
       "storage": []
     },
     "4": {
-      "firstCycleStartedAt": 1779315816809,
-      "queueLength": 2,
+      "firstCycleStartedAt": 1779397114081,
+      "queueLength": 1,
       "storage": []
     }
   }
