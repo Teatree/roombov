@@ -261,22 +261,30 @@
         "flare",
         "bomb",
         "flare"
-      ]
+      ],
+      "sessionDone": 0,
+      "sessionTotal": 0
     },
     "2": {
       "firstCycleStartedAt": null,
       "queueLength": 0,
-      "storage": []
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
     },
     "3": {
       "firstCycleStartedAt": 1779405962090,
       "queueLength": 1,
-      "storage": []
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 1
     },
     "4": {
       "firstCycleStartedAt": null,
       "queueLength": 0,
-      "storage": []
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
     }
   }
 }

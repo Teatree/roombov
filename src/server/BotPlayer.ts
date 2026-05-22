@@ -308,9 +308,14 @@ export class BotPlayer {
 
     // Target left LOS — chase or guess
     if (this.lastSeenEnemyPos) {
-      // Try throwing a flare toward last seen position
+      // Try throwing a flare toward last seen position. Skip if the lit disc
+      // would cover us — exposing our own position is worse than no flare.
       const flareSlot = this.findSlotWithType(me, 'flare');
-      if (flareSlot >= 0 && this.turnsSinceTargetSeen === 1) {
+      if (
+        flareSlot >= 0 &&
+        this.turnsSinceTargetSeen === 1 &&
+        !this.wouldFlareIlluminateMe(me, this.lastSeenEnemyPos.x, this.lastSeenEnemyPos.y, map)
+      ) {
         return { kind: 'throw', slotIndex: flareSlot, x: this.lastSeenEnemyPos.x, y: this.lastSeenEnemyPos.y };
       }
 
@@ -575,7 +580,9 @@ export class BotPlayer {
   }
 
   private findDarkTarget(me: BombermanState, map: MapData): { x: number; y: number } | null {
-    // Find an unseen tile within throw range (LOS radius)
+    // Find an unseen tile within throw range (LOS radius) whose flare lit-disc
+    // does NOT cover us. The flare uses a radius-4 circle, so naive picks of
+    // nearby tiles tend to light the thrower up — we filter those out.
     const r = BALANCE.match.losRadius;
     const candidates: Array<{ x: number; y: number }> = [];
     for (let dy = -r; dy <= r; dy++) {
@@ -583,11 +590,23 @@ export class BotPlayer {
         const tx = me.x + dx;
         const ty = me.y + dy;
         if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) continue;
-        if (!this.seenTiles.has(`${tx},${ty}`)) candidates.push({ x: tx, y: ty });
+        if (this.seenTiles.has(`${tx},${ty}`)) continue;
+        if (this.wouldFlareIlluminateMe(me, tx, ty, map)) continue;
+        candidates.push({ x: tx, y: ty });
       }
     }
     if (candidates.length === 0) return null;
     return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+
+  /** True if throwing a flare at (tx,ty) would put `me`'s tile inside the lit disc. */
+  private wouldFlareIlluminateMe(
+    me: BombermanState, tx: number, ty: number, map: MapData,
+  ): boolean {
+    const def = BOMB_CATALOG.flare;
+    if (def.behavior.kind !== 'light') return false;
+    const tiles = shapeTiles(def.behavior.shape, tx, ty, map);
+    return tiles.some(t => t.x === me.x && t.y === me.y);
   }
 
   private pickExploreTarget(me: BombermanState, map: MapData): { x: number; y: number } | null {

@@ -553,31 +553,24 @@ export function resolveTurn(
   for (const bomberman of actors) {
     if (!bomberman.alive) continue;
 
-    // Bots ignore treasures entirely — they neither open chests nor loot
-    // bodies, leaving the haul intact for any human who walks over later.
-    const canCollectTreasure = !bomberman.isBot;
-
-    // Chest treasures / coins / keys — auto-collect on walk-over. Bots
-    // skip treasures and coins (intentional), but key pickup still applies
-    // to bots since keys gate the escape hatch. Chest marked opened on first
-    // step; leftover keys remain pickable by later visitors.
+    // Chest treasures / coins / keys — auto-collect on walk-over. Bots clear
+    // the chest the same way humans do: any leftover after a bot visit is
+    // strictly the keys it couldn't fit (cap). Marked opened on first step.
     const chest = state.chests.find(c => c.x === bomberman.x && c.y === bomberman.y);
     if (chest) {
-      if (canCollectTreasure) {
-        if (hasAnyTreasure(chest.treasures)) {
-          const picked: TreasureBundle = { ...chest.treasures };
-          mergeTreasures(bomberman.treasures, picked);
-          events.push({ kind: 'treasures_collected', playerId: bomberman.playerId, treasures: picked });
-          chest.treasures = {};
-        }
-        if (chest.coins > 0) {
-          const amount = chest.coins;
-          bomberman.coins = (bomberman.coins ?? 0) + amount;
-          chest.coins = 0;
-          events.push({ kind: 'coins_picked_up', playerId: bomberman.playerId, amount, x: chest.x, y: chest.y, source: 'chest' });
-        }
+      if (hasAnyTreasure(chest.treasures)) {
+        const picked: TreasureBundle = { ...chest.treasures };
+        mergeTreasures(bomberman.treasures, picked);
+        events.push({ kind: 'treasures_collected', playerId: bomberman.playerId, treasures: picked });
+        chest.treasures = {};
       }
-      // Chest keys — auto-pickup up to cap, regardless of bot status.
+      if (chest.coins > 0) {
+        const amount = chest.coins;
+        bomberman.coins = (bomberman.coins ?? 0) + amount;
+        chest.coins = 0;
+        events.push({ kind: 'coins_picked_up', playerId: bomberman.playerId, amount, x: chest.x, y: chest.y, source: 'chest' });
+      }
+      // Chest keys — auto-pickup up to cap. Leftover stays in the chest for later visitors.
       const keyCap = state.isTutorial ? BALANCE.keys.tutorialRequiredPerHatch : BALANCE.keys.requiredPerHatch;
       while (chest.keys > 0 && (bomberman.keys ?? 0) < keyCap) {
         chest.keys -= 1;
@@ -588,22 +581,20 @@ export function resolveTurn(
     }
 
     // Body treasures + coins — auto-transfer on walk-over (bombs are looted manually via loot panel)
-    if (canCollectTreasure) {
-      const bodyIdx = state.bodies.findIndex(b => b.x === bomberman.x && b.y === bomberman.y);
-      if (bodyIdx >= 0) {
-        const body = state.bodies[bodyIdx];
-        if (hasAnyTreasure(body.treasures)) {
-          const picked: TreasureBundle = { ...body.treasures };
-          mergeTreasures(bomberman.treasures, picked);
-          events.push({ kind: 'body_looted', playerId: bomberman.playerId, bodyId: body.id, treasures: picked });
-          body.treasures = {};
-        }
-        if (body.coins > 0) {
-          const amount = body.coins;
-          bomberman.coins = (bomberman.coins ?? 0) + amount;
-          body.coins = 0;
-          events.push({ kind: 'coins_picked_up', playerId: bomberman.playerId, amount, x: body.x, y: body.y, source: 'body' });
-        }
+    const bodyIdx = state.bodies.findIndex(b => b.x === bomberman.x && b.y === bomberman.y);
+    if (bodyIdx >= 0) {
+      const body = state.bodies[bodyIdx];
+      if (hasAnyTreasure(body.treasures)) {
+        const picked: TreasureBundle = { ...body.treasures };
+        mergeTreasures(bomberman.treasures, picked);
+        events.push({ kind: 'body_looted', playerId: bomberman.playerId, bodyId: body.id, treasures: picked });
+        body.treasures = {};
+      }
+      if (body.coins > 0) {
+        const amount = body.coins;
+        bomberman.coins = (bomberman.coins ?? 0) + amount;
+        body.coins = 0;
+        events.push({ kind: 'coins_picked_up', playerId: bomberman.playerId, amount, x: body.x, y: body.y, source: 'body' });
       }
     }
 

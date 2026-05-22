@@ -19,9 +19,9 @@ export class ActivityIndicator {
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
-    const { width } = scene.scale;
+    const { width, height } = scene.scale;
 
-    this.container = scene.add.container(width - 30, 30);
+    this.container = scene.add.container(width - 60, height - 30);
     this.container.setScrollFactor(0);
     this.container.setDepth(5000);
     this.container.setVisible(false);

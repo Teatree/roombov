@@ -50,3 +50,25 @@ export function createEmptyFactories(): FactoryStates {
     4: emptyFactoryState(),
   };
 }
+
+/**
+ * How many bombs are claimable RIGHT NOW from a single factory, including
+ * cycles that would have completed since `firstCycleStartedAt` if the server
+ * resolved them now. Pure read-only mirror of FactoryService.resolveOne's
+ * counting logic — used by client widgets that want to display a live
+ * claimable-count without waiting for a server-side resolve.
+ */
+export function projectedClaimable(
+  state: FactoryState,
+  cycleDurationMs: number,
+  nowMs: number,
+): number {
+  let count = state.storage.length;
+  if (state.queueLength > 0 && state.firstCycleStartedAt != null) {
+    const elapsed = nowMs - state.firstCycleStartedAt;
+    if (elapsed >= cycleDurationMs) {
+      count += Math.min(state.queueLength, Math.floor(elapsed / cycleDurationMs));
+    }
+  }
+  return count;
+}

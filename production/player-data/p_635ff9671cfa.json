@@ -319,22 +319,30 @@
     "1": {
       "firstCycleStartedAt": null,
       "queueLength": 0,
-      "storage": []
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
     },
     "2": {
       "firstCycleStartedAt": null,
       "queueLength": 0,
-      "storage": []
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
     },
     "3": {
       "firstCycleStartedAt": null,
       "queueLength": 0,
-      "storage": []
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
     },
     "4": {
       "firstCycleStartedAt": null,
       "queueLength": 0,
-      "storage": []
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
     }
   }
 }

@@ -104,7 +104,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     name: 'Ender Pearl',
     fuseTurns: 0,
     behavior: { kind: 'teleport' },
-    price: 200,
+    price: 400,
     description: 'Teleports you to the landing tile. Does not break Rush.',
   },
   fart_escape: {

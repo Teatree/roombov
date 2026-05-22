@@ -2,6 +2,12 @@ import Phaser from 'phaser';
 import type { MapData } from '@shared/types/map.ts';
 import { getSeeThroughTileSet, hasLineOfSight } from '@shared/systems/LineOfSight.ts';
 
+/** Warm cream tint drawn over tiles currently lit by a flare-type source
+ *  (Flare bomb, Motion Detector Flare, Phosphorus reveal, UAV-scattered
+ *  flares). Tunable in place. */
+const FLARE_TINT_COLOR = 0xfff2b0;
+const FLARE_TINT_ALPHA = 0.14;
+
 /**
  * Three-stage per-player line-of-sight fog of war.
  *
@@ -172,6 +178,16 @@ export class FogRenderer {
         }
         this.graphics.fillRect(x * ts, y * ts, ts, ts);
       }
+    }
+
+    // Flare tint: warm overlay on every tile actively lit by a flare-type
+    // source. Drawn last so it sits on top of the dim/unseen overlay.
+    this.graphics.fillStyle(FLARE_TINT_COLOR, FLARE_TINT_ALPHA);
+    for (const key of this.externalReveals) {
+      const [xs, ys] = key.split(',');
+      const x = Number(xs);
+      const y = Number(ys);
+      this.graphics.fillRect(x * ts, y * ts, ts, ts);
     }
   }
 

@@ -6,6 +6,10 @@ import { ensureBombermanAnims, createShopBombermanSprite, preloadBombermanSprite
 import { TreasureListWidget } from '../systems/TreasureListWidget.ts';
 import { preloadTreasureIcons } from '../systems/TreasureIcons.ts';
 import { attachTierInfoBadge } from '../systems/TierInfoBadge.ts';
+import { NotificationBadge } from '../systems/NotificationBadge.ts';
+import { FACTORY_IDS, projectedClaimable } from '@shared/types/factory.ts';
+import { FACTORIES } from '@shared/config/factories.ts';
+import type { PlayerProfile } from '@shared/types/player-profile.ts';
 
 /**
  * Entry point after Boot. Connects to the server, authenticates, and offers
@@ -19,6 +23,8 @@ export class MainMenuScene extends Phaser.Scene {
   private unsubscribe: (() => void) | null = null;
   private activity: ActivityIndicator | null = null;
   private debugFeedback!: Phaser.GameObjects.Text;
+  private factoryBadge: NotificationBadge | null = null;
+  private factoryBadgeTimer: Phaser.Time.TimerEvent | null = null;
 
   constructor() {
     super({ key: 'MainMenuScene' });
@@ -67,6 +73,7 @@ export class MainMenuScene extends Phaser.Scene {
       ['[ FACTORY ]', () => this.scene.start('FactoryScene')],
     ];
 
+    let factoryBtn: Phaser.GameObjects.Text | null = null;
     for (let i = 0; i < buttons.length; i++) {
       const [label, action] = buttons[i];
       const btn = this.add.text(width / 2, 380 + i * 60, label, {
@@ -81,6 +88,23 @@ export class MainMenuScene extends Phaser.Scene {
       btn.on('pointerover', () => btn.setColor('#88ccff'));
       btn.on('pointerout', () => btn.setColor('#44aaff'));
       btn.on('pointerdown', action);
+      if (label === '[ FACTORY ]') factoryBtn = btn;
+    }
+
+    // Factory claim badge — red dot on the Factory button's top-right corner.
+    // Shows the total bombs the player can claim from all factories combined;
+    // hidden when zero. Refreshes on profile updates + a 5s timer so cycles
+    // that complete while the menu is open light up the badge promptly.
+    if (factoryBtn) {
+      const badgeX = factoryBtn.x + factoryBtn.displayWidth / 2 - 4;
+      const badgeY = factoryBtn.y - factoryBtn.displayHeight / 2 + 4;
+      this.factoryBadge = new NotificationBadge(this, badgeX, badgeY);
+      this.refreshFactoryBadge();
+      this.factoryBadgeTimer = this.time.addEvent({
+        delay: 5000,
+        loop: true,
+        callback: () => this.refreshFactoryBadge(),
+      });
     }
 
     // Debug reset — dev-only helper. Wipes the profile clean on the server.
@@ -129,9 +153,24 @@ export class MainMenuScene extends Phaser.Scene {
     this.unsubscribe = null;
     this.activity?.destroy();
     this.activity = null;
+    this.factoryBadge?.destroy();
+    this.factoryBadge = null;
+    this.factoryBadgeTimer?.remove();
+    this.factoryBadgeTimer = null;
     const socket = NetworkManager.getSocket();
     socket.off('connect');
     socket.off('disconnect');
+  }
+
+  /** Sum of projected claimable bombs across all 4 factories. */
+  private refreshFactoryBadge(): void {
+    if (!this.factoryBadge) return;
+    const profile = ProfileStore.get();
+    if (!profile) {
+      this.factoryBadge.setCount(0);
+      return;
+    }
+    this.factoryBadge.setCount(totalClaimable(profile));
   }
 
   private renderProfile(): void {
@@ -145,6 +184,7 @@ export class MainMenuScene extends Phaser.Scene {
 
     this.coinsText.setText(`Coins: ${profile.coins}`);
     this.treasureList.setBundle(profile.treasures);
+    this.refreshFactoryBadge();
 
     // Clear and rebuild the equipped preview
     this.equippedContainer.removeAll(true);
@@ -179,4 +219,14 @@ export class MainMenuScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.equippedContainer.add(label);
   }
+}
+
+/** Sum of bombs claimable from every factory right now (projected forward). */
+function totalClaimable(profile: PlayerProfile): number {
+  const now = Date.now();
+  let total = 0;
+  for (const id of FACTORY_IDS) {
+    total += projectedClaimable(profile.factories[id], FACTORIES[id].cycleDurationMs, now);
+  }
+  return total;
 }

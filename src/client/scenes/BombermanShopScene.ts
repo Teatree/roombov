@@ -291,7 +291,7 @@ export class BombermanShopScene extends Phaser.Scene {
     container.add(bg);
 
     // Tier badge
-    const tierLabel = template.tier === 'free' ? 'FREE'
+    const tierLabel = template.tier === 'free' ? 'CHEAP'
       : template.tier === 'paid' ? 'PAID'
       : 'EXPENSIVE';
     container.add(this.add.text(0, -CARD_HEIGHT / 2 + 14, tierLabel, {

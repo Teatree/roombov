@@ -5,7 +5,13 @@ economy. This document is a self-contained context handoff — share it with
 another Claude instance (Desktop, web, etc.) so it can reason about the project
 without reading the codebase.
 
-Last reviewed against source: 2026-05-04.
+Last reviewed against source: 2026-05-23. Major changes since May 4: the
+**NEW_META reset** (`docs/NEW_META.md`) shipped between May 16-17, which
+shelved Gambler Street, added the **Factory** meta-progression subsystem, added
+**Keys** (escape gate), and put coins into chests so they're earned in-match.
+Per-tier shop pricing was overhauled. May 21 added a hard cap of 2 concurrent
+**Scav** NPCs (a second AI brain alongside the bot) and a hardship discount on
+the Bomberman Shop.
 
 ---
 
@@ -210,7 +216,7 @@ A Bomberman has:
 
 ### The Bomberman Shop (`src/server/BombermanShopService.ts`)
 
-- The shop runs on a **rotating 10-minute cycle** (`SHOP_CYCLE_DURATION_MS`).
+- The shop runs on a **rotating 2-minute cycle** (`SHOP_CYCLE_DURATION_MS`).
 - Each cycle has a fixed composition: **2 free + 2 paid + 1 paid_expensive
   = 5 cards** (`SHOP_CYCLE_COMPOSITION`).
 - Cycle generation is **lazy / on-demand**: any caller that asks for the
@@ -270,9 +276,16 @@ whatever the stockpile allows.
 
 ---
 
-## 8. GAMBLER STREET (the meta loop)
+## 8. GAMBLER STREET (SHELVED post-NEW_META §8)
 
-This is the **primary coin sink-and-source** for the soft economy. The player
+> **Status (2026-05-23):** the Gambler Street scene is unregistered from the
+> client (`main.ts` has the import commented out) and removed from the player
+> flow. The engine/service/config files are preserved for possible revival but
+> are not reachable in the current build. The Factory subsystem (§9) is the
+> active meta loop in its place. The remaining text in this section is the
+> archived spec from May 4 — useful if the system is ever revived.
+
+This was the **primary coin sink-and-source** for the soft economy. The player
 visits a "street" with **5 carousel slots** of NPC gamblers. Each gambler asks
 for some quantity of one specific treasure type. The player can:
 
@@ -432,49 +445,355 @@ yields the same output. Tests pin RNG via `seeded-random.ts`; production uses
 
 ---
 
-## 9. Where things live (cheat sheet)
+## 9. FACTORY (current meta loop)
+
+The Factory replaces Gambler Street as the primary post-match destination.
+It is a single room with **four machines** that convert treasures into bombs
+on a **wall-clock timer** — they keep producing while you're offline. Bombs
+that finish go into the machine's storage; the player visits to claim them
+into their persistent stockpile (`PlayerProfile.bombStockpile`), which is the
+same stockpile the Bombs Shop fills.
+
+- Tuning: `src/shared/config/factories.ts` (`FACTORIES`)
+- Persistent state: `PlayerProfile.factory` (per-machine queue + storage + wall-clock cursor)
+- Server orchestration: `src/server/FactoryService.ts`
+- Client UI: `src/client/scenes/FactoryScene.ts`
+
+### The four machines
+
+| # | Name           | Cycle | Cost (treasures per cycle)           | Bomb pool (weights)                                                            |
+|--:|----------------|------:|--------------------------------------|--------------------------------------------------------------------------------|
+| 1 | SPROKKET-5K    | 5 min | 25 mushrooms                         | bomb 10, delay_tricky 10, ender_pearl 5, flare 10                              |
+| 2 | KLANGWERKS-88  |10 min | 10 coffee + 25 mushrooms             | bomb_wide 10, flash 10, motion_detector_flare 10, shield 5                     |
+| 3 | GLOMBULATOR    |20 min | 10 grapes + 15 coffee                | bomb_wide 5, banana 10, fart_escape 10, cluster_bomb 5, shield 5               |
+| 4 | DETONATORIUM   |30 min | 8 lanterns + 15 grapes + 50 mushrooms| contact 10, molotov 10, phosphorus 10, big_huge 10 (premium / "super" pool)    |
+
+### Flow
+
+1. Player opens the machine pop-up and presses **BUY** to queue **N cycles**.
+   Treasure cost is paid **up-front** (N × cost), so a 3-cycle queue costs 3×
+   the listed cost. There is no refund for cancelling.
+2. Each cycle ticks down by wall-clock ms. When `cycleDurationMs` elapses,
+   the system rolls a bomb from `bombWeights` and pushes it into the machine's
+   **storage**.
+3. The player visits the machine and presses **TAKE ALL** to move storage →
+   `PlayerProfile.bombStockpile`. Same stockpile equipped from the Bombs Shop.
+
+The Main Menu shows a **red badge** on the Factory button summing total
+bombs-claimable across all machines (polls every 5s while the menu is open).
+The Results screen shows the same badge on its Factory shortcut button.
+
+---
+
+## 10. KEYS & ESCAPE HATCHES (in-match)
+
+Added in the NEW_META reset (full spec: `docs/keys-system.md`). The escape
+hatch is no longer a free exit — it is **gated by carrying enough keys**.
+
+- **15 keys** spawn on the map at match start (`BALANCE.keys.totalOnMap`).
+- **3 keys** are required to use an escape hatch (`BALANCE.keys.requiredPerHatch`).
+- The carry cap is **always equal** to the door cost — one knob drives both.
+- Keys lie on the floor; walking onto a key tile picks it up (including any
+  tile traversed during a 2-tile Rush move).
+- Killed Bombermen leave their keys on the body. Walking onto a corpse
+  auto-transfers keys up to the carry cap.
+- On escape, the keys are consumed (set to 0) AND the hatch becomes
+  **broken** (existing rule from `escape-hatch-rework.md`). Broken hatches
+  cannot be used again this match — anyone standing on one sees a red HUD
+  warning.
+- Keys are **match-scoped**: not persisted to `PlayerProfile`, reset every match.
+- Tutorial maps **bypass the key gate** (`state.isTutorial === true`).
+- Bots and Scavs path to keys when they don't have enough, and only target
+  the hatch once carrying enough.
+
+### HUD priority order on the keys/hatch widget
+
+1. **Broken hatch** warning (red) — overrides everything else.
+2. **Need keys** warning (red, pulsating) when standing on a hatch with too few keys.
+3. **Keys at cap** indicator (green, steady) when ready to escape.
+4. **Default** (yellow) — just a key count, e.g. `1/3`.
+
+---
+
+## 11. SCREENS — what the player sees
+
+This section catalogs every visible screen and the function of every element
+on it. Use it for UX/visual design discussions without needing to read scene
+code. Screens are listed in the order a new player encounters them.
+
+> **A note on scene boot order** (`src/client/main.ts:26`): registered scenes
+> are Boot → MainMenu → Lobby → BombermanShop → BombsShop → **Factory** →
+> Match → Results → TutorialOverlay → Tooltip. `GamblerStreetScene` is
+> imported-but-commented-out (see §8). `TutorialOverlayScene` and
+> `TooltipScene` run **in parallel** to other scenes (overlay/HUD layers),
+> not as standalone screens.
+
+### 11.1 BootScene — splash / preload
+
+**Purpose:** asset preloader and the only screen where the player can confirm
+"the game loaded." One click leads into the hub.
+
+| Element | What it does |
+|---------|--------------|
+| `BOMBERMAN` title (large monospace, white) | Branding only |
+| `Turn-based PvP Arena` subtitle (dim gray) | Tagline only |
+| `[START]` button (centered) | Click → MainMenuScene. Hovers brighter. |
+
+**Entry/Exit:** game launch → MainMenu. No back navigation.
+
+### 11.2 MainMenuScene — hub
+
+**Purpose:** the player's home base. From here you can play, browse shops,
+visit the Factory, run the tutorial, and see your profile at a glance.
+
+| Element | What it does |
+|---------|--------------|
+| `BOMBERMAN` header + `Main Menu` subtitle | Branding |
+| **Coins display** (top-center, gold) | Shows `PlayerProfile.coins`. Live-updates from ProfileStore. |
+| **Treasures widget** (top-right) | `TreasureListWidget` — icon + count rows for every treasure type with `> 0`. Pulses on increment. |
+| **Equipped Bomberman preview** (center) | Animated sprite of the currently equipped character. |
+| `[PLAY]` button | → LobbyScene. |
+| `[TUTORIAL]` button | → MatchScene in **offline tutorial mode** (uses `TutorialMatchBackend`). |
+| `[BOMBERMAN SHOP]` button | → BombermanShopScene. |
+| `[BOMBS SHOP]` button | → BombsShopScene. |
+| `[FACTORY]` button | → FactoryScene. |
+| **Factory badge** (red dot on the Factory button) | Total bombs ready to claim across all 4 machines. Refreshes every 5s. Hidden when zero. |
+| **Connection status** (bottom-center, small) | Socket id / "Disconnected" with color feedback. |
+| `[DEBUG: RESET PROFILE]` (bottom-center, small red) | **Dev only.** Wipes profile on the server; shows a "Resetting…" toast then success/error. |
+
+**Entry/Exit:** ← BootScene; → LobbyScene, MatchScene (tutorial),
+BombermanShopScene, BombsShopScene, FactoryScene.
+
+### 11.3 LobbyScene — match carousel
+
+**Purpose:** browse joinable matches, see how full they are and when they
+auto-start, and equip a Bomberman before joining.
+
+| Element | What it does |
+|---------|--------------|
+| `LOBBY` header + `Choose a match` subtitle | Branding |
+| **No-Bomberman warning** (top-center, conditional) | "⚠ No Bomberman equipped — visit the shop first." Hidden once one is equipped. |
+| **Match cards** (horizontal row) | One card per scheduled/active match. Each card shows match id, player count (e.g. `3/4`), auto-start countdown (`mm:ss`), and tier badge. Cards roll in from the right on listing add, animate up + fade on remove. |
+| `[JOIN]` button (per card, not-joined state) | Server-side join request. On success the card flips to the joined state. |
+| `[JOINED]` label + `[UNJOIN]` button (joined state) | Static "joined" label plus a red unjoin button. |
+| **Bomberman selector** (bottom-center) | `BombermanSelector` widget — carousel of owned Bombermen. Click a card to equip it. Hover shows the `TierInfoBadge` (HP, slots, perk). |
+| `[< MENU]` (bottom-left) + Esc | Leaves any joined match and returns to MainMenuScene. |
+| **Connection status** (bottom-center) | Socket connection state. |
+
+**Notable state:** reacts to `match_listings` socket events (pushed ~every
+second); transitions to MatchScene on `match_start`.
+
+### 11.4 BombermanShopScene — character carousel
+
+**Purpose:** spend coins on new characters from a rotating roster. Per-player
+2-minute cycle. Each cycle has 5 cards (2 free + 2 paid + 1 paid_expensive).
+
+| Element | What it does |
+|---------|--------------|
+| `BOMBERMAN SHOP` header | Branding |
+| **Coins counter** (top-right, gold) | `PlayerProfile.coins`. |
+| **Roster counter** (top-left, dim) | `N/5` owned (cap is 5). |
+| **Cycle timer** (top-center, dim) | Counts down to next cycle. On 0, requests the next cycle and re-animates the row. |
+| **Card carousel** (center, 5 cards) | Per card: portrait, name, tier badge, full inventory icons, price + `[BUY]` button (gold if affordable, gray if not). Cards roll in from the right on cycle start; fly off right on purchase or expiry. |
+| **Hardship discount** (per-card, conditional) | If the player owns **zero** Bombermen and the cheapest non-purchased card is unaffordable, that card is **rendered as `FREE`** (price 0) for this player. Implemented server-side, not a UI trick. |
+| **Bomberman selector** (bottom-center) | Same widget as in Lobby — always shows your roster so you can equip what you just bought. |
+| `[< BACK]` (bottom-left) + Esc | → MainMenuScene. |
+| **Toast** (center-bottom, transient) | "Purchased!" / error reasons, auto-clear ~2.5s. |
+
+**Notable state:** each player has their own cycle persisted on
+`profile.bombermanShop`. `shop_cycle` broadcasts on regeneration so the row
+updates live.
+
+### 11.5 BombsShopScene — bomb vendor + equip
+
+**Purpose:** buy individual bombs with coins, then equip them into the
+currently equipped Bomberman's 5 custom slots.
+
+| Element | What it does |
+|---------|--------------|
+| `BOMBS SHOP` header | Branding |
+| **Coins counter** (top-right, gold) | `PlayerProfile.coins`. |
+| **Catalog column** (left) | Vertical list of every `PURCHASABLE_BOMBS` entry: icon, name, short description, price, `[BUY]` button. Buy increments `bombStockpile[type]`. |
+| **Stockpile column** (middle) | Bombs the player owns (count > 0). Click an entry to **select** it (highlight). "(empty — buy some bombs)" placeholder. |
+| **Equipped column** (right) | Current Bomberman's slot row. Slot 0 (Rock, ∞) is locked; slots 1–4 are custom. Click an empty slot to equip the selected stockpile bomb. Click an occupied slot of a different type to swap (old contents flow back to stockpile). |
+| **Bomberman selector** (bottom-center) | Switch equipped Bomberman; the Equipped column re-renders for the new one. |
+| `[< BACK]` (bottom-left) + Esc | → MainMenuScene. |
+| **Toast** (center-bottom, transient) | Purchase/equip outcome, auto-clear ~2s. |
+
+### 11.6 FactoryScene — meta-progression room
+
+**Purpose:** the current primary meta-loop screen. Four machines convert
+treasures into bombs over real wall-clock time.
+
+| Element | What it does |
+|---------|--------------|
+| **Factory background** (full-screen, cover-scaled) | `factory_bg.png` scaled to cover the viewport (origin-centered, no margins). Title/back-button use a stroke + depth=100 so they stay legible over the BG. |
+| **Machine overlay (idle)** | Neutral highlight on each of the 4 machine areas of the background. |
+| **Machine overlay (working)** | Animated overlay shown while a cycle is in progress. |
+| **Status panel** (anchored ~40px above each machine, conditional) | Shows for any machine with an active queue **or** waiting storage. Contains: treasures-spent-so-far icons + counts, progress bar (0–100%), target bomb icon, and a **red corner badge** with the storage count when bombs are waiting. |
+| **Shortcut widget** (smaller variant, conditional) | When storage > 0 but no cycle is active, shows a compact "N bombs ready" notification instead of a full panel. |
+| **Treasure widget** (top-right) | Always-visible `TreasureListWidget` so the player can see what they have to spend without leaving the screen. |
+| **Machine pop-up** (modal, opens on machine click) | Three sections — top-anchored, with a stable container reference (does not re-create per frame): **Commission** (cost breakdown + cycle duration + `[BUY 1]` / `[BUY N]` buttons), **Queue** (active cycle progress + time remaining + queued cycles count), **Storage** (grid of finished bomb icons + counts + `[TAKE ALL]`). `[X]` close button (top-right). |
+| `[< BACK]` (bottom-left) + Esc | → MainMenuScene. |
+
+**Notable state:** server-authoritative (cycle progress derived from
+wall-clock ms stored in `PlayerProfile.factory`). Client predicts the
+progress bar locally for smoothness; next server update is authoritative.
+
+### 11.7 MatchScene — the actual game
+
+**Purpose:** real-time turn-based arena gameplay. Massive scene — the
+designer-relevant elements are the HUD, the world overlays, and the loot UI.
+
+**Top HUD (pinned at top):**
+
+| Element | What it does |
+|---------|--------------|
+| **Phase indicator** (top-left) | `YOUR TURN` (green) / `RESOLVING…` (yellow) / `MATCH OVER` (red). |
+| **Turn timer** (left-center, large bold) | Counts down current input phase in 0.1s steps. |
+| **Turn counter** (top-center) | `Turn N / 250`. Warning color when few turns remain. |
+| **UAV warning** (center, conditional) | `✈ UAV: 18` (turn it fires). Pulsates when 3 turns away. A 3s center-screen banner reads `UAV is Revealing the whole area` when it fires. |
+| **Broken-hatch warning** (top-center, conditional, red) | `This Hatch is Broken, you won't be able to Escape from it`. Overrides the keys warning when both apply. |
+| **Coins counter** (top-right) | In-match coins picked from chests (NEW_META §2). Format: gold circle + `x42`. |
+| **Keys widget** (top-right, below coins) | Small key icon + `N/3`. Color states per §10's priority order — broken (red) > need-keys (red pulse) > at-cap (green) > default (yellow). Hatch tiles near you also show small `N/3` badges. |
+| **HP display** (top-right, below keys) | `HP 2/2` (red when alive, gray when dead). Has a 1-frame delay vs. the sprite so the pip animation reads smoothly. |
+| **Treasures column** (top-right, stacked) | `TreasureListWidget` — persistent stash icons + counts. Pulses on pickup. |
+
+**Bottom HUD (pinned at bottom):**
+
+| Element | What it does |
+|---------|--------------|
+| **Bomb slot tray** (center, 5 slots, 56×56 each, 8px gaps, dark rounded rect bg) | Slot 0 = infinite Rock (∞). Slots 1–4 = equipped bombs with `xN` counts. Each slot has a `1`–`5` keyboard badge bottom-left. Click selects (red border); click a map tile to use/throw. |
+| **Stun overlay** (over the tray, conditional) | Grayed rect + `STUNNED` banner; blocks slot clicks. |
+| **Melee trap icon** (left of tray, conditional) | Small sword icon when in melee-trap (crouching) mode. |
+
+**Loot panel (above the bomb tray, conditional):**
+
+| Element | What it does |
+|---------|--------------|
+| `LOOTING` header (green) | Shown when standing on a tile with chest/body loot. |
+| **Per-source rows** | Chest row (`CHEST (TIER N)`) and/or body row (`BODY LOOT`). Each row shows bomb icons + counts scaled to the source's slot count. Click a slot to swap with your selected stockpile bomb. |
+| **Stash row** (smallest, optional) | Echoes your current custom slots so you can see what you're swapping out. |
+
+**World overlays (drawn into the world, not the HUD):**
+
+| Element | What it does |
+|---------|--------------|
+| **Fog of war** | Semi-transparent dark overlay outside line-of-sight (radius 5). |
+| **Flare light** | Blue light radius from active flare bombs. |
+| **Walk-target circle** (blue) | Hovered destination tile in movement mode. |
+| **Throw-target X** (red) | Targeted tile in throw-aim mode. |
+| **Lock badges on hatches** | Small `N/3` over hatch tiles within sight. |
+| **Chest/door/hatch interactives** | Click to walk-and-interact (resolver handles approach + use). |
+| **Bomberman sprites** | Animated characters with HP pips, status icons (stunned, bleeding), and pop-up damage numbers. |
+| **Dropped bodies** | Corpse sprites with a small loot indicator if they hold anything. |
+| **Active bombs / explosions / smoke / mines** | Visualized by `BombRenderer` per `BOMB_CATALOG` shape. |
+
+**Notable state:** `MatchScene` talks only to a `MatchBackend` interface, so
+all of the above renders identically whether the source is a real socket
+match (`SocketMatchBackend`) or an offline scripted tutorial
+(`TutorialMatchBackend`).
+
+### 11.8 ResultsScene — post-match recap
+
+**Purpose:** show what happened and route the player to their next meta
+action (Lobby for another match, or a shop/Factory to spend/claim).
+
+| Element | What it does |
+|---------|--------------|
+| **Outcome title** (large, top) | `ESCAPED` (green) / `DIED` (red) / `LOST` (red, ran out turn limit). |
+| **Treasures Gathered** (escape only) | Horizontal row of icons + counts gained this match. |
+| **Items Kept** (escape only) | Bomb icons + counts from the loadout carried out. |
+| **Kill count** (escape only) | `Bombermen eliminated: N` if > 0. |
+| **Turns survived** (always, dim) | `Turns survived: N`. |
+| **R.I.P. line** (death only) | `R.I.P. [name]` + `Killed by: [killer]` (or "in action"). |
+| `[BACK TO LOBBY]` (primary) | → LobbyScene. |
+| `[FACTORY]` (shortcut, small) | → FactoryScene. Shows the same claim-count badge as the main menu. |
+| `[BOMBS SHOP]` (shortcut, small) | → BombsShopScene. |
+
+### 11.9 TutorialOverlayScene — scripted-tutorial overlay
+
+**Purpose:** parallel overlay on top of MatchScene only in tutorial mode.
+Renders dialogue, pause screens, input blocking, and highlight reticles for
+beats driven by `TutorialDirector`.
+
+| Element | What it does |
+|---------|--------------|
+| **Dialogue panel** (bottom-right, 420×160) | Dark rect + blue stroke. Left: 128×128 portrait. Right: text (~200 chars wrapped). Footer: `Click to Continue` (italic blue). Click to advance. |
+| **Pause screen** (full-screen) | Dim overlay + centered message + `Click to Continue`. Click/Esc resumes. |
+| **HUD highlights** (pulsing, screen-space) | Orange/blue pulsing box around UI elements (e.g. bomb slot 1, treasure widget). |
+| **World highlights** (pulsing, world-space) | Circle (walk target), `X` (throw target), or box (region), transformed through the main camera. |
+| **Flash hint** (red, transient) | Brief red rect on wrong input. Fades in ~0.3s. |
+| **Input blocker** (transparent full-screen) | Intercepts clicks while dialogue or pause is open so the player can't accidentally trigger gameplay. |
+
+**Notable state:** scene runs in parallel to MatchScene; lifecycle is tied to
+the tutorial backend.
+
+### 11.10 TooltipScene — global hover tooltip
+
+**Purpose:** floating context tooltip that follows the cursor and is shared
+across all scenes.
+
+| Element | What it does |
+|---------|--------------|
+| **Floating box** (dark bg, accent border, autosizes) | Shows the contextual blurb for the hovered element. Repositions to stay on-screen and avoid the cursor. |
+| **HUD tooltips** | Bomb name + description; key cost; treasure type label. |
+| **Map tooltips** | "Walk here"; "Chest — bombs inside (Tier N)"; "Escape hatch — need 3 keys"; "Broken hatch — you cannot escape from here"; "UAV fires in N turns". |
+| **Suppression** | Hidden during tutorial dialogue/pause, throw-aim mode, and any full-screen overlay (rule confirmed for the FULL tutorial, not just dialogue). |
+
+**Notable state:** `MatchScene.refreshTooltip(x, y)` queries
+`getTooltipAt(screenX, screenY)` whenever the cursor moves and forwards the
+result to this scene.
+
+---
+
+## 12. Where things live (cheat sheet)
 
 ```
 src/shared/config/
   bombs.ts             # BOMB_CATALOG, PURCHASABLE_BOMBS, phosphorus pattern
-  balance.ts           # all global tuning (HP, fuse durations, rush, etc.)
-  chests.ts            # tier 1 / tier 2 chest loot tables
-  bomberman-tiers.ts   # free / paid / paid_expensive shop config
+  balance.ts           # all global tuning (HP, fuse durations, rush, keys, etc.)
+  chests.ts            # tier 1 / tier 2 chest loot tables (now includes coins + keys)
+  bomberman-tiers.ts   # free / paid / paid_expensive shop config (2-min cycle)
   bomberman-names.ts   # name pools per tier
   treasures.ts         # 10 treasure types, sprite indices, helpers
-  gambler-street.ts    # gambler global params + per-treasure tuning + names
+  factories.ts         # FACTORIES — the 4 Factory machines, costs, cycles, pools
+  gambler-street.ts    # SHELVED — gambler tuning (file preserved, not reachable)
 
 src/shared/systems/
   TurnResolver.ts      # PURE 11-step turn resolution
   BombResolver.ts      # bomb shape geometry / raycast
   LineOfSight.ts       # tile LoS with wall blocking
   Pathfinding.ts       # bot pathfinding
-  GamblerStreetEngine.ts  # PURE — tick, generate, computeCoinReward, resolveBet
+  GamblerStreetEngine.ts  # SHELVED — PURE engine (preserved, not reachable)
 
 src/server/
   GameServer.ts            # socket event map, owns scheduler+rooms+services
   MatchScheduler.ts        # lobby carousel of joinable matches
   MatchRoom.ts             # one per active match; runs resolveTurn each turn
-  BombermanShopService.ts  # 10-min cycle, 5-card carousel, buy/equip
+  BombermanShopService.ts  # 2-min cycle, 5-card carousel, buy/equip, hardship discount
   BombsShopService.ts      # flat catalog, stockpile, equip-to-slot
-  GamblerStreetService.ts  # gambler carousel orchestration
+  FactoryService.ts        # Factory orchestration — queue, tick, claim, persist
+  GamblerStreetService.ts  # SHELVED — gambler carousel (preserved, not wired)
   BotPlayer.ts             # bot AI as a behaviour tree (see docs/bot-behavior.md)
+  ScavPlayer.ts            # Scav NPC AI — second brain, hard-capped at 2 alive
   PlayerStore.ts           # JSON file persistence for PlayerProfile
 
 src/client/
   scenes/                  # Phaser scenes — Boot, MainMenu, Lobby,
-                           # BombermanShop, BombsShop, Match, Results,
-                           # GamblerStreet, GamblerStreetPopup, Tooltip,
-                           # TutorialOverlay
+                           # BombermanShop, BombsShop, Factory, Match, Results,
+                           # TutorialOverlay, Tooltip
+                           # GamblerStreetScene exists but is unregistered
   systems/                 # MapRenderer, BombRenderer, FogRenderer,
-                           # ShieldRenderer, BombermanSpriteSystem, etc.
+                           # ShieldRenderer, BombermanSpriteSystem,
+                           # TreasureListWidget, TierInfoBadge, etc.
   backends/                # MatchBackend interface + Socket / Tutorial impls
   tutorial/                # scripted tutorial — TutorialDirector + script
 ```
 
 ---
 
-## 10. Conventions worth knowing before reading code
+## 13. Conventions worth knowing before reading code
 
 - **`.ts` import extensions are required everywhere** (ESM + tsx).
 - **Path aliases**: `@shared/*`, `@client/*` in client code. Inside `src/shared/`

@@ -3,6 +3,10 @@ import { NetworkManager } from '../NetworkManager.ts';
 import { type TreasureBundle, hasAnyTreasure } from '@shared/config/treasures.ts';
 import { TreasureListWidget } from '../systems/TreasureListWidget.ts';
 import { createBombIcon } from '../systems/BombIcons.ts';
+import { NotificationBadge } from '../systems/NotificationBadge.ts';
+import { ProfileStore } from '../ClientState.ts';
+import { FACTORY_IDS, projectedClaimable } from '@shared/types/factory.ts';
+import { FACTORIES } from '@shared/config/factories.ts';
 import type { BombType } from '@shared/types/bombs.ts';
 
 export interface MatchResultsData {
@@ -187,6 +191,46 @@ export class ResultsScene extends Phaser.Scene {
     playBtn.on('pointerover', () => playBtn.setColor('#88ccff'));
     playBtn.on('pointerout', () => playBtn.setColor('#44aaff'));
     playBtn.on('pointerdown', () => this.backToLobby());
+
+    // Shortcut buttons — Factory + Bombs Shop, sitting under the lobby button
+    // so a player can detour straight to spend/produce before re-queueing.
+    const shortcutY = height * 0.92;
+    const shortcutGap = 24;
+    const shortcutStyle: Phaser.Types.GameObjects.Text.TextStyle = {
+      fontSize: '16px', color: '#44aaff', fontFamily: 'monospace',
+      backgroundColor: '#1a1a2a', padding: { x: 14, y: 6 },
+    };
+    const factoryBtn = this.add.text(0, 0, '[ FACTORY ]', shortcutStyle).setOrigin(0.5);
+    const bombsBtn = this.add.text(0, 0, '[ BOMBS SHOP ]', shortcutStyle).setOrigin(0.5);
+    const totalW = factoryBtn.width + shortcutGap + bombsBtn.width;
+    factoryBtn.setPosition(width / 2 - totalW / 2 + factoryBtn.width / 2, shortcutY);
+    bombsBtn.setPosition(width / 2 + totalW / 2 - bombsBtn.width / 2, shortcutY);
+
+    for (const [btn, target] of [[factoryBtn, 'FactoryScene'], [bombsBtn, 'BombsShopScene']] as const) {
+      btn.setInteractive({ useHandCursor: true });
+      btn.on('pointerover', () => btn.setColor('#88ccff'));
+      btn.on('pointerout', () => btn.setColor('#44aaff'));
+      btn.on('pointerdown', () => {
+        NetworkManager.getSocket().emit('leave_match');
+        this.scene.start(target);
+      });
+    }
+
+    // Factory claim badge — only shown when claimable bombs > 0. The results
+    // screen is short-lived so a one-shot compute is enough (no timer).
+    const profile = ProfileStore.get();
+    if (profile) {
+      const now = Date.now();
+      let claimable = 0;
+      for (const id of FACTORY_IDS) {
+        claimable += projectedClaimable(profile.factories[id], FACTORIES[id].cycleDurationMs, now);
+      }
+      if (claimable > 0) {
+        const badgeX = factoryBtn.x + factoryBtn.displayWidth / 2 - 4;
+        const badgeY = factoryBtn.y - factoryBtn.displayHeight / 2 + 4;
+        new NotificationBadge(this, badgeX, badgeY).setCount(claimable);
+      }
+    }
 
     this.input.keyboard?.on('keydown-ESC', () => this.backToLobby());
   }

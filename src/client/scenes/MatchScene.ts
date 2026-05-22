@@ -245,6 +245,29 @@ export class MatchScene extends Phaser.Scene {
     memoryBroken: boolean;
   }> = [];
 
+  /** One badge per escape tile — lock icon + "N/3" text floating above the
+   *  hatch. Visible only while the local bomberman is on or Chebyshev-adjacent
+   *  to that hatch, the hatch is not broken, and keys < cap. */
+  private lockBadges: Array<{
+    x: number; y: number;
+    container: Phaser.GameObjects.Container;
+    text: Phaser.GameObjects.Text;
+  }> = [];
+
+  /** Yoyo pulse tween running on the HUD key icon while the local player
+   *  stands on a short-of-keys hatch. Stopped (and nulled) when the condition
+   *  clears. */
+  private keyHudPulseTween: Phaser.Tweens.Tween | null = null;
+
+  /** "Ready to escape" floating banner above the local player's head. Lazy
+   *  created on first show; toggled via setVisible. */
+  private escapeBanner: Phaser.GameObjects.Container | null = null;
+  /** Yoyo pulse on the escape banner; paused/resumed alongside visibility. */
+  private escapeBannerPulseTween: Phaser.Tweens.Tween | null = null;
+  /** Circular progress ring drawn around the local player while ready-to-escape;
+   *  fills clockwise over the input phase. */
+  private escapeRing: Phaser.GameObjects.Graphics | null = null;
+
   // Chest animated sprites (persistent, like escape hatches)
   private chestSprites: Array<{
     id: string; x: number; y: number; tier: 1 | 2 | 3;
@@ -641,6 +664,18 @@ export class MatchScene extends Phaser.Scene {
     this.lastBuiltSlotCount = -1;
     for (const esc of this.escapeSprites) esc.sprite.destroy();
     this.escapeSprites = [];
+    for (const b of this.lockBadges) b.container.destroy();
+    this.lockBadges = [];
+    this.keyHudPulseTween?.stop();
+    this.keyHudPulseTween?.remove();
+    this.keyHudPulseTween = null;
+    this.escapeBannerPulseTween?.stop();
+    this.escapeBannerPulseTween?.remove();
+    this.escapeBannerPulseTween = null;
+    this.escapeBanner?.destroy();
+    this.escapeBanner = null;
+    this.escapeRing?.destroy();
+    this.escapeRing = null;
     for (const s of this.keySprites.values()) s.destroy();
     this.keySprites = new Map();
     this.keyMemory = new Map();
@@ -661,6 +696,9 @@ export class MatchScene extends Phaser.Scene {
     this.bombermanSpriteSystem?.tick(time);
 
     if (!this.state) return;
+
+    // Update ready-to-escape feedback (banner above head + progress ring)
+    this.updateEscapeReadyIndicator();
 
     // Camera follow: snap to the local player's tile center every frame.
     // Skips if the player has escaped (sprite is gone) so the last framing
@@ -718,6 +756,8 @@ export class MatchScene extends Phaser.Scene {
         // at its native resolution so pixels stay crisp.
         for (const spr of this.escapeSprites) spr.sprite.destroy();
         this.escapeSprites = [];
+        for (const b of this.lockBadges) b.container.destroy();
+        this.lockBadges = [];
         const mapTs = this.mapData.tileSize;
         for (const esc of this.mapData.escapeTiles) {
           // Anchor: horizontally centered, bottom of sprite aligned to bottom
@@ -734,6 +774,26 @@ export class MatchScene extends Phaser.Scene {
           sprite.play('hatch_closed');
           if (this.hudCamera) this.hudCamera.ignore(sprite);
           this.escapeSprites.push({ x: esc.x, y: esc.y, sprite, state: 'intact', memoryBroken: false });
+
+          // Lock badge — floats above the hatch. Hidden by default; renderHud
+          // toggles visibility based on local-player adjacency + key shortfall.
+          // Uses the same key sprite used everywhere else for consistency.
+          const badgeCx = esc.x * mapTs + mapTs / 2;
+          const badgeCy = esc.y * mapTs - 14;
+          const badge = this.add.container(badgeCx, badgeCy).setDepth(120).setVisible(false);
+          const bg = this.add.graphics();
+          bg.fillStyle(0x0a0a14, 0.85);
+          bg.fillRoundedRect(-15, -8, 30, 15, 3);
+          bg.lineStyle(1, 0xff5555, 1);
+          bg.strokeRoundedRect(-15, -8, 30, 15, 3);
+          const keyIcon = this.add.image(-7, 0, 'key').setDisplaySize(9, 9);
+          const txt = this.add.text(2, 0, '0/3', {
+            fontSize: '6px', color: '#ff8888', fontFamily: 'Arial, sans-serif', fontStyle: 'bold',
+            stroke: '#000000', strokeThickness: 1,
+          }).setOrigin(0, 0.5);
+          badge.add([bg, keyIcon, txt]);
+          if (this.hudCamera) this.hudCamera.ignore(badge);
+          this.lockBadges.push({ x: esc.x, y: esc.y, container: badge, text: txt });
         }
         // Initial chest-sprite build — subsequent syncs happen below on every
         // state update so tutorial-spawned chests also get sprites.
@@ -1629,28 +1689,185 @@ export class MatchScene extends Phaser.Scene {
     });
   }
 
-  /** Floating "+1 [key]" popup mirroring the treasure pickup VFX. */
+  /** Beefier "+KEY" popup — bigger icon, distinct cyan/teal text and longer
+   *  hang time so it isn't lost in the swarm of coin/treasure popups at the
+   *  same tile. Also spawns a flying-to-HUD icon that triggers the HUD key
+   *  counter pulse on arrival. */
   private spawnKeyPopup(worldX: number, worldY: number): void {
-    const POPUP_ICON = 22;
-    const c = this.add.container(worldX, worldY).setDepth(500).setAlpha(0);
-    const icon = this.add.image(0, -8, 'key').setDisplaySize(POPUP_ICON, POPUP_ICON);
-    const text = this.add.text(0, 12, '+1', {
-      fontSize: '16px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
-      stroke: '#000000', strokeThickness: 3,
+    const POPUP_ICON = 36;
+    const c = this.add.container(worldX, worldY).setDepth(500).setAlpha(0).setScale(0.6);
+    const icon = this.add.image(0, -10, 'key').setDisplaySize(POPUP_ICON, POPUP_ICON);
+    const text = this.add.text(0, 16, '+KEY', {
+      fontSize: '20px', color: '#88ddff', fontFamily: 'monospace', fontStyle: 'bold',
+      stroke: '#000022', strokeThickness: 4,
     }).setOrigin(0.5, 0.5);
-    c.add(icon);
-    c.add(text);
+    c.add([icon, text]);
     if (this.hudCamera) this.hudCamera.ignore(c);
-    this.tweens.add({ targets: c, alpha: 1, duration: 120 });
+    // Punch in, then rise + fade. Longer hang than the treasure popup so the
+    // key reads as a distinct event.
+    this.tweens.add({ targets: c, alpha: 1, scale: 1, duration: 160, ease: 'Back.easeOut' });
     this.tweens.add({
       targets: c,
-      y: worldY - 40,
+      y: worldY - 56,
       alpha: 0,
-      duration: 1200,
-      delay: 120,
+      duration: 1800,
+      delay: 200,
       ease: 'Cubic.easeOut',
       onComplete: () => c.destroy(),
     });
+
+    // Flying icon: arcs from the pickup tile up to the HUD key counter, then
+    // triggers the HUD pulse on arrival. Snapshotted endpoint — slight drift
+    // is fine if the world camera moves during the ~700ms flight.
+    this.spawnKeyFlightToHud(worldX, worldY);
+  }
+
+  /** Arc a small key icon from a world position to the HUD key counter,
+   *  pulse the counter on arrival. Uses a quadratic Bezier so it visibly
+   *  travels along a curve rather than a straight line. */
+  private spawnKeyFlightToHud(worldX: number, worldY: number): void {
+    if (!this.keysHudIcon) return;
+    const cam = this.cameras.main;
+    const target = cam.getWorldPoint(this.keysHudIcon.x, this.keysHudIcon.y);
+    const start = new Phaser.Math.Vector2(worldX, worldY - 16);
+    const end = new Phaser.Math.Vector2(target.x, target.y);
+    const midX = (start.x + end.x) / 2;
+    const midY = Math.min(start.y, end.y) - 80;
+    const curve = new Phaser.Curves.QuadraticBezier(
+      start,
+      new Phaser.Math.Vector2(midX, midY),
+      end,
+    );
+    const icon = this.add.image(start.x, start.y, 'key').setDisplaySize(24, 24).setDepth(600);
+    if (this.hudCamera) this.hudCamera.ignore(icon);
+    const t = { p: 0 };
+    const point = new Phaser.Math.Vector2();
+    this.tweens.add({
+      targets: t,
+      p: 1,
+      duration: 700,
+      ease: 'Cubic.easeIn',
+      onUpdate: () => {
+        curve.getPoint(t.p, point);
+        icon.setPosition(point.x, point.y);
+      },
+      onComplete: () => {
+        icon.destroy();
+        this.pulseKeyHud();
+      },
+    });
+  }
+
+  /** Briefly scale the HUD key icon + count text up and back. Fires when a
+   *  flying-to-HUD icon arrives, so the eye is drawn to the counter at the
+   *  exact moment the number bumps. */
+  private pulseKeyHud(): void {
+    // Skip while the standing-on-short-hatch pulse is running so we don't
+    // stack tweens on the same target (they'd fight over the scale value).
+    if (this.keyHudPulseTween) return;
+    if (!this.keysHudIcon || !this.keysHudText) return;
+    this.tweens.add({
+      targets: [this.keysHudIcon, this.keysHudText],
+      scale: 1.6,
+      duration: 140,
+      yoyo: true,
+      ease: 'Quad.easeOut',
+    });
+  }
+
+  /** Per-frame driver for the ready-to-escape feedback: a compact banner
+   *  above the local player's head + a clockwise-filling progress ring at
+   *  their feet. Visible only during the input phase, on an unbroken hatch,
+   *  with keys >= cap. Lazily creates the GameObjects on first show. */
+  private updateEscapeReadyIndicator(): void {
+    if (!this.state || !this.mapData) {
+      this.setEscapeIndicatorVisible(false);
+      return;
+    }
+    const me = this.state.bombermen.find(b => b.playerId === this.myPlayerId);
+    if (!me || !me.alive || me.escaped) {
+      this.setEscapeIndicatorVisible(false);
+      return;
+    }
+    const onHatch = this.state.escapeTiles.some(t => t.x === me.x && t.y === me.y);
+    const onBroken = this.state.brokenHatches.some(t => t.x === me.x && t.y === me.y);
+    const cap = BALANCE.keys.requiredPerHatch;
+    const heldKeys = me.keys ?? 0;
+    const ready = onHatch && !onBroken && heldKeys >= cap && this.state.phase === 'input';
+    if (!ready) {
+      this.setEscapeIndicatorVisible(false);
+      return;
+    }
+
+    this.ensureEscapeIndicator();
+    const ts = this.mapData.tileSize;
+    const cx = me.x * ts + ts / 2;
+    const cy = me.y * ts + ts / 2;
+    this.escapeBanner!.setPosition(cx, cy - ts * 0.9);
+
+    // Ring fill: progress through the input phase. phaseEndsAt is wall-clock
+    // ms; inputPhaseSeconds drives the assumed duration.
+    const phaseDuration = BALANCE.match.inputPhaseSeconds * 1000;
+    const remaining = Math.max(0, this.state.phaseEndsAt - Date.now());
+    const progress = Math.max(0, Math.min(1, 1 - remaining / phaseDuration));
+    const g = this.escapeRing!;
+    g.clear();
+    const radius = ts * 0.55;
+    // Faint backing ring so the partially-filled arc still reads as a circle.
+    g.lineStyle(2, 0x224422, 0.55);
+    g.strokeCircle(cx, cy, radius);
+    if (progress > 0) {
+      g.lineStyle(3, 0x44ff88, 1);
+      g.beginPath();
+      const start = -Math.PI / 2;
+      g.arc(cx, cy, radius, start, start + progress * Math.PI * 2, false);
+      g.strokePath();
+    }
+  }
+
+  /** Lazy-create the escape banner + ring (hidden). Idempotent. */
+  private ensureEscapeIndicator(): void {
+    if (this.escapeBanner) return;
+    // Compact pill: 44×10, dark green fill + thin green outline.
+    const c = this.add.container(0, 0).setDepth(180);
+    const bg = this.add.graphics();
+    bg.fillStyle(0x0a3a18, 0.85);
+    bg.fillRoundedRect(-22, -5, 44, 10, 2);
+    bg.lineStyle(1, 0x44ff88, 1);
+    bg.strokeRoundedRect(-22, -5, 44, 10, 2);
+    const txt = this.add.text(0, 0, 'STAY TO ESCAPE', {
+      fontSize: '4px', color: '#88ffaa', fontFamily: 'Arial, sans-serif', fontStyle: 'bold',
+      stroke: '#000000', strokeThickness: 1,
+    }).setOrigin(0.5, 0.5);
+    c.add([bg, txt]);
+    if (this.hudCamera) this.hudCamera.ignore(c);
+    this.escapeBanner = c;
+    this.escapeBannerPulseTween = this.tweens.add({
+      targets: c,
+      scale: 1.08,
+      duration: 600,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+
+    const ring = this.add.graphics().setDepth(15);
+    if (this.hudCamera) this.hudCamera.ignore(ring);
+    this.escapeRing = ring;
+  }
+
+  /** Toggle visibility for the escape indicator pair, pausing/resuming the
+   *  banner pulse to keep it from running invisibly. */
+  private setEscapeIndicatorVisible(visible: boolean): void {
+    if (this.escapeBanner) {
+      this.escapeBanner.setVisible(visible);
+      if (visible) this.escapeBannerPulseTween?.resume();
+      else this.escapeBannerPulseTween?.pause();
+    }
+    if (this.escapeRing) {
+      this.escapeRing.setVisible(visible);
+      if (!visible) this.escapeRing.clear();
+    }
   }
 
   /** Floating "+N [icon]" treasure popup that rises and fades out. Staggered
@@ -2862,30 +3079,75 @@ export class MatchScene extends Phaser.Scene {
     // Hatch warning text: broken (precedence) or needs-keys. Visible only
     // while the local player is alive, not escaped, and standing on a
     // hatch tile.
+    const meForHatch = this.state.bombermen.find(b => b.playerId === this.myPlayerId);
+    const aliveLocal = !!meForHatch && meForHatch.alive && !meForHatch.escaped;
+    const onHatch = aliveLocal &&
+      this.state.escapeTiles.some(t => t.x === meForHatch.x && t.y === meForHatch.y);
+    const onBroken = onHatch &&
+      this.state.brokenHatches.some(t => t.x === meForHatch.x && t.y === meForHatch.y);
+    const cap = BALANCE.keys.requiredPerHatch;
+    const heldKeys = meForHatch?.keys ?? 0;
+    const onShortHatch = onHatch && !onBroken && heldKeys < cap;
+
     if (this.brokenHatchText) {
-      const me = this.state.bombermen.find(b => b.playerId === this.myPlayerId);
-      const onHatch = !!me && me.alive && !me.escaped &&
-        this.state.escapeTiles.some(t => t.x === me.x && t.y === me.y);
-      const onBroken = !!me && onHatch &&
-        this.state.brokenHatches.some(t => t.x === me.x && t.y === me.y);
-      const cap = BALANCE.keys.requiredPerHatch;
-      const heldKeys = me?.keys ?? 0;
       if (onBroken) {
         this.brokenHatchText.setText('This Hatch is Broken, you won’t be able to Escape from it');
         this.brokenHatchText.setVisible(true);
-      } else if (onHatch && heldKeys < cap) {
-        this.brokenHatchText.setText(`This Hatch requires ${heldKeys}/${cap} keys`);
+      } else if (onShortHatch) {
+        this.brokenHatchText.setText(`Keys ${heldKeys}/${cap} — loot chests for more`);
         this.brokenHatchText.setVisible(true);
       } else {
         this.brokenHatchText.setVisible(false);
       }
     }
 
-    // Keys counter text — always visible, reflects local bomberman's keys.
-    if (this.keysHudText) {
-      const me = this.state.bombermen.find(b => b.playerId === this.myPlayerId);
-      const heldKeys = me?.keys ?? 0;
-      this.keysHudText.setText(`${heldKeys}/${BALANCE.keys.requiredPerHatch}`);
+    // Lock badges — show on hatches the local bomberman is on or
+    // Chebyshev-adjacent to, when keys < cap and that hatch is not broken.
+    for (const badge of this.lockBadges) {
+      const broken = this.state.brokenHatches.some(t => t.x === badge.x && t.y === badge.y);
+      const near = aliveLocal &&
+        Math.max(Math.abs(meForHatch.x - badge.x), Math.abs(meForHatch.y - badge.y)) <= 1;
+      const show = near && !broken && heldKeys < cap;
+      badge.container.setVisible(show);
+      if (show) badge.text.setText(`${heldKeys}/${cap}`);
+    }
+
+    // Keys counter: count text, color, and pulse. Three states:
+    //   - on a short hatch  → red + pulse (you need keys NOW)
+    //   - at cap            → green steady (you can escape)
+    //   - otherwise         → default yellow
+    if (this.keysHudText && this.keysHudIcon) {
+      this.keysHudText.setText(`${heldKeys}/${cap}`);
+      const atCap = heldKeys >= cap;
+      if (onShortHatch) {
+        this.keysHudText.setColor('#ff5555');
+        this.keysHudIcon.setTint(0xff8888);
+        if (!this.keyHudPulseTween) {
+          this.keyHudPulseTween = this.tweens.add({
+            targets: [this.keysHudIcon, this.keysHudText],
+            scale: 1.25,
+            duration: 380,
+            yoyo: true,
+            repeat: -1,
+            ease: 'Sine.easeInOut',
+          });
+        }
+      } else {
+        if (this.keyHudPulseTween) {
+          this.keyHudPulseTween.stop();
+          this.keyHudPulseTween.remove();
+          this.keyHudPulseTween = null;
+          this.keysHudIcon.setScale(1);
+          this.keysHudText.setScale(1);
+        }
+        if (atCap) {
+          this.keysHudText.setColor('#44ff88');
+          this.keysHudIcon.setTint(0x88ff88);
+        } else {
+          this.keysHudText.setColor('#ffd944');
+          this.keysHudIcon.clearTint();
+        }
+      }
     }
 
     // UAV countdown + throb starting 3 turns out. Hidden in tutorial matches
