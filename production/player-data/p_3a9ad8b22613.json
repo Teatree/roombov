@@ -1,12 +1,12 @@
 {
   "id": "p_3a9ad8b22613",
   "createdAt": 1779350893447,
-  "updatedAt": 1779492910858,
+  "updatedAt": 1779568932893,
   "coins": 3821,
   "treasures": {
     "coffee": 88,
     "lanterns": 35,
-    "mushrooms": 48,
+    "mushrooms": 23,
     "grapes": 30
   },
   "ownedBombermen": [
@@ -93,19 +93,19 @@
   ],
   "equippedBombermanId": "owned_p_3a9ad8b22613_1779491455881_dmjf",
   "bombStockpile": {
-    "delay_tricky": 12,
+    "delay_tricky": 13,
     "motion_detector_flare": 5,
-    "flash": 4,
+    "flash": 5,
     "banana": 1,
     "big_huge": 1,
     "fart_escape": 6,
-    "bomb": 4,
-    "bomb_wide": 7,
+    "bomb": 5,
+    "bomb_wide": 8,
     "shield": 2,
-    "flare": 7,
+    "flare": 9,
     "contact": 1,
     "cluster_bomb": 1,
-    "ender_pearl": 2
+    "ender_pearl": 3
   },
   "gamblerStreet": {
     "gamblers": [],
@@ -120,32 +120,100 @@
     "nextGamblerSerial": 1
   },
   "bombermanShop": {
-    "cycleId": "cycle_p_3a9ad8b22613_mphjorn2",
-    "startedAt": 1779492161774,
-    "endsAt": 1779492281774,
+    "cycleId": "cycle_p_3a9ad8b22613_mpitacqv",
+    "startedAt": 1779568751623,
+    "endsAt": 1779568871623,
     "bombermen": [
       {
-        "id": "cycle_p_3a9ad8b22613_mphjorn2_0_free",
+        "id": "cycle_p_3a9ad8b22613_mpitacqv_0_free",
         "name": "Delaney",
         "tier": "free",
-        "price": 185,
+        "price": 175,
         "colors": {
-          "shirt": 14115138,
-          "pants": 2656840,
-          "hair": 6599220
+          "shirt": 4343511,
+          "pants": 4925578,
+          "hair": 10531380
         },
-        "tint": 16172694,
-        "character": "char2",
+        "tint": 15630164,
+        "character": "char4",
         "maxCustomSlots": 4,
         "stackSize": 6,
         "inventory": {
           "slots": [
             {
-              "type": "flare",
+              "type": "bomb",
               "count": 4
             },
             {
+              "type": "shield",
+              "count": 3
+            },
+            {
+              "type": "fart_escape",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_3a9ad8b22613_mpitacqv_1_free",
+        "name": "Foley",
+        "tier": "free",
+        "price": 255,
+        "colors": {
+          "shirt": 14107329,
+          "pants": 5540392,
+          "hair": 11678792
+        },
+        "tint": 13492841,
+        "character": "char3",
+        "maxCustomSlots": 4,
+        "stackSize": 7,
+        "inventory": {
+          "slots": [
+            {
+              "type": "bomb_wide",
+              "count": 4
+            },
+            {
+              "type": "banana",
+              "count": 3
+            },
+            {
+              "type": "bomb",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_3a9ad8b22613_mpitacqv_2_paid",
+        "name": "Little Bill",
+        "tier": "paid",
+        "price": 365,
+        "colors": {
+          "shirt": 12310338,
+          "pants": 6851112,
+          "hair": 11709492
+        },
+        "tint": 14052764,
+        "character": "char1",
+        "maxCustomSlots": 5,
+        "stackSize": 8,
+        "inventory": {
+          "slots": [
+            {
               "type": "delay_tricky",
+              "count": 4
+            },
+            {
+              "type": "fart_escape",
+              "count": 4
+            },
+            {
+              "type": "bomb",
               "count": 3
             },
             {
@@ -157,99 +225,31 @@
         }
       },
       {
-        "id": "cycle_p_3a9ad8b22613_mphjorn2_1_free",
-        "name": "Delaney",
-        "tier": "free",
-        "price": 225,
-        "colors": {
-          "shirt": 8312642,
-          "pants": 9054340,
-          "hair": 3433650
-        },
-        "tint": 5744872,
-        "character": "char7",
-        "maxCustomSlots": 4,
-        "stackSize": 7,
-        "inventory": {
-          "slots": [
-            {
-              "type": "shield",
-              "count": 4
-            },
-            {
-              "type": "bomb_wide",
-              "count": 3
-            },
-            {
-              "type": "fart_escape",
-              "count": 3
-            },
-            null
-          ]
-        }
-      },
-      {
-        "id": "cycle_p_3a9ad8b22613_mphjorn2_2_paid",
-        "name": "El Diablo",
+        "id": "cycle_p_3a9ad8b22613_mpitacqv_3_paid",
+        "name": "Coyote",
         "tier": "paid",
-        "price": 420,
+        "price": 375,
         "colors": {
-          "shirt": 4356567,
-          "pants": 9059112,
-          "hair": 3449522
+          "shirt": 14107229,
+          "pants": 7284874,
+          "hair": 3423666
         },
-        "tint": 6874557,
-        "character": "char2",
+        "tint": 15265159,
+        "character": "char4",
         "maxCustomSlots": 5,
         "stackSize": 9,
         "inventory": {
           "slots": [
             {
-              "type": "banana",
+              "type": "delay_tricky",
+              "count": 4
+            },
+            {
+              "type": "bomb",
               "count": 4
             },
             {
               "type": "fart_escape",
-              "count": 4
-            },
-            {
-              "type": "shield",
-              "count": 4
-            },
-            {
-              "type": "flash",
-              "count": 2
-            },
-            null
-          ]
-        }
-      },
-      {
-        "id": "cycle_p_3a9ad8b22613_mphjorn2_3_paid",
-        "name": "Whiskey",
-        "tier": "paid",
-        "price": 370,
-        "colors": {
-          "shirt": 14107279,
-          "pants": 2656650,
-          "hair": 3440562
-        },
-        "tint": 15644549,
-        "character": "char6",
-        "maxCustomSlots": 5,
-        "stackSize": 8,
-        "inventory": {
-          "slots": [
-            {
-              "type": "banana",
-              "count": 4
-            },
-            {
-              "type": "fart_escape",
-              "count": 4
-            },
-            {
-              "type": "shield",
               "count": 3
             },
             {
@@ -261,36 +261,36 @@
         }
       },
       {
-        "id": "cycle_p_3a9ad8b22613_mphjorn2_4_paid_expensive",
-        "name": "Helios",
+        "id": "cycle_p_3a9ad8b22613_mpitacqv_4_paid_expensive",
+        "name": "Rhea",
         "tier": "paid_expensive",
-        "price": 440,
+        "price": 575,
         "colors": {
-          "shirt": 14107212,
-          "pants": 7284874,
-          "hair": 11696180
+          "shirt": 10896087,
+          "pants": 2642314,
+          "hair": 3453506
         },
-        "tint": 15176880,
-        "character": "char7",
+        "tint": 13210856,
+        "character": "char3",
         "maxCustomSlots": 6,
-        "stackSize": 10,
+        "stackSize": 12,
         "inventory": {
           "slots": [
             {
-              "type": "flash",
-              "count": 4
+              "type": "banana",
+              "count": 5
             },
             {
-              "type": "motion_detector_flare",
-              "count": 4
+              "type": "delay_tricky",
+              "count": 5
             },
             {
               "type": "fart_escape",
-              "count": 4
+              "count": 5
             },
             {
-              "type": "flare",
-              "count": 4
+              "type": "big_huge",
+              "count": 1
             },
             null,
             null
@@ -302,17 +302,17 @@
   },
   "factories": {
     "1": {
-      "firstCycleStartedAt": 1779492749739,
-      "queueLength": 4,
-      "storage": [],
-      "sessionDone": 7,
-      "sessionTotal": 11
-    },
-    "2": {
-      "firstCycleStartedAt": 1779492738643,
-      "queueLength": 2,
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
       "storage": [],
       "sessionDone": 1,
+      "sessionTotal": 1
+    },
+    "2": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 3,
       "sessionTotal": 3
     },
     "3": {

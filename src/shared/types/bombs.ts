@@ -11,6 +11,8 @@
  * centerTile) pair into a set of affected tiles without bespoke code per bomb.
  */
 
+import type { TreasureType } from '../config/treasures.ts';
+
 export type BombType =
   | 'rock'
   | 'bomb'             // renamed from delay_big
@@ -102,6 +104,16 @@ export type BombBehavior =
 /** Distinct mine kinds — render differently and trigger with different rules. */
 export type MineKind = 'motion_detector' | 'cluster';
 
+/**
+ * Optional secondary cost paid in a single treasure type, on top of the coin
+ * price. Bomb prices are always coins + at most one treasure type — never two
+ * treasures. When `treasureCost` is omitted the bomb is coin-only.
+ */
+export interface BombTreasureCost {
+  type: TreasureType;
+  amount: number;
+}
+
 export interface BombDef {
   type: BombType;
   name: string;
@@ -114,6 +126,12 @@ export interface BombDef {
   behavior: BombBehavior;
   /** Price in coins when buying from the Bombs Shop. */
   price: number;
+  /**
+   * Optional secondary cost: a single treasure type paid alongside `price`.
+   * Multiplied by purchase quantity at checkout. UI doesn't render this yet
+   * (added 2026-05-23) but the server enforces it on `buyBomb`.
+   */
+  treasureCost?: BombTreasureCost;
   /** Short flavour/help text shown in the shop. */
   description: string;
 }

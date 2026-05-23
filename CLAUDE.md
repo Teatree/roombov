@@ -58,11 +58,13 @@ Path aliases (configured in `vite.config.ts` and `tsconfig.json`): `@shared/*`, 
 
 Socket event map lives on `GameServer` (`auth`, `join_match`, `player_action`, `loot_bomb`, shop events, etc.). All gameplay-affecting events are validated server-side; clients are not trusted.
 
-**Gambler Street** is a meta-progression subsystem (seeded RNG, bet state machine): `src/shared/systems/GamblerStreetEngine.ts` runs pure in shared/; `src/shared/config/gambler-street.ts` holds tuning; `src/server/GamblerStreetService.ts` is the authoritative wrapper (lazy ticking, bet resolution, persistence via `PlayerStore`); `src/client/scenes/GamblerStreetScene.ts` renders the UI.
+**Gambler Street** is a meta-progression subsystem (seeded RNG, bet state machine): `src/shared/systems/GamblerStreetEngine.ts` runs pure in shared/; `src/shared/config/gambler-street.ts` holds tuning; `src/server/GamblerStreetService.ts` is the authoritative wrapper (lazy ticking, bet resolution, persistence via `PlayerStore`); `src/client/scenes/GamblerStreetScene.ts` renders the UI. **Currently shelved post-NEW_META §8** — scene is unregistered in `src/client/main.ts` but files are preserved for revival.
+
+**Factory** is the active post-NEW_META crafting/production meta system. `src/shared/config/factory.ts` defines 4 named machines with escalating costs and cycle times; machine 4 (`DETONATORIUM`) produces super bombs. `src/client/scenes/FactoryScene.ts` is the 4-machine crafting room. A claimable-bomb badge surfaces on the Factory button in both `MainMenuScene` and `ResultsScene`.
 
 ### Client flow
 
-`src/client/main.ts` registers Phaser scenes (order is significant): `BootScene → MainMenuScene → LobbyScene → BombermanShopScene → BombsShopScene → GamblerStreetScene → MatchScene → ResultsScene → TutorialOverlayScene → TooltipScene`.
+`src/client/main.ts` registers Phaser scenes (order is significant): `BootScene → MainMenuScene → LobbyScene → BombermanShopScene → BombsShopScene → FactoryScene → MatchScene → ResultsScene → TutorialOverlayScene → TooltipScene`. (`GamblerStreetScene` is intentionally unregistered post-NEW_META §8; see Gambler Street note below.)
 
 Rendering is split into systems under `src/client/systems/` (`MapRenderer`, `BombRenderer`, `FogRenderer`, `BombermanSpriteSystem`, `BombermanAnimations`, `ActivityIndicator`, etc.). `MatchScene` wires them to state updates.
 
@@ -85,7 +87,7 @@ Maps are authored in Tiled (`public/maps/*.tmj`) and converted to JSON under `sr
 
 ### Tests
 
-`tests/` contains Vitest unit tests: pure systems (`BombResolver`, `LineOfSight`, `Pathfinding`), economy subsystems (`gambler-street-engine`, `gambler-street-rewards`, `loot-roll`, `treasure-roll`, `shield-bomb`), plus two e2e smoke harnesses (`e2e-match`, `e2e-smoke`). New gameplay logic should be testable as a pure function of state — if it isn't, reconsider the design before adding the test.
+`tests/` contains Vitest unit tests: pure systems (`BombResolver`, `LineOfSight`, `Pathfinding`), meta subsystems (`gambler-street-engine`, `gambler-street-rewards`, `loot-roll`, `treasure-roll`, `factory`), and per-mechanic regression suites (`shield-bomb`, `escape-hatch`, `keys`, `uav`, `scav`), plus two e2e smoke harnesses (`e2e-match.ts`, `e2e-smoke.ts` — not auto-run by `npm test`). New gameplay logic should be testable as a pure function of state — if it isn't, reconsider the design before adding the test.
 
 ## Conventions
 
@@ -106,5 +108,8 @@ The following files are auto-included by Claude Code and contain standards, coor
 **Collaboration protocol** (from the template, still in force here): Question → Options → Decision → Draft → Approval. Ask before writing or editing files the user hasn't asked you to change; show drafts or summaries before large changes; never commit without explicit instruction.
 
 **Project documentation** — the following live in `docs/` and are useful cross-tool references:
-- `docs/PROJECT-SUMMARY.md` — ~530-line full context handoff with economy subsystems, character tiers, and all meta-progression systems
+- `docs/PROJECT-SUMMARY.md` — full context handoff with economy subsystems, character tiers, all meta-progression systems, and per-screen UI inventory
+- `docs/NEW_META.md` — locked spec for the May 16-17 meta reset (stack +2, coins in chests, treasure trim, keys in chests, bot rework, all-paid pricing, tutorial updates, Factory). Authoritative when this file or memory drifts.
+- `docs/keys-system.md` — keys/escape-hatch design (15 keys per floor, 3 keys per player to escape)
+- `docs/escape-hatch-rework.md` — current hatch behavior and UX (lock badge, ready-to-escape indicator)
 - `docs/bot-behavior.md` — AI behavior tree and decision-making for `BotPlayer.ts`

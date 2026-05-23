@@ -8,6 +8,53 @@ as it is in the live game, regardless of how it looks in the mockup.
 
 ---
 
+## 0. Revision 2 — what just changed
+
+The mockup got two updates in the latest pass. They're called out
+separately here so reviewers don't have to diff the whole doc.
+
+### 0.1 Two-currency pricing
+
+Bombs in the catalog now display **two costs side-by-side**: the existing
+coin cost (5–1,000) plus a new **treasure cost** (0–999, the green gem
+currency). A purchase requires the player to afford **both** currencies;
+if either one is short, the tile renders unaffordable and the specific
+deficient currency turns red while the other stays in its normal color.
+
+The header wallet display also grows from one currency to two — coins
+then treasure, in that order — but **its typography, color, and layout
+style stay exactly as the live game's existing wallet widget renders
+them**. See §1.3 and §5 for the full rules.
+
+### 0.2 Stockpile tile sizing exception
+
+Stockpile tiles previously matched the catalog tiles' fixed height for
+consistency, which left an awkward dead-space band at the bottom of each
+stockpile tile (no price, no BUY button, just empty pixels). Stockpile
+tiles now hug their contents — icon + name + stock badge — and are
+deliberately shorter than catalog tiles. See §2.3.
+
+### 0.3 Reminder about the unchanged regions
+
+Nothing about these regions changes in this revision (or any prior
+revision); they keep the live game's current implementation verbatim:
+
+- **Top header**, including the wallet row — same widget, same
+  position, same font, same colors, same separator-less layout. The
+  only content-level delta is that the wallet now renders two
+  currencies instead of one (§5).
+- **Bottom `YOUR BOMBERMEN` selector row** — entirely as in the live
+  game. Same card chrome, same tier badge & its hover popup, same
+  EQUIPPED / EQUIP states.
+- **`BACK` button** — same font, same position, same behaviour.
+
+If in doubt: the mockup is reference for **the body layout only**. The
+header and the bottom region are reference only insofar as they show
+where on the screen things sit; their visual treatment defers to the
+live game.
+
+---
+
 ## 1. What must NOT change (overriding rules)
 
 These rules supersede anything the mockup shows. The mockup was built with
@@ -27,33 +74,42 @@ are placeholders, not direction. All headings, labels, prices, counts,
 button text, etc. should use the live game's existing Phaser bitmap/web
 fonts unchanged.
 
-### 1.3 Header — unchanged
-The top header (the `BOMBS SHOP` title and the `Coins: N` display) must stay
+### 1.3 Header — unchanged (visual chrome)
+The top header (the `BOMBS SHOP` title and the currency display) must stay
 exactly as it is in the live game across all screens:
 
 - **No horizontal line separator** under the header. The mockup draws one;
   the game does not — keep the game's version.
 - Same vertical position, same font, same weight, same color, same
-  letter-spacing.
-- Coins display unchanged: same `Coins: N` format, same gold color, same
-  font, same position (top-right).
-
-The mockup's header is for layout reference only. Copy the live one verbatim.
+  letter-spacing for the `BOMBS SHOP` title.
+- **Wallet widget** keeps its existing typography, color, spacing,
+  position, and per-currency styling. The mockup's wallet is reference
+  only for the **content** of the row (which currencies appear and in
+  what order) — *not* for its visual style. If the live wallet uses
+  the game's bitmap font, gold-coin glyph, and a particular spacing
+  rhythm, keep all of that.
+- The only content-level change in the wallet is that it now renders
+  **two** currencies, in this order: coins first, then treasure (see
+  §5 for the full pricing system). Treasure uses the existing gem icon
+  the live game already uses for treasure elsewhere.
 
 ### 1.4 Bottom section — unchanged in full
-Everything from the loadout area downward must stay exactly as it is in the
-live game. Specifically:
+Everything from the `YOUR BOMBERMEN` row downward must stay exactly as it
+is in the live game. **The mockup's rendition of this region is reference
+only; do not copy any of its styling.** Specifically:
 
 - **`YOUR BOMBERMEN` row** — the bomberman selector widget — used as-is.
   Same font for `YOUR BOMBERMEN`, same card shapes, same tier badge
   positions, same EQUIPPED/EQUIP states, same character sprite rendering,
-  same hover/click behaviour.
+  same hover/click behaviour, same spacing between cards.
 - **`[ < BACK ]` button** — same font, same position (bottom-left), same
   color, same click behaviour. The mockup wraps it in `[ < BACK ]` brackets;
   if the live version doesn't, keep the live formatting.
 - **No horizontal line separators** between header → body → loadout → bombermen → back.
   The mockup uses thin border lines; the live game does not. Don't add them.
-
+- **No new affordances** in this region. In particular, do not render a
+  `+ Add Bomberman` card — if the live game doesn't have one, neither
+  does the redesign.
 ### 1.5 Bomberman tier-badge hover popup — unchanged
 The game has a hover behaviour where mousing over the tier badge (`I`, `III`,
 etc.) on a Bomberman card opens an additional info panel (HP, slot count,
@@ -112,21 +168,24 @@ Per-tile contents (no description, no category label, no owned-count):
 │             │
 │  Bomb Name  │   ← small text, centered, 1 line wrap allowed
 │             │
-│ 200c  [BUY] │   ← price + buy button on the SAME row
+│  200c 25◆   │   ← dual-currency price row (see §2.5)
+│   [ BUY ]   │   ← buy button beneath the price row
 └─────────────┘
 ```
 
-Tile fixed height ~116px so rows align cleanly when the list scrolls.
+Tile fixed height ~138px so rows align cleanly when the list scrolls.
 
-**Affordability states** (player coin balance vs. tile price):
-- **Affordable**: full opacity, price in gold, `BUY` button enabled (gold bg,
-  dark text).
-- **Unaffordable**: tile dimmed (~65% opacity), price in red, button
-  rendered as a disabled `—` placeholder (no `BUY` text, no click).
+**Affordability states** (player must have enough of BOTH currencies):
+- **Affordable**: full opacity, both currency values in their normal
+  color (coins gold, treasure default text color), `BUY` button enabled.
+- **Unaffordable**: tile dimmed (~65% opacity), the **specific** currency
+  value the player can't cover is rendered in red — if both fall short,
+  both go red. The other currency stays in its normal color. Button is
+  rendered as a disabled `—` placeholder.
 
-**Click behaviour**: clicking `BUY` increments `PlayerProfile.bombStockpile[type]`
-(same as today). Clicking the tile body (not the button) selects it for
-detail purposes only — no purchase.
+**Click behaviour**: clicking `BUY` deducts both currencies and increments
+`PlayerProfile.bombStockpile[type]`. Clicking the tile body (not the
+button) just selects it for hover/visual purposes — no purchase.
 
 **Important**: Do **not** show owned-count badges in catalog tiles. The
 catalog supply is effectively infinite; owned counts belong in Stockpile.
@@ -135,8 +194,8 @@ catalog supply is effectively infinite; owned counts belong in Stockpile.
 
 ### 2.3 STOCKPILE column (right)
 
-A **scrollable** 3-column grid of tiles, same shape as catalog tiles, but
-showing only bombs the player owns (`stockpile[type] > 0`).
+A **scrollable** 3-column grid of tiles showing only bombs the player owns
+(`stockpile[type] > 0`).
 
 Per-tile contents:
 
@@ -148,7 +207,13 @@ Per-tile contents:
 └─────────────┘
 ```
 
-Same fixed height as catalog tiles for visual consistency.
+**Tile height: hug contents** (do **not** match the catalog's fixed 138px
+height). Stockpile tiles only need icon + name + stock badge — forcing
+them to match catalog height leaves an awkward 40% dead-space band at the
+bottom of each tile. The exception is intentional: tiles in the two
+columns won't be visually identical, but each will be appropriately sized
+for its contents. Use roughly `padding: 8px 6px 6px` and let the tile
+shrink.
 
 **Click behaviour**: clicking selects this stockpile entry as "the bomb to
 be equipped next." On second click, deselects. When something is selected:
@@ -341,18 +406,62 @@ shop-only tooltip widget that diverges from the rest of the game.
 
 Use existing game tokens for these states; don't introduce new colors.
 
-- **Affordable price**: existing "coin gold" color (same as the coin
+- **Affordable coin price**: existing "coin gold" color (same as the coin
   display).
-- **Unaffordable price**: existing "warning red" color (same color used
+- **Affordable treasure price**: default body text color (no special
+  tinting).
+- **Unaffordable**: existing "warning red" color (same color used
   elsewhere in the game for warnings — e.g. the broken-hatch warning,
-  per `PROJECT-SUMMARY` §10).
+  per `PROJECT-SUMMARY` §10). Only the deficient currency turns red; the
+  other stays in its normal color.
 - **Disabled BUY**: button is rendered without its gold fill, label
   replaced with a single `—` glyph in dim text.
-- **Dimmed tile**: ~65% opacity on the whole tile container.
+- **Dimmed tile**: ~65% opacity on the whole tile container when the
+  player can't afford the purchase.
 
 ---
 
-## 5. Files to touch
+## 5. Two-currency pricing system  <a id="two-currency"></a>
+
+**This is forward-looking** — some bombs will eventually have a treasure
+cost on top of their coin cost. Build the catalog UI to render both
+currencies now even if the live data only sets one to a non-zero value
+for now. Range expectations:
+
+- Coin cost: 5–1,000 (existing range, no change).
+- Treasure cost: 0–999 (always two-or-three-digit; never bigger).
+
+Treasure cost is rendered as `<number><gem icon>` (no `t` suffix, no
+word). The gem icon comes from the existing treasure-currency sprite the
+player already sees elsewhere in the game (the green gem in
+`assets/treasures.png` is what the mockup uses — substitute the live
+game's authoritative treasure icon if it differs).
+
+Dual-currency price row layout inside each catalog tile:
+
+```
+  200c   25◆
+```
+
+- Both values on the same line, gap ~8px between them.
+- Coin value tinted gold (or red if unaffordable).
+- Treasure value tinted text-default (or red if unaffordable).
+- 12px treasure icon to the immediate right of the treasure number.
+
+**Header coin/treasure display** also needs both currencies. The mockup
+shows them as `Coins: 425   [gem]28` separated by ~18px gap. Keep the
+live game's existing typography — the mockup's only contribution here is
+the layout (coins first, then treasure with the gem icon).
+
+Backend / data shape: `BOMB_CATALOG[type]` should grow a `treasure?:
+number` field alongside `price`. Treat `undefined` / `0` as "no treasure
+requirement" but still render the treasure column in the UI as `0◆` for
+consistency (so all tiles share the same vertical rhythm). The same goes
+for purchase deduction: `coins -= price; treasures -= treasure ?? 0`.
+
+---
+
+## 6. Files to touch
 
 - `src/client/scenes/BombsShopScene.ts` — primary layout owner. Refactor
   the body composition; leave header / bombermen / back code paths alone.
@@ -366,7 +475,7 @@ Use existing game tokens for these states; don't introduce new colors.
 
 ---
 
-## 6. Things explicitly OUT of scope
+## 7. Things explicitly OUT of scope
 
 - Sort / filter controls in the catalog (we have 15 bombs; not worth it).
 - Per-tile category label, fuse/radius/tags inline on cards.
@@ -377,7 +486,7 @@ Use existing game tokens for these states; don't introduce new colors.
 
 ---
 
-## 7. Sprite mapping note (open question)
+## 8. Sprite mapping note (open question)
 
 When building the mockup we matched bomb names to positions in
 `bombs.png` by visual inspection — Phaser already has the correct mapping

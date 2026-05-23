@@ -266,8 +266,9 @@ function packInventory(
 }
 
 /**
- * Bomberman shop price = slot premium + stack premium + 30 % of total bomb
- * shop value, rounded to the nearest 5 coins.
+ * Bomberman shop price = slot premium + stack premium + `bombCostRatio` ×
+ * total bomb-shop value, rounded to the nearest 5 coins. Post 2026-05-24 the
+ * ratio is 1.0, so the bomb component is 100 % of the loadout's coin value.
  *
  * `maxCustomSlots` does NOT include Rock; the "Slots" baseline of 5 in the
  * pricing config is the user-facing total (custom + Rock). So a Bomberman
@@ -297,10 +298,11 @@ function computeBombermanPrice(
   }
   const bombCost = bombValue * BOMBERMAN_PRICING.bombCostRatio;
 
-  const raw = slotCost + stackCost + bombCost;
+  const multiplier = BOMBERMAN_PRICING.priceMultiplier;
+  const raw = (slotCost + stackCost + bombCost) * multiplier;
   const step = Math.max(1, BOMBERMAN_PRICING.roundToNearest);
   const rounded = Math.round(raw / step) * step;
-  return Math.max(BOMBERMAN_PRICING.minPrice, rounded);
+  return Math.max(BOMBERMAN_PRICING.minPrice * multiplier, rounded);
 }
 
 function cloneInventory(inv: BombInventory): BombInventory {

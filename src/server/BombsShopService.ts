@@ -16,6 +16,7 @@
 import type { BombType } from '../shared/types/bombs.ts';
 import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import type { OwnedBomberman } from '../shared/types/bomberman.ts';
+import type { TreasureType } from '../shared/config/treasures.ts';
 import { BOMB_CATALOG, PURCHASABLE_BOMBS } from '../shared/config/bombs.ts';
 import type { PlayerStore } from './PlayerStore.ts';
 
@@ -26,6 +27,7 @@ export type BombsShopResult =
       reason:
         | 'not_purchasable'
         | 'insufficient_coins'
+        | 'insufficient_treasure'
         | 'no_equipped_bomberman'
         | 'slot_out_of_range'
         | 'not_in_stockpile'
@@ -39,11 +41,27 @@ export class BombsShopService {
     this.playerStore = playerStore;
   }
 
-  /** Returns the static purchasable catalog (server authoritative prices). */
-  getCatalog(): { type: BombType; name: string; price: number; description: string }[] {
+  /**
+   * Returns the static purchasable catalog (server authoritative prices).
+   * `treasureCost` is included when the bomb has a secondary treasure cost
+   * (always coins + a single treasure type — never two treasure types).
+   */
+  getCatalog(): {
+    type: BombType;
+    name: string;
+    price: number;
+    treasureCost?: { type: TreasureType; amount: number };
+    description: string;
+  }[] {
     return PURCHASABLE_BOMBS.map((type) => {
       const def = BOMB_CATALOG[type];
-      return { type, name: def.name, price: def.price, description: def.description };
+      return {
+        type,
+        name: def.name,
+        price: def.price,
+        ...(def.treasureCost ? { treasureCost: { ...def.treasureCost } } : {}),
+        description: def.description,
+      };
     });
   }
 
@@ -51,10 +69,22 @@ export class BombsShopService {
     if (!PURCHASABLE_BOMBS.includes(type)) return { ok: false, reason: 'not_purchasable' };
     const qty = Math.max(1, Math.floor(quantity));
     const def = BOMB_CATALOG[type];
-    const total = def.price * qty;
-    if (profile.coins < total) return { ok: false, reason: 'insufficient_coins' };
+    const coinTotal = def.price * qty;
+    if (profile.coins < coinTotal) return { ok: false, reason: 'insufficient_coins' };
 
-    profile.coins -= total;
+    // Secondary treasure cost: validated and deducted atomically with coins.
+    // Bombs only ever have one treasure type as a secondary cost by design.
+    const treasureCost = def.treasureCost;
+    if (treasureCost) {
+      const treasureTotal = treasureCost.amount * qty;
+      const owned = profile.treasures[treasureCost.type] ?? 0;
+      if (owned < treasureTotal) return { ok: false, reason: 'insufficient_treasure' };
+      const next = owned - treasureTotal;
+      if (next > 0) profile.treasures[treasureCost.type] = next;
+      else delete profile.treasures[treasureCost.type];
+    }
+
+    profile.coins -= coinTotal;
     profile.bombStockpile[type] = (profile.bombStockpile[type] ?? 0) + qty;
     await this.playerStore.save(profile);
     return { ok: true };

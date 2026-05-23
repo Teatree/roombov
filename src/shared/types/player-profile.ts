@@ -65,7 +65,7 @@ export function createEmptyProfile(id: string): PlayerProfile {
     id,
     createdAt: now,
     updatedAt: now,
-    coins: 500,
+    coins: 2000,
     treasures: {},
     ownedBombermen: [],
     equippedBombermanId: null,

@@ -1,0 +1,278 @@
+{
+  "id": "p_e011b886767a",
+  "createdAt": 1779568948194,
+  "updatedAt": 1779571273036,
+  "coins": 547,
+  "treasures": {
+    "coffee": 10,
+    "grapes": 7,
+    "lanterns": 1,
+    "mushrooms": 7
+  },
+  "ownedBombermen": [
+    {
+      "id": "owned_p_e011b886767a_1779568958825_wzp2",
+      "name": "Kavanagh",
+      "tier": "free",
+      "colors": {
+        "shirt": 11158231,
+        "pants": 7834152,
+        "hair": 9122994
+      },
+      "tint": 10018280,
+      "character": "char6",
+      "maxCustomSlots": 4,
+      "stackSize": 7,
+      "inventory": {
+        "slots": [
+          {
+            "type": "delay_tricky",
+            "count": 4
+          },
+          {
+            "type": "banana",
+            "count": 7
+          },
+          {
+            "type": "flare",
+            "count": 3
+          },
+          {
+            "type": "flash",
+            "count": 2
+          }
+        ]
+      },
+      "purchasedAt": 1779568958825,
+      "sourceTemplateId": "cycle_p_e011b886767a_mpiter0w_0_free"
+    }
+  ],
+  "equippedBombermanId": "owned_p_e011b886767a_1779568958825_wzp2",
+  "bombStockpile": {
+    "delay_tricky": 1,
+    "ender_pearl": 1
+  },
+  "gamblerStreet": {
+    "gamblers": [],
+    "pendingArrivals": [
+      1779568948194,
+      1779568948194,
+      1779568948194,
+      1779568948194,
+      1779568948194
+    ],
+    "lastTickedAt": 1779568948194,
+    "nextGamblerSerial": 1
+  },
+  "bombermanShop": {
+    "cycleId": "cycle_p_e011b886767a_mpiusea3",
+    "startedAt": 1779571273035,
+    "endsAt": 1779571393035,
+    "bombermen": [
+      {
+        "id": "cycle_p_e011b886767a_mpiusea3_0_free",
+        "name": "Byrne",
+        "tier": "free",
+        "price": 750,
+        "colors": {
+          "shirt": 9257687,
+          "pants": 8161832,
+          "hair": 5256370
+        },
+        "tint": 8439537,
+        "character": "char3",
+        "maxCustomSlots": 4,
+        "stackSize": 6,
+        "inventory": {
+          "slots": [
+            {
+              "type": "banana",
+              "count": 4
+            },
+            {
+              "type": "delay_tricky",
+              "count": 4
+            },
+            {
+              "type": "flash",
+              "count": 2
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_e011b886767a_mpiusea3_1_free",
+        "name": "Hogan",
+        "tier": "free",
+        "price": 380,
+        "colors": {
+          "shirt": 4380570,
+          "pants": 2656905,
+          "hair": 8237620
+        },
+        "tint": 6528486,
+        "character": "char1",
+        "maxCustomSlots": 4,
+        "stackSize": 7,
+        "inventory": {
+          "slots": [
+            {
+              "type": "flare",
+              "count": 4
+            },
+            {
+              "type": "bomb",
+              "count": 3
+            },
+            {
+              "type": "fart_escape",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_e011b886767a_mpiusea3_2_paid",
+        "name": "Butch",
+        "tier": "paid",
+        "price": 1230,
+        "colors": {
+          "shirt": 12337879,
+          "pants": 9072680,
+          "hair": 7877810
+        },
+        "tint": 15246307,
+        "character": "char6",
+        "maxCustomSlots": 5,
+        "stackSize": 8,
+        "inventory": {
+          "slots": [
+            {
+              "type": "fart_escape",
+              "count": 4
+            },
+            {
+              "type": "ender_pearl",
+              "count": 4
+            },
+            {
+              "type": "delay_tricky",
+              "count": 4
+            },
+            {
+              "type": "flash",
+              "count": 2
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_e011b886767a_mpiusea3_3_paid",
+        "name": "Desperado",
+        "tier": "paid",
+        "price": 830,
+        "colors": {
+          "shirt": 7198530,
+          "pants": 9054310,
+          "hair": 6108338
+        },
+        "tint": 15035042,
+        "character": "char3",
+        "maxCustomSlots": 5,
+        "stackSize": 8,
+        "inventory": {
+          "slots": [
+            {
+              "type": "fart_escape",
+              "count": 4
+            },
+            {
+              "type": "banana",
+              "count": 4
+            },
+            {
+              "type": "delay_tricky",
+              "count": 4
+            },
+            {
+              "type": "motion_detector_flare",
+              "count": 2
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_e011b886767a_mpiusea3_4_paid_expensive",
+        "name": "Daedalus",
+        "tier": "paid_expensive",
+        "price": 1380,
+        "colors": {
+          "shirt": 4363735,
+          "pants": 4426280,
+          "hair": 11687220
+        },
+        "tint": 15500197,
+        "character": "char2",
+        "maxCustomSlots": 6,
+        "stackSize": 11,
+        "inventory": {
+          "slots": [
+            {
+              "type": "fart_escape",
+              "count": 4
+            },
+            {
+              "type": "bomb_wide",
+              "count": 4
+            },
+            {
+              "type": "delay_tricky",
+              "count": 4
+            },
+            {
+              "type": "shield",
+              "count": 4
+            },
+            null,
+            null
+          ]
+        }
+      }
+    ],
+    "boughtTemplateIds": []
+  },
+  "factories": {
+    "1": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 2,
+      "sessionTotal": 2
+    },
+    "2": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "3": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "4": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    }
+  }
+}

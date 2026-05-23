@@ -108,22 +108,29 @@ export const TIER_CONFIG: Record<BombermanTier, TierConfig> = {
  *   slotCost  = max(0, totalSlots - SLOT_THRESHOLD) × COIN_PER_EXTRA_SLOT
  *   stackCost = max(0, stackSize  - STACK_THRESHOLD) × COIN_PER_EXTRA_STACK
  *   bombCost  = Σ (slot.count × BOMB_CATALOG[slot.type].price) × BOMB_COST_RATIO
- *   raw       = slotCost + stackCost + bombCost
- *   price     = max(MIN_PRICE, round-to-nearest-5(raw))
+ *   raw       = (slotCost + stackCost + bombCost) × PRICE_MULTIPLIER
+ *   price     = max(MIN_PRICE × PRICE_MULTIPLIER, round-to-nearest-5(raw))
  *
  * Post NEW_META §6 (2026-05-16): every tier — including free — runs through
  * this formula. The minimum-price floor exists to keep free-tier Bombermen
  * from rolling absurdly cheap; their target band is ~50–120 coins.
+ *
+ * 2026-05-23: `priceMultiplier` raised to 2 to globally double Bomberman
+ * prices without retuning each constant individually.
  */
 export const BOMBERMAN_PRICING = {
   slotThreshold: 5,
   coinPerExtraSlot: 50,
   stackThreshold: 5,
   coinPerExtraStack: 25,
-  bombCostRatio: 0.08,
+  /** Share of the loadout's total bomb-shop value that flows into the Bomberman
+   *  price. 1.0 = the Bomberman costs 100% of his bombs' coin value. */
+  bombCostRatio: 1.0,
   roundToNearest: 5,
-  /** Lower bound on the computed price. NEW_META §6 — keeps free tier ≥50. */
+  /** Lower bound on the computed price (pre-multiplier). NEW_META §6 — keeps free tier ≥50. */
   minPrice: 50,
+  /** Global scalar applied to the final price (and to minPrice). 1 = original tuning. */
+  priceMultiplier: 2,
 } as const;
 
 /**

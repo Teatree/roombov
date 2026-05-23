@@ -10,7 +10,7 @@ import type { BombermanTemplate } from './bomberman.ts';
 import type { BombType } from './bombs.ts';
 import type { MatchListing, MatchState, PlayerAction } from './match.ts';
 import type { TurnEvent } from '../systems/TurnResolver.ts';
-import type { TreasureBundle } from '../config/treasures.ts';
+import type { TreasureBundle, TreasureType } from '../config/treasures.ts';
 import type { BetOutcome, GamblerStreetState } from './gambler-street.ts';
 import type { BetTier } from '../config/gambler-street.ts';
 import type { FactoryId } from './factory.ts';
@@ -55,6 +55,13 @@ export interface BombsCatalogEntry {
   type: BombType;
   name: string;
   price: number;
+  /**
+   * Optional secondary treasure cost paid alongside `price` (coins). One
+   * treasure type, fixed amount, multiplied by purchase quantity. UI does
+   * not render this yet (2026-05-23) — added so the catalog can carry the
+   * data ahead of the shop UI redesign.
+   */
+  treasureCost?: { type: TreasureType; amount: number };
   description: string;
 }
 

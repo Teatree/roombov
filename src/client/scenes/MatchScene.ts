@@ -2939,6 +2939,18 @@ export class MatchScene extends Phaser.Scene {
     // Slot tray is built lazily — at this point the local Bomberman state
     // hasn't arrived yet so we don't know `maxCustomSlots`. `renderHud`
     // calls `rebuildSlotTrayIfNeeded()` once state is in.
+
+    // Exit Tutorial button — only visible in tutorial mode. Matches the
+    // monospace "[ < BACK ]" style used as the back button on other scenes.
+    if (this.mode === 'tutorial') {
+      const exitBtn = this.add.text(20, height - 30, '[ EXIT TUTORIAL ]', {
+        fontSize: '16px', color: '#888888', fontFamily: 'monospace',
+      }).setOrigin(0, 0.5).setDepth(1001).setInteractive({ useHandCursor: true });
+      exitBtn.on('pointerover', () => exitBtn.setColor('#cccccc'));
+      exitBtn.on('pointerout', () => exitBtn.setColor('#888888'));
+      exitBtn.on('pointerdown', () => this.scene.start('MainMenuScene'));
+      this.hud(exitBtn);
+    }
   }
 
   /**
