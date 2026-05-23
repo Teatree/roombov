@@ -311,6 +311,21 @@ export class FactoryScene extends Phaser.Scene {
       stroke: '#000', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(100);
 
+    // Wallet — always visible (not popup-scoped). Standardised horizontal
+    // layout shared with MainMenu and BombsShop; right-aligned via setX in
+    // renderAll() after the bundle is known. Depth 1002 so it sits above
+    // the production popup which uses ~1000.
+    this.wallet = new TreasureListWidget(this, {
+      x: width - 20,
+      y: 20,
+      anchor: 'top-left',
+      direction: 'horizontal',
+      iconScale: 0.5,
+      fontSize: 11,
+      rowGap: 4,
+      depth: 1002,
+    });
+
     this.backBtn = this.add.text(20, height - 30, '[ < BACK ]', {
       fontSize: '16px', color: '#888', fontFamily: 'monospace',
       stroke: '#000', strokeThickness: 3,
@@ -560,6 +575,15 @@ export class FactoryScene extends Phaser.Scene {
   private renderAll(): void {
     const profile = ProfileStore.get();
     if (!profile) return;
+
+    // Wallet — kept in sync with the persistent stash. Horizontal layout
+    // extends rightward; right-align by computing width and shifting X.
+    if (this.wallet) {
+      this.wallet.setBundle(profile.treasures);
+      const r = this.wallet.getRect();
+      if (r && r.w > 0) this.wallet.setX(this.scale.width - 20 - r.w);
+    }
+
     // Defensive: older profiles loaded by a hot-reloaded server may not yet
     // have the factories field. Treat as all-empty until the next refresh.
     const factories = profile.factories ?? null;
@@ -914,12 +938,9 @@ export class FactoryScene extends Phaser.Scene {
     // (different number of queue dots → bar width changes).
     (this.popup as unknown as { _progressBarBg: Phaser.GameObjects.Rectangle })._progressBarBg = progressBarBg;
 
-    // Wallet widget — pinned to the top-right of the SCREEN.
-    if (this.wallet) { this.wallet.destroy(); this.wallet = null; }
-    this.wallet = new TreasureListWidget(this, {
-      x: width - 18, y: 18, anchor: 'top-right', iconScale: 0.55, fontSize: 16, depth: 1002,
-    });
-    if (profile0) this.wallet.setBundleStatic(profile0.treasures);
+    // Wallet is owned by the scene (created in create(), updated in
+    // renderAll()); the popup intentionally doesn't touch it so it stays
+    // visible whether or not the popup is open.
 
     this.renderPopup();
   }
@@ -938,7 +959,7 @@ export class FactoryScene extends Phaser.Scene {
     const state = ensureClientFactoryState(profile.factories?.[popup.factoryId]);
     const cfg = popup.cfg;
 
-    this.wallet?.setBundleStatic(profile.treasures);
+    // Wallet refresh is handled by renderAll() — removed from here.
 
     // --- Cost chip: update text colors based on what the player can afford ---
     const wallet = profile.treasures;

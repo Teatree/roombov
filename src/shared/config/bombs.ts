@@ -20,7 +20,8 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     fuseTurns: 0,
     behavior: { kind: 'explode', shape: { kind: 'single' } },
     price: 0,
-    description: 'Infinite fallback. Hits only the target tile.',
+    description: 'Free infinite fallback. Hits only the tile it lands on.',
+    category: 'standard',
   },
   bomb: {
     type: 'bomb',
@@ -28,7 +29,8 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     fuseTurns: 1,
     behavior: { kind: 'explode', shape: { kind: 'plus', radius: 4 } },
     price: 25,
-    description: '+ pattern, radius 4. Explodes next turn.',
+    description: 'Classic + blast, radius 4. Detonates next turn.',
+    category: 'tactical',
   },
   bomb_wide: {
     type: 'bomb_wide',
@@ -36,7 +38,8 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     fuseTurns: 2,
     behavior: { kind: 'explode', shape: { kind: 'circle', radius: 2, rayCast: true } },
     price: 40,
-    description: '5x5 area blast (rays from centre — walls block). Takes 2 turns to explode.',
+    description: 'Wide 5x5 blast — walls block the shockwave. Detonates after 2 turns.',
+    category: 'tactical',
   },
   delay_tricky: {
     type: 'delay_tricky',
@@ -44,7 +47,8 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     fuseTurns: 1,
     behavior: { kind: 'explode', shape: { kind: 'diag', radius: 3 } },
     price: 25,
-    description: 'Diagonal pattern, radius 3. Explodes next turn.',
+    description: 'Diagonal blast, radius 3. Detonates next turn.',
+    category: 'tactical',
   },
   contact: {
     type: 'contact',
@@ -52,7 +56,8 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     fuseTurns: 0,
     behavior: { kind: 'explode', shape: { kind: 'plus', radius: 1 } },
     price: 95,
-    description: '+ pattern, radius 1. Explodes on impact.',
+    description: 'Tight + blast that detonates the moment it lands.',
+    category: 'instant',
   },
   banana: {
     type: 'banana',
@@ -69,7 +74,8 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
       childType: 'banana_child',
     },
     price: 30,
-    description: 'Lands, 1 turn later scatters 4 sub-bombs diagonally; each explodes next turn.',
+    description: 'Splits into 4 sub-bombs diagonally; each detonates a turn later.',
+    category: 'tactical',
   },
   banana_child: {
     // Children sit on the ground for a turn after the banana scatters them
@@ -81,7 +87,8 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     fuseTurns: 1,
     behavior: { kind: 'explode', shape: { kind: 'plus', radius: 1 } },
     price: 0,
-    description: 'A scattered banana piece. Waits a turn, then explodes in + pattern x1.',
+    description: 'Scattered banana piece. Waits a turn, then bursts in a small + blast.',
+    category: 'standard',
   },
   flare: {
     type: 'flare',
@@ -89,7 +96,8 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     fuseTurns: 0,
     behavior: { kind: 'light', shape: { kind: 'circle', radius: 4 }, durationTurns: 3 },
     price: 5,
-    description: 'Lights up a 9x9 area for 3 turns. No damage. Does not break Rush.',
+    description: 'Lights up a 9x9 area for 3 turns. No damage. Doesn’t break Rush.',
+    category: 'utility',
   },
   molotov: {
     type: 'molotov',
@@ -97,7 +105,8 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     fuseTurns: 0,
     behavior: { kind: 'fire', shape: { kind: 'plus', radius: 1 }, durationTurns: 2 },
     price: 100,
-    description: 'Sets a + pattern (radius 1) on fire for 2 turns. Damage on landing and each turn.',
+    description: 'Sets a 5-tile + ablaze for 2 turns. Burns on landing and each turn after.',
+    category: 'instant',
   },
   ender_pearl: {
     type: 'ender_pearl',
@@ -105,7 +114,8 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     fuseTurns: 0,
     behavior: { kind: 'teleport' },
     price: 50,
-    description: 'Teleports you to the landing tile. Does not break Rush.',
+    description: 'Teleports you to wherever it lands. Doesn’t break Rush.',
+    category: 'escape',
   },
   fart_escape: {
     type: 'fart_escape',
@@ -117,7 +127,8 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
       durationTurns: BALANCE.bombs.fartEscapeSmokeTurns,
     },
     price: 15,
-    description: 'Escape move: steps 2 tiles toward target and leaves a smoke cloud at your origin.',
+    description: 'Steps you 2 tiles toward the target and leaves a smoke cloud behind.',
+    category: 'escape',
   },
   motion_detector_flare: {
     type: 'motion_detector_flare',
@@ -130,7 +141,8 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
       detectionRadius: BALANCE.bombs.motionDetectorRadius,
     },
     price: 5,
-    description: 'Proximity mine. Fires a Flare when an enemy comes within 3 tiles + LoS.',
+    description: 'Hidden trap. Fires a flare when an enemy steps within 3 tiles in line of sight.',
+    category: 'utility',
   },
   flash: {
     type: 'flash',
@@ -143,8 +155,12 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
       stunTurns: BALANCE.bombs.flashStunTurns,
     },
     price: 65,
-    description: 'Blue 7x7 blast. Bombermen caught are Stunned for 1 turn.',
+    description: 'Blue 7x7 blast. Anyone caught is stunned for 1 turn.',
+    category: 'utility',
   },
+  // Special bombs gate behind treasure costs. Pricing tuned against average
+  // per-run treasure haul (coffee ~46, mushroom ~206, grapes ~22, lantern ~6):
+  // shield uses the most abundant currency, big_huge the rarest.
   phosphorus: {
     type: 'phosphorus',
     name: 'Phosphorus',
@@ -156,7 +172,9 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
       fireDurationTurns: BALANCE.bombs.phosphorusFireTurns,
     },
     price: 40,
-    description: 'SUPER BOMB. Lights up 11x11, then scatters burning tiles next turn.',
+    treasureCost: { type: 'grapes', amount: 2 },
+    description: 'Reveals an 11x11 area, then scatters burning tiles the following turn.',
+    category: 'special',
   },
   cluster_bomb: {
     type: 'cluster_bomb',
@@ -168,7 +186,9 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
       mineCount: BALANCE.bombs.clusterMineCount,
     },
     price: 40,
-    description: 'SUPER BOMB. Scatters 25 mines across an 11x11 area. Mines trigger on touch.',
+    treasureCost: { type: 'coffee', amount: 5 },
+    description: 'Scatters 25 mines across an 11x11 area. Anything that touches them triggers.',
+    category: 'special',
   },
   big_huge: {
     type: 'big_huge',
@@ -176,7 +196,9 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     fuseTurns: 2,
     behavior: { kind: 'explode', shape: { kind: 'circle', radius: 5, rayCast: true } },
     price: 125,
-    description: 'SUPER BOMB. 11x11 circle blast (rays from centre — walls block). Takes 2 turns to explode.',
+    treasureCost: { type: 'lanterns', amount: 2 },
+    description: 'Massive 11x11 explosion — walls block the shockwave. Detonates after 2 turns.',
+    category: 'special',
   },
   shield: {
     type: 'shield',
@@ -188,27 +210,39 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
       durationTurns: BALANCE.bombs.shieldDurationTurns,
     },
     price: 30,
-    description: 'Spawns a + shield wall on impact. Blocks movement and explosions for 3 turns. Pushes anyone in the way out (no damage).',
+    description: 'Spawns a + shield wall on impact. Blocks movement and explosions for 3 turns.',
+    category: 'utility',
   },
 };
 
-/** Bomb types players can buy/equip (excludes rock which is infinite/fixed). */
+/**
+ * Bomb types players can buy/equip (excludes rock which is infinite/fixed).
+ * Order is the canonical display order for the Bombs Shop catalog: grouped by
+ * category (tactical → instant → escape → utility → special). This is the
+ * single source of truth — the server emits the catalog in this order and the
+ * client renders it as-is.
+ */
 export const PURCHASABLE_BOMBS: BombType[] = [
+  // Tactical
   'bomb',
   'bomb_wide',
   'delay_tricky',
-  'contact',
   'banana',
-  'flare',
+  // Instant
+  'contact',
   'molotov',
+  // Escape
   'ender_pearl',
   'fart_escape',
+  // Utility
+  'flare',
   'motion_detector_flare',
   'flash',
+  'shield',
+  // Special
   'phosphorus',
   'cluster_bomb',
   'big_huge',
-  'shield',
 ];
 
 /**

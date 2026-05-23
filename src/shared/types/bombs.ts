@@ -114,6 +114,21 @@ export interface BombTreasureCost {
   amount: number;
 }
 
+/**
+ * Tooltip / tile classification. Drives the 2px coloured top bar and the
+ * uppercase category label in the shop tooltip. Categories are a UI grouping,
+ * not a gameplay one — but they live on `BombDef` so the data stays in one
+ * place rather than being a UI-side lookup table.
+ *
+ *  - tactical: delayed AoE bombs (Bomb, Wide, Tricky, Banana)
+ *  - utility:  passive / vision / detection (Flare, Motion Detector, Flash)
+ *  - instant:  no-fuse contact effects (Contact, Molotov)
+ *  - escape:   self-movement (Ender Pearl, Fart Escape)
+ *  - special:  high-impact endgame (Phosphorus, Cluster, Big Huge, Shield)
+ *  - standard: internal-only fallback (Rock, Banana Piece — not shown in catalog)
+ */
+export type BombCategory = 'standard' | 'tactical' | 'utility' | 'instant' | 'escape' | 'special';
+
 export interface BombDef {
   type: BombType;
   name: string;
@@ -128,12 +143,13 @@ export interface BombDef {
   price: number;
   /**
    * Optional secondary cost: a single treasure type paid alongside `price`.
-   * Multiplied by purchase quantity at checkout. UI doesn't render this yet
-   * (added 2026-05-23) but the server enforces it on `buyBomb`.
+   * Multiplied by purchase quantity at checkout.
    */
   treasureCost?: BombTreasureCost;
-  /** Short flavour/help text shown in the shop. */
+  /** Short tooltip text — one sentence, player-facing tone. */
   description: string;
+  /** UI category — see BombCategory. */
+  category: BombCategory;
 }
 
 /** Runtime state for a bomb that has been thrown onto the map. */

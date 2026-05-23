@@ -53,13 +53,18 @@ export class MainMenuScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     // Treasures list — top-right of the menu, read-only mirror of the
-    // persistent profile stash.
+    // persistent profile stash. Standardised horizontal layout shared with
+    // BombsShopScene and FactoryScene; right-aligned via setX in
+    // renderProfile() after the bundle is known.
     this.treasureList = new TreasureListWidget(this, {
       x: width - 20,
       y: 20,
-      anchor: 'top-right',
-      iconScale: 1.0,
-      fontSize: 16,
+      anchor: 'top-left',
+      direction: 'horizontal',
+      iconScale: 0.5,
+      fontSize: 11,
+      rowGap: 4,
+      depth: 100,
     });
 
     this.equippedContainer = this.add.container(width / 2, 260);
@@ -184,6 +189,12 @@ export class MainMenuScene extends Phaser.Scene {
 
     this.coinsText.setText(`Coins: ${profile.coins}`);
     this.treasureList.setBundle(profile.treasures);
+    // Horizontal layout extends rightward from anchor — right-align by
+    // computing the rendered width and shifting X to (rightEdge - width).
+    const tRect = this.treasureList.getRect();
+    if (tRect && tRect.w > 0) {
+      this.treasureList.setX(this.scale.width - 20 - tRect.w);
+    }
     this.refreshFactoryBadge();
 
     // Clear and rebuild the equipped preview

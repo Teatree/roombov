@@ -1,8 +1,8 @@
 {
   "id": "p_66d48dffb977",
   "createdAt": 1777246461874,
-  "updatedAt": 1779405962090,
-  "coins": 285,
+  "updatedAt": 1779578866257,
+  "coins": 135,
   "treasures": {
     "coffee": 55,
     "grapes": 50,
@@ -26,19 +26,19 @@
         "slots": [
           {
             "type": "flare",
-            "count": 4
+            "count": 5
           },
           {
             "type": "bomb",
-            "count": 4
-          },
-          {
-            "type": "bomb_wide",
-            "count": 3
+            "count": 7
           },
           {
             "type": "shield",
-            "count": 3
+            "count": 5
+          },
+          {
+            "type": "ender_pearl",
+            "count": 1
           },
           null
         ]
@@ -49,14 +49,14 @@
   ],
   "equippedBombermanId": "owned_p_66d48dffb977_1778775223464_x2l2",
   "bombStockpile": {
-    "shield": 2,
-    "flash": 1,
-    "motion_detector_flare": 1,
-    "bomb_wide": 1,
-    "ender_pearl": 1,
     "delay_tricky": 1,
-    "flare": 1,
-    "bomb": 1
+    "bomb_wide": 4,
+    "flash": 1,
+    "molotov": 1,
+    "motion_detector_flare": 1,
+    "flare": 2,
+    "bomb": 1,
+    "fart_escape": 1
   },
   "gamblerStreet": {
     "gamblers": [],
@@ -71,36 +71,36 @@
     "nextGamblerSerial": 1
   },
   "bombermanShop": {
-    "cycleId": "cycle_p_66d48dffb977_mp5ou9p7",
-    "startedAt": 1778775222427,
-    "endsAt": 1778775342427,
+    "cycleId": "cycle_p_66d48dffb977_mpizb58w",
+    "startedAt": 1779578866256,
+    "endsAt": 1779578986256,
     "bombermen": [
       {
-        "id": "cycle_p_66d48dffb977_mp5ou9p7_0_free",
-        "name": "Tierney",
+        "id": "cycle_p_66d48dffb977_mpizb58w_0_free",
+        "name": "Finnegan",
         "tier": "free",
-        "price": 0,
+        "price": 510,
         "colors": {
-          "shirt": 13845207,
-          "pants": 3443240,
-          "hair": 11678892
+          "shirt": 4364759,
+          "pants": 9054297,
+          "hair": 8237620
         },
-        "tint": 11770342,
-        "character": "char3",
+        "tint": 15377368,
+        "character": "char1",
         "maxCustomSlots": 4,
-        "stackSize": 4,
+        "stackSize": 7,
         "inventory": {
           "slots": [
             {
-              "type": "fart_escape",
+              "type": "bomb",
               "count": 4
             },
             {
-              "type": "ender_pearl",
+              "type": "shield",
               "count": 3
             },
             {
-              "type": "bomb",
+              "type": "flare",
               "count": 3
             },
             null
@@ -108,23 +108,59 @@
         }
       },
       {
-        "id": "cycle_p_66d48dffb977_mp5ou9p7_1_free",
+        "id": "cycle_p_66d48dffb977_mpizb58w_1_free",
         "name": "Quinn",
         "tier": "free",
-        "price": 0,
+        "price": 560,
         "colors": {
-          "shirt": 4349143,
-          "pants": 9073704,
-          "hair": 11686452
+          "shirt": 7488215,
+          "pants": 2656818,
+          "hair": 11678846
         },
-        "tint": 6473964,
+        "tint": 12312705,
         "character": "char6",
         "maxCustomSlots": 4,
-        "stackSize": 4,
+        "stackSize": 6,
+        "inventory": {
+          "slots": [
+            {
+              "type": "banana",
+              "count": 4
+            },
+            {
+              "type": "bomb_wide",
+              "count": 3
+            },
+            {
+              "type": "flare",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_66d48dffb977_mpizb58w_2_paid",
+        "name": "Calamity",
+        "tier": "paid",
+        "price": 960,
+        "colors": {
+          "shirt": 4342743,
+          "pants": 9072424,
+          "hair": 7419058
+        },
+        "tint": 12381842,
+        "character": "char6",
+        "maxCustomSlots": 5,
+        "stackSize": 9,
         "inventory": {
           "slots": [
             {
               "type": "flare",
+              "count": 4
+            },
+            {
+              "type": "bomb_wide",
               "count": 4
             },
             {
@@ -132,43 +168,7 @@
               "count": 3
             },
             {
-              "type": "bomb_wide",
-              "count": 3
-            },
-            null
-          ]
-        }
-      },
-      {
-        "id": "cycle_p_66d48dffb977_mp5ou9p7_2_paid",
-        "name": "El Diablo",
-        "tier": "paid",
-        "price": 215,
-        "colors": {
-          "shirt": 14107231,
-          "pants": 2644106,
-          "hair": 3453505
-        },
-        "tint": 15752890,
-        "character": "char2",
-        "maxCustomSlots": 5,
-        "stackSize": 7,
-        "inventory": {
-          "slots": [
-            {
-              "type": "flare",
-              "count": 4
-            },
-            {
               "type": "bomb",
-              "count": 4
-            },
-            {
-              "type": "bomb_wide",
-              "count": 3
-            },
-            {
-              "type": "shield",
               "count": 3
             },
             null
@@ -176,72 +176,72 @@
         }
       },
       {
-        "id": "cycle_p_66d48dffb977_mp5ou9p7_3_paid",
-        "name": "Ringo",
+        "id": "cycle_p_66d48dffb977_mpizb58w_3_paid",
+        "name": "Six-Gun",
         "tier": "paid",
-        "price": 270,
+        "price": 1320,
         "colors": {
-          "shirt": 14107218,
-          "pants": 9066280,
-          "hair": 8499764
+          "shirt": 12141271,
+          "pants": 9056808,
+          "hair": 11482290
         },
-        "tint": 14454129,
-        "character": "char5",
+        "tint": 10676858,
+        "character": "char3",
         "maxCustomSlots": 5,
-        "stackSize": 7,
-        "inventory": {
-          "slots": [
-            {
-              "type": "bomb_wide",
-              "count": 4
-            },
-            {
-              "type": "bomb",
-              "count": 4
-            },
-            {
-              "type": "shield",
-              "count": 3
-            },
-            {
-              "type": "banana",
-              "count": 3
-            },
-            null
-          ]
-        }
-      },
-      {
-        "id": "cycle_p_66d48dffb977_mp5ou9p7_4_paid_expensive",
-        "name": "Hermes",
-        "tier": "paid_expensive",
-        "price": 350,
-        "colors": {
-          "shirt": 10633943,
-          "pants": 2654602,
-          "hair": 11691060
-        },
-        "tint": 11832562,
-        "character": "char5",
-        "maxCustomSlots": 6,
         "stackSize": 9,
         "inventory": {
           "slots": [
             {
-              "type": "flash",
-              "count": 4
-            },
-            {
-              "type": "flare",
-              "count": 4
-            },
-            {
               "type": "bomb",
               "count": 4
             },
             {
-              "type": "banana",
+              "type": "bomb_wide",
               "count": 4
+            },
+            {
+              "type": "shield",
+              "count": 4
+            },
+            {
+              "type": "flash",
+              "count": 2
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_66d48dffb977_mpizb58w_4_paid_expensive",
+        "name": "Theseus",
+        "tier": "paid_expensive",
+        "price": 1330,
+        "colors": {
+          "shirt": 4380530,
+          "pants": 5671464,
+          "hair": 10072628
+        },
+        "tint": 6806926,
+        "character": "char7",
+        "maxCustomSlots": 6,
+        "stackSize": 10,
+        "inventory": {
+          "slots": [
+            {
+              "type": "bomb_wide",
+              "count": 5
+            },
+            {
+              "type": "fart_escape",
+              "count": 5
+            },
+            {
+              "type": "delay_tricky",
+              "count": 5
+            },
+            {
+              "type": "phosphorus",
+              "count": 1
             },
             null,
             null
@@ -249,19 +249,13 @@
         }
       }
     ],
-    "boughtTemplateIds": [
-      "cycle_p_66d48dffb977_mp5ou9p7_2_paid"
-    ]
+    "boughtTemplateIds": []
   },
   "factories": {
     "1": {
       "firstCycleStartedAt": null,
       "queueLength": 0,
-      "storage": [
-        "flare",
-        "bomb",
-        "flare"
-      ],
+      "storage": [],
       "sessionDone": 0,
       "sessionTotal": 0
     },
@@ -273,10 +267,10 @@
       "sessionTotal": 0
     },
     "3": {
-      "firstCycleStartedAt": 1779405962090,
-      "queueLength": 1,
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
       "storage": [],
-      "sessionDone": 0,
+      "sessionDone": 1,
       "sessionTotal": 1
     },
     "4": {

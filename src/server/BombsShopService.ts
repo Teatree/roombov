@@ -13,7 +13,7 @@
  *  - Clicking a different bomb replaces the slot (old contents return to stockpile).
  */
 
-import type { BombType } from '../shared/types/bombs.ts';
+import type { BombType, BombCategory } from '../shared/types/bombs.ts';
 import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import type { OwnedBomberman } from '../shared/types/bomberman.ts';
 import type { TreasureType } from '../shared/config/treasures.ts';
@@ -52,6 +52,7 @@ export class BombsShopService {
     price: number;
     treasureCost?: { type: TreasureType; amount: number };
     description: string;
+    category: BombCategory;
   }[] {
     return PURCHASABLE_BOMBS.map((type) => {
       const def = BOMB_CATALOG[type];
@@ -61,6 +62,7 @@ export class BombsShopService {
         price: def.price,
         ...(def.treasureCost ? { treasureCost: { ...def.treasureCost } } : {}),
         description: def.description,
+        category: def.category,
       };
     });
   }
