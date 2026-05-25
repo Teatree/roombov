@@ -79,7 +79,9 @@ export const CHEST_CONFIG: Record<1 | 2 | 3, ChestTierConfig> = {
     treasureSlotCount: [3, 3],
     treasureWeights: { ...ACTIVE_TREASURE_WEIGHTS },
     coinRange: [50, 100],
-    keyWeight: 50,
+    // Halved (was 50) when CHEST_SPAWN_TABLE tier-1 count doubled 7→14,
+    // so the overall per-tier key share stays the same.
+    keyWeight: 25,
   },
   2: {
     totalBombs: 8,
@@ -145,7 +147,7 @@ export const CHEST_CONFIG: Record<1 | 2 | 3, ChestTierConfig> = {
  * roughly in proportion to its count).
  */
 export const CHEST_SPAWN_TABLE: Array<{ tier: 1 | 2 | 3; count: number }> = [
-  { tier: 1, count: 7 },
+  { tier: 1, count: 14 },
   { tier: 2, count: 3 },
   { tier: 3, count: 1 },
 ];

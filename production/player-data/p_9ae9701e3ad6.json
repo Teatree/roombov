@@ -39,7 +39,13 @@
       "sourceTemplateId": "cycle_1776035705642_1_free",
       "character": "char1",
       "maxCustomSlots": 4,
-      "stackSize": 5
+      "stackSize": 5,
+      "sp": 0,
+      "upgrades": {
+        "cap": 0,
+        "stack": 0,
+        "hp": 0
+      }
     }
   ],
   "equippedBombermanId": "owned_p_9ae9701e3ad6_1776035776956_bpcc",

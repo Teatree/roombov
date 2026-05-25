@@ -373,6 +373,7 @@ export class TutorialMatchBackend implements MatchBackend {
           endReason: 'all_escaped',
           escapedPlayerIds: [TUTORIAL_PLAYER_ID],
           treasuresEarned,
+          spEarned: {},
         });
       },
       spawnExclamation: (tileX, tileY, color) => {
@@ -459,6 +460,7 @@ export class TutorialMatchBackend implements MatchBackend {
       onHatchIdleTurns: 0,
       statusEffects: [],
       meleeTrapMode: false,
+      sp: 0,
     };
 
     return {

@@ -41,7 +41,13 @@
       "purchasedAt": 1776553558789,
       "sourceTemplateId": "cycle_1776553528639_4_paid_expensive",
       "maxCustomSlots": 6,
-      "stackSize": 9
+      "stackSize": 9,
+      "sp": 0,
+      "upgrades": {
+        "cap": 0,
+        "stack": 0,
+        "hp": 0
+      }
     }
   ],
   "equippedBombermanId": "owned_p_c6cbf47f5bfc_1776553558789_vdwe",

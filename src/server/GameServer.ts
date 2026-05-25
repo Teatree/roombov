@@ -2,12 +2,13 @@ import type { Server, Socket } from 'socket.io';
 import type {
   AuthMsg, BuyBombermanMsg, BuyBombMsg, ClientToServerEvents, EquipBombermanMsg,
   EquipBombMsg, FactoryClaimMsg, FactoryStartMsg, GamblerStreetBetMsg, JoinMatchMsg,
-  LootBombMsg, PlayerActionMsg, ServerToClientEvents, UnequipBombMsg,
+  LootBombMsg, PlayerActionMsg, ServerToClientEvents, UnequipBombMsg, UpgradeBombermanMsg,
 } from '../shared/types/messages.ts';
 import type { MatchConfig } from '../shared/types/match.ts';
 import { PlayerStore } from './PlayerStore.ts';
 import { BombermanShopService } from './BombermanShopService.ts';
 import { BombsShopService } from './BombsShopService.ts';
+import { BombermanUpgradeService } from './BombermanUpgradeService.ts';
 import { GamblerStreetService } from './GamblerStreetService.ts';
 import { FactoryService } from './FactoryService.ts';
 import { MatchScheduler } from './MatchScheduler.ts';
@@ -27,6 +28,7 @@ export class GameServer {
   private playerStore: PlayerStore;
   private bombermanShop: BombermanShopService;
   private bombsShop: BombsShopService;
+  private upgradeService: BombermanUpgradeService;
   private gamblerStreet: GamblerStreetService;
   private factories: FactoryService;
   private matchScheduler: MatchScheduler;
@@ -44,6 +46,7 @@ export class GameServer {
     // own update on purchase.
     this.bombermanShop = new BombermanShopService(playerStore);
     this.bombsShop = new BombsShopService(playerStore);
+    this.upgradeService = new BombermanUpgradeService(playerStore);
     this.gamblerStreet = new GamblerStreetService(playerStore);
     this.factories = new FactoryService(playerStore);
     this.matchScheduler = new MatchScheduler();
@@ -62,6 +65,7 @@ export class GameServer {
       socket.on('buy_bomb', (msg) => this.onBuyBomb(socket, msg));
       socket.on('equip_bomb', (msg) => this.onEquipBomb(socket, msg));
       socket.on('unequip_bomb', (msg) => this.onUnequipBomb(socket, msg));
+      socket.on('upgrade_bomberman', (msg) => this.onUpgradeBomberman(socket, msg));
       socket.on('match_listings_request', () => this.sendListings(socket));
       socket.on('join_match', (msg) => this.onJoinMatch(socket, msg));
       socket.on('leave_match', () => this.onLeaveMatch(socket));
@@ -235,6 +239,18 @@ export class GameServer {
       socket.emit('shop_result', { ok: true, action: 'equip_bomb', message: 'Equipped!' });
     } else {
       socket.emit('shop_result', { ok: false, action: 'equip_bomb', reason: result.reason });
+    }
+  }
+
+  private async onUpgradeBomberman(socket: TypedSocket, msg: UpgradeBombermanMsg): Promise<void> {
+    const profile = this.getProfileForSocket(socket);
+    if (!profile) return;
+    const result = await this.upgradeService.applyUpgrade(profile, msg.ownedId, msg.track);
+    if (result.ok) {
+      socket.emit('profile', { profile });
+      socket.emit('shop_result', { ok: true, action: 'upgrade_bomberman', message: 'Upgraded!' });
+    } else {
+      socket.emit('shop_result', { ok: false, action: 'upgrade_bomberman', reason: result.reason });
     }
   }
 

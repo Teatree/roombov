@@ -8,6 +8,9 @@ import { ProfileStore } from '../ClientState.ts';
 import { FACTORY_IDS, projectedClaimable } from '@shared/types/factory.ts';
 import { FACTORIES } from '@shared/config/factories.ts';
 import type { BombType } from '@shared/types/bombs.ts';
+import { BALANCE } from '@shared/config/balance.ts';
+import { tiersRemaining } from '@shared/utils/bomberman-stats.ts';
+import type { OwnedBomberman } from '@shared/types/bomberman.ts';
 
 export interface MatchResultsData {
   outcome: 'escaped' | 'died' | 'lost';
@@ -22,6 +25,8 @@ export interface MatchResultsData {
   killerName: string | null;
   /** Name of your Bomberman (died only — shown as "R.I.P. <name>"). */
   myBombermanName: string | null;
+  /** SP earned this match (banked on escape, 0 on death). */
+  spEarned: number;
 }
 
 /**
@@ -48,6 +53,7 @@ export class ResultsScene extends Phaser.Scene {
       kills: 0,
       killerName: null,
       myBombermanName: null,
+      spEarned: 0,
     };
   }
 
@@ -183,6 +189,46 @@ export class ResultsScene extends Phaser.Scene {
       }).setOrigin(0.5);
     }
 
+    // SP earned (escaped only — dead players lose accumulated SP).
+    if (r.outcome === 'escaped' && r.spEarned > 0) {
+      this.add.text(width / 2, height * 0.74, `+${r.spEarned} SP banked to ${r.myBombermanName ?? 'Bomberman'}`, {
+        fontSize: '16px', color: '#5db5ff', fontFamily: 'monospace', fontStyle: 'bold',
+      }).setOrigin(0.5);
+    }
+
+    // "Upgrade Bomberman" text button — same chrome as the back / Factory
+    // buttons. Opens the upgrade popup for the currently-equipped Bomberman.
+    // Only shown for escapees (dead players have no Bomberman to upgrade).
+    if (r.outcome === 'escaped') {
+      const upgradeBtn = this.add.text(width / 2, height * 0.78, '[ UPGRADE BOMBERMAN ]', {
+        fontSize: '18px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
+      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+      upgradeBtn.on('pointerover', () => upgradeBtn.setColor('#fff37a'));
+      upgradeBtn.on('pointerout', () => upgradeBtn.setColor('#ffd944'));
+      upgradeBtn.on('pointerdown', () => {
+        const p = ProfileStore.get();
+        if (!p || !p.equippedBombermanId) return;
+        this.scene.launch('BombermanUpgradeScene', { ownedId: p.equippedBombermanId });
+      });
+
+      // Breadcrumb pip — same widget as on the BombermanSelector card. Shown
+      // when ANY upgrade track is currently affordable for the equipped
+      // Bomberman.
+      const profileForPip = ProfileStore.get();
+      if (profileForPip) {
+        const equipped = profileForPip.ownedBombermen.find(b => b.id === profileForPip.equippedBombermanId);
+        if (equipped && this.hasAffordableUpgrade(equipped, profileForPip.coins, profileForPip.treasures)) {
+          const pip = this.add.graphics();
+          const px = upgradeBtn.x + upgradeBtn.displayWidth / 2 + 10;
+          const py = upgradeBtn.y - upgradeBtn.displayHeight / 2 + 4;
+          pip.fillStyle(0x44ff88, 1);
+          pip.fillCircle(px, py, 5);
+          pip.lineStyle(1, 0x0a3a18, 1);
+          pip.strokeCircle(px, py, 5);
+        }
+      }
+    }
+
     // Back button
     const playBtn = this.add.text(width / 2, height * 0.82, '[ BACK TO LOBBY ]', {
       fontSize: '24px', color: '#44aaff', fontFamily: 'monospace',
@@ -233,6 +279,29 @@ export class ResultsScene extends Phaser.Scene {
     }
 
     this.input.keyboard?.on('keydown-ESC', () => this.backToLobby());
+  }
+
+  /** True when any of the three upgrade tracks has a tier the player can
+   *  afford right now (SP + coins + treasure). Drives the breadcrumb pip on
+   *  the [ UPGRADE BOMBERMAN ] button. Mirrors the same check in
+   *  BombermanSelector so the two pips agree. */
+  private hasAffordableUpgrade(
+    owned: OwnedBomberman,
+    coins: number,
+    treasures: Partial<Record<string, number>>,
+  ): boolean {
+    for (const track of ['cap', 'stack', 'hp'] as const) {
+      if (tiersRemaining(owned, track) <= 0) continue;
+      const applied = owned.upgrades?.[track] ?? 0;
+      const tier = BALANCE.upgrades[track].tiers[applied];
+      if (!tier) continue;
+      if ((owned.sp ?? 0) < tier.sp) continue;
+      if (coins < tier.coins) continue;
+      const treasureType = BALANCE.upgrades[track].treasure;
+      if ((treasures[treasureType] ?? 0) < tier.treasure) continue;
+      return true;
+    }
+    return false;
   }
 
   /**

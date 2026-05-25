@@ -52,8 +52,8 @@ describe('FactoryService', () => {
   });
 
   it('test_factory_startCycle_deductsCost_andQueuesCycle', async () => {
-    // Arrange — Factory #1 costs mushrooms x 25.
-    const profile = makeProfile({ treasures: { mushrooms: 50 } });
+    // Arrange — Factory #1 costs mushrooms x 50 (post-2x cost rebalance).
+    const profile = makeProfile({ treasures: { mushrooms: 100 } });
     const svc = makeService(() => 0, () => 1_000);
 
     // Act
@@ -61,7 +61,7 @@ describe('FactoryService', () => {
 
     // Assert
     expect(result.ok).toBe(true);
-    expect(profile.treasures.mushrooms).toBe(25);
+    expect(profile.treasures.mushrooms).toBe(50);
     expect(profile.factories[1].queueLength).toBe(1);
     expect(profile.factories[1].firstCycleStartedAt).toBe(1_000);
   });

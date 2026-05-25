@@ -27,7 +27,7 @@ const REPLACEMENT_DELAY_MAX_MS = 700;
 // rapid back-to-back replacements would land at near-identical countdowns,
 // making the lobby UI a confusing wall of "5s 5s 5s" cards. 2 s gives the
 // row a clear left-to-right order: leftmost expires first, then the next.
-const MIN_STAGGER_MS = 2000;
+const MIN_STAGGER_MS = 10000;
 
 let nextId = 0;
 function genMatchId(): string { return `match_${Date.now()}_${nextId++}`; }

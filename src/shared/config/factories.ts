@@ -37,7 +37,7 @@ export const FACTORIES: Record<FactoryId, FactoryConfig> = {
     name: 'SPROKKET-5K',
     description: 'Produces a random weak bomb each cycle.',
     cycleDurationMs: 5 * MIN,
-    cost: { mushrooms: 25 },
+    cost: { mushrooms: 50 },
     bombWeights: {
       bomb: 10,
       delay_tricky: 10,
@@ -50,7 +50,7 @@ export const FACTORIES: Record<FactoryId, FactoryConfig> = {
     name: 'KLANGWERKS-88',
     description: 'Produces a random tactical bomb each cycle.',
     cycleDurationMs: 10 * MIN,
-    cost: { coffee: 10, mushrooms: 25 },
+    cost: { coffee: 20, mushrooms: 50 },
     bombWeights: {
       bomb_wide: 10,
       flash: 10,
@@ -63,7 +63,7 @@ export const FACTORIES: Record<FactoryId, FactoryConfig> = {
     name: 'GLOMBULATOR',
     description: 'Produces a random utility bomb each cycle.',
     cycleDurationMs: 20 * MIN,
-    cost: { grapes: 10, coffee: 15 },
+    cost: { grapes: 20, coffee: 30 },
     bombWeights: {
       bomb_wide: 5,
       banana: 10,
@@ -77,7 +77,7 @@ export const FACTORIES: Record<FactoryId, FactoryConfig> = {
     name: 'DETONATORIUM',
     description: 'Produces a random super bomb each cycle.',
     cycleDurationMs: 30 * MIN,
-    cost: { lanterns: 8, grapes: 15, mushrooms: 50 },
+    cost: { lanterns: 16, grapes: 30, mushrooms: 100 },
     bombWeights: {
       contact: 10,
       molotov: 10,

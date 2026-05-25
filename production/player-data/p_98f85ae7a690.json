@@ -41,7 +41,13 @@
         ]
       },
       "purchasedAt": 1778374061599,
-      "sourceTemplateId": "cycle_p_98f85ae7a690_moz1zzhd_0_free"
+      "sourceTemplateId": "cycle_p_98f85ae7a690_moz1zzhd_0_free",
+      "sp": 0,
+      "upgrades": {
+        "cap": 0,
+        "stack": 0,
+        "hp": 0
+      }
     }
   ],
   "equippedBombermanId": "owned_p_98f85ae7a690_1778374061599_su9n",

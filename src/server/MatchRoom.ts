@@ -27,6 +27,7 @@ import { BotPlayer } from './BotPlayer.ts';
 import { ScavPlayer } from './ScavPlayer.ts';
 import { rollBombermanName } from '../shared/config/bomberman-names.ts';
 import { TIER_CONFIG, defaultStatsForTier } from '../shared/config/bomberman-tiers.ts';
+import { effectiveMaxCustomSlots, effectiveMaxHp, effectiveStackSize } from '../shared/utils/bomberman-stats.ts';
 import { resolveTurn } from '../shared/systems/TurnResolver.ts';
 import { createSeededRandom, seededRandInt, seededShuffle } from '../shared/utils/seeded-random.ts';
 import { rollBombLoot, rollTreasureLoot } from '../shared/utils/loot-roll.ts';
@@ -64,6 +65,9 @@ export class MatchRoom {
    *  drain in the escape handler. Used by `match_end` to ship the haul to
    *  every client (the live `b.treasures` is empty by then). */
   private escapedTreasureSnapshots = new Map<string, TreasureBundle>();
+  /** Per-player SP earned this match. Captured at escape time so the
+   *  `match_end` payload can report it after `bm.sp` has been drained. */
+  private spEarnedSnapshots = new Map<string, number>();
   private onEnd: () => void;
 
   constructor(
@@ -186,6 +190,8 @@ export class MatchRoom {
             inventory: { slots },
             purchasedAt: Date.now(),
             sourceTemplateId: 'bot',
+            sp: 0,
+            upgrades: { cap: 0, stack: 0, hp: 0 },
           }],
           equippedBombermanId: `bot_bm_${i}`,
           bombStockpile: {},
@@ -224,8 +230,17 @@ export class MatchRoom {
       // Fallback stats if equipped is somehow missing (shouldn't happen):
       // give the participant a free-tier shape so the match doesn't crash.
       const fallback = defaultStatsForTier('free');
-      const maxCustomSlots = equipped?.maxCustomSlots ?? fallback.maxCustomSlots;
-      const stackSize = equipped?.stackSize ?? fallback.stackSize;
+      // Effective stats fold in any persistent upgrades the player has
+      // bought for this Bomberman. Untouched if no upgrades applied.
+      const maxCustomSlots = equipped
+        ? effectiveMaxCustomSlots(equipped)
+        : fallback.maxCustomSlots;
+      const stackSize = equipped
+        ? effectiveStackSize(equipped)
+        : fallback.stackSize;
+      const maxHp = equipped
+        ? effectiveMaxHp(equipped)
+        : BALANCE.match.bombermanMaxHp;
       return {
         playerId: p.playerId,
         isBot: p.socketId === null,
@@ -235,7 +250,7 @@ export class MatchRoom {
         character: equipped?.character ?? 'char1',
         x: spawn.x,
         y: spawn.y,
-        hp: BALANCE.match.bombermanMaxHp,
+        hp: maxHp,
         alive: true,
         treasures: {},
         coins: 0,
@@ -243,7 +258,15 @@ export class MatchRoom {
         maxCustomSlots,
         stackSize,
         inventory: equipped
-          ? { slots: equipped.inventory.slots.map(s => (s ? { ...s } : null)) }
+          ? {
+              // Pad with nulls if CAP upgrades have widened the effective slot
+              // count past the persisted (base-length) inventory array.
+              slots: (() => {
+                const cloned = equipped.inventory.slots.map(s => (s ? { ...s } : null));
+                while (cloned.length < maxCustomSlots) cloned.push(null);
+                return cloned.slice(0, maxCustomSlots);
+              })(),
+            }
           : { slots: new Array(maxCustomSlots).fill(null) },
         bleedingTurns: 0,
         escaped: false,
@@ -253,6 +276,7 @@ export class MatchRoom {
         onHatchIdleTurns: 0,
         statusEffects: [],
         meleeTrapMode: false,
+        sp: 0,
       };
     });
 
@@ -565,6 +589,19 @@ export class MatchRoom {
         ownedBomberman.inventory = {
           slots: bm.inventory.slots.map(s => (s ? { ...s } : null)),
         };
+        // Bank Skill Points earned this match. Dropped on death (handled
+        // by simply NOT crediting in the death branch above).
+        const earned = bm.sp;
+        const before = ownedBomberman.sp ?? 0;
+        ownedBomberman.sp = before + earned;
+        this.spEarnedSnapshots.set(escapedPlayerId, earned);
+        bm.sp = 0;
+        console.log(`[SP-BANK] player=${escapedPlayerId} bm=${ownedBomberman.id} earned=${earned} before=${before} after=${ownedBomberman.sp}`);
+      } else {
+        // If we hit this, escape SP for this player is lost — match_end
+        // shows nothing AND nothing banks. Common cause: bm.bombermanId
+        // doesn't match any owned bomberman (e.g. legacy 'none' fallback).
+        console.warn(`[SP-BANK] no ownedBomberman for player=${escapedPlayerId} (bm.bombermanId=${bm.bombermanId}); SP earned=${bm.sp} is lost`);
       }
       this.playerStore.save(profile).catch(() => {});
       if (participant.socketId) {
@@ -699,6 +736,13 @@ export class MatchRoom {
         this.state.bombermen.map(b => [
           b.playerId,
           { ...(this.escapedTreasureSnapshots.get(b.playerId) ?? b.treasures) },
+        ]),
+      ),
+      // SP only banks on escape; for dead players we report 0 (SP discarded).
+      spEarned: Object.fromEntries(
+        this.state.bombermen.map(b => [
+          b.playerId,
+          this.spEarnedSnapshots.get(b.playerId) ?? 0,
         ]),
       ),
     });

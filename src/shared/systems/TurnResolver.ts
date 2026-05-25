@@ -577,7 +577,14 @@ export function resolveTurn(
         bomberman.keys = (bomberman.keys ?? 0) + 1;
         events.push({ kind: 'key_pickup', playerId: bomberman.playerId, x: chest.x, y: chest.y, source: 'chest', newCount: bomberman.keys });
       }
-      if (!chest.opened) chest.opened = true;
+      if (!chest.opened) {
+        chest.opened = true;
+        // First-opener SP credit. Bots and scavs accumulate it but never
+        // bank it — keeps the resolver branch-free.
+        if (!bomberman.isScav) {
+          bomberman.sp += BALANCE.upgrades.sp.perChestOpen;
+        }
+      }
     }
 
     // Body treasures + coins — auto-transfer on walk-over (bombs are looted manually via loot panel)
@@ -1660,6 +1667,7 @@ export function resolveTurn(
         onHatchIdleTurns: 0,
         statusEffects: [],
         meleeTrapMode: false,
+        sp: 0,
       };
       state.bombermen.push(scav);
       events.push({ kind: 'scav_spawned', playerId, x: tile.x, y: tile.y });
@@ -1779,7 +1787,21 @@ export function resolveTurn(
         b.meleeTrapMode = false;
         events.push({ kind: 'melee_trap_changed', playerId: b.playerId, active: false });
       }
-      events.push({ kind: 'died', playerId: b.playerId, x: b.x, y: b.y, killerId: lastDamagedBy.get(b.playerId) ?? null });
+      const killerId = lastDamagedBy.get(b.playerId) ?? null;
+      // Kill SP credit. Self-damage (killer==victim) or environmental
+      // deaths (killerId==null) award nothing. Scavs can't bank, but we
+      // still credit so bots/scavs that "kill" each other don't get
+      // special-cased.
+      if (killerId && killerId !== b.playerId) {
+        const killer = state.bombermen.find(k => k.playerId === killerId);
+        if (killer && !killer.isScav) {
+          const reward = b.isScav
+            ? BALANCE.upgrades.sp.perScavKill
+            : BALANCE.upgrades.sp.perPlayerKill;
+          killer.sp += reward;
+        }
+      }
+      events.push({ kind: 'died', playerId: b.playerId, x: b.x, y: b.y, killerId });
       // Drop a body with current treasures + inventory
       const bombs: { type: BombType; count: number }[] = [];
       for (const slot of b.inventory.slots) {
@@ -1873,6 +1895,16 @@ export function resolveTurn(
       events.push({ kind: 'escaped', playerId: b.playerId, treasures: { ...b.treasures }, hatchX, hatchY });
       const already = state.brokenHatches.some(t => t.x === hatchX && t.y === hatchY);
       if (!already) state.brokenHatches.push({ x: hatchX, y: hatchY });
+    }
+  }
+
+  // --- 10.5 Survival SP ---
+  // +1 SP per `perSurvivalTurns` turns alive. Fires only on the milestone
+  // turn (turn % N == 0) so a 30-turn match awards 6 SP at perSurvivalTurns=5.
+  // Skip scavs — they don't bank.
+  if (state.turnNumber > 0 && state.turnNumber % BALANCE.upgrades.sp.perSurvivalTurns === 0) {
+    for (const b of state.bombermen) {
+      if (b.alive && !b.escaped && !b.isScav) b.sp += 1;
     }
   }
 

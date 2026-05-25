@@ -39,7 +39,13 @@
       "purchasedAt": 1776594958250,
       "sourceTemplateId": "cycle_1776594940811_1_free",
       "maxCustomSlots": 4,
-      "stackSize": 5
+      "stackSize": 5,
+      "sp": 0,
+      "upgrades": {
+        "cap": 0,
+        "stack": 0,
+        "hp": 0
+      }
     }
   ],
   "equippedBombermanId": "owned_p_5ddddd91004a_1776594958250_nyp7",

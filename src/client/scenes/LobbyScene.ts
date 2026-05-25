@@ -272,10 +272,6 @@ export class LobbyScene extends Phaser.Scene {
       fontSize: '18px', color: '#fff', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5));
 
-    container.add(this.add.text(0, -CARD_HEIGHT / 2 + 56, 'Turn-based arena', {
-      fontSize: '11px', color: '#888', fontFamily: 'monospace',
-    }).setOrigin(0.5));
-
     const playerCountText = this.add.text(0, 0, `Players: ${listing.playerCount}/${cfg.maxPlayers}`, {
       fontSize: '14px', color: '#ccc', fontFamily: 'monospace',
     }).setOrigin(0.5);

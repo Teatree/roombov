@@ -48,7 +48,13 @@
         ]
       },
       "purchasedAt": 1778540160675,
-      "sourceTemplateId": "cycle_p_badeb10f19b4_mp1sw1w7_2_paid"
+      "sourceTemplateId": "cycle_p_badeb10f19b4_mp1sw1w7_2_paid",
+      "sp": 0,
+      "upgrades": {
+        "cap": 0,
+        "stack": 0,
+        "hp": 0
+      }
     }
   ],
   "equippedBombermanId": "owned_p_badeb10f19b4_1778540160675_bh9d",

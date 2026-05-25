@@ -409,6 +409,7 @@ export class TutorialDirector {
             onHatchIdleTurns: 0,
             statusEffects: [],
             meleeTrapMode: false,
+            sp: 0,
           });
         });
         return false;

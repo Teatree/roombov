@@ -26,7 +26,7 @@ npm run typecheck    # tsc --noEmit
 npm run convert-map  # tools/tiled-to-roombov.ts (Tiled JSON → map JSON)
 ```
 
-Dev loop: run `dev:server` and `dev` in parallel. The client hits `http://localhost:5173`; socket traffic is proxied to the server.
+Dev loop: run `dev:server` and `dev` in parallel. The client hits `http://localhost:5173`; socket traffic is proxied to the server. `src/client/main.ts` exposes the Phaser game on `window.__game` for Playwright / manual scene navigation (e.g. `__game.scene.start('BombsShop')`).
 
 ## Architecture
 
@@ -60,13 +60,13 @@ Socket event map lives on `GameServer` (`auth`, `join_match`, `player_action`, `
 
 **Gambler Street** is a meta-progression subsystem (seeded RNG, bet state machine): `src/shared/systems/GamblerStreetEngine.ts` runs pure in shared/; `src/shared/config/gambler-street.ts` holds tuning; `src/server/GamblerStreetService.ts` is the authoritative wrapper (lazy ticking, bet resolution, persistence via `PlayerStore`); `src/client/scenes/GamblerStreetScene.ts` renders the UI. **Currently shelved post-NEW_META §8** — scene is unregistered in `src/client/main.ts` but files are preserved for revival.
 
-**Factory** is the active post-NEW_META crafting/production meta system. `src/shared/config/factory.ts` defines 4 named machines with escalating costs and cycle times; machine 4 (`DETONATORIUM`) produces super bombs. `src/client/scenes/FactoryScene.ts` is the 4-machine crafting room. A claimable-bomb badge surfaces on the Factory button in both `MainMenuScene` and `ResultsScene`.
+**Factory** is the active post-NEW_META crafting/production meta system. `src/shared/config/factories.ts` defines 4 named machines with escalating costs and cycle times; machine 4 (`DETONATORIUM`) produces super bombs. `src/client/scenes/FactoryScene.ts` is the 4-machine crafting room. A claimable-bomb badge surfaces on the Factory button in both `MainMenuScene` and `ResultsScene`.
 
 ### Client flow
 
 `src/client/main.ts` registers Phaser scenes (order is significant): `BootScene → MainMenuScene → LobbyScene → BombermanShopScene → BombsShopScene → FactoryScene → MatchScene → ResultsScene → TutorialOverlayScene → TooltipScene`. (`GamblerStreetScene` is intentionally unregistered post-NEW_META §8; see Gambler Street note below.)
 
-Rendering is split into systems under `src/client/systems/` (`MapRenderer`, `BombRenderer`, `FogRenderer`, `BombermanSpriteSystem`, `BombermanAnimations`, `ActivityIndicator`, etc.). `MatchScene` wires them to state updates.
+Rendering is split into systems under `src/client/systems/` (`MapRenderer`, `BombRenderer`, `FogRenderer`, `BombermanSpriteSystem`, `BombermanAnimations`, `ActivityIndicator`, etc.). Reusable UI widgets also live there (`TreasureListWidget`, `BombShopTooltip`, `TierInfoBadge`, `NotificationBadge`, `BombermanSelector`, `BombIcons`, `TreasureIcons`). `MatchScene` wires the rendering systems to state updates.
 
 ### The `MatchBackend` abstraction (client-side)
 
@@ -81,7 +81,7 @@ Rendering is split into systems under `src/client/systems/` (`MapRenderer`, `Bom
 
 See `src/shared/types/match.ts` for the full `MatchState` shape. Key nouns: `BombermanState`, `Chest`, `DoorInstance`, `DroppedBody`, `ActiveFlare`, `BombInstance`, `FireTile`, `LightTile`, `SmokeCloud`, `Mine`, `PhosphorusPending`. All bomb behavior is data-driven from `src/shared/config/bombs.ts` + `BOMB_CATALOG`; balance constants in `src/shared/config/balance.ts`; chest loot (bombs **and** treasures) in `src/shared/config/chests.ts`. **Bomberman tiers** (`src/shared/config/bomberman-tiers.ts`) drive inventory slot counts, treasure stack caps, and shop prices per tier — touch this when adjusting character progression.
 
-**Treasures** are the in-match currency picked up from chests + dead bodies (10 types, defined in `src/shared/config/treasures.ts`). Stored as a sparse `TreasureBundle = Partial<Record<TreasureType, number>>` on `Chest`, `DroppedBody`, `BombermanState`, and `PlayerProfile`. Rolled with `rollTreasureLoot` (mirrors `rollBombLoot` — pick K unique types, distribute total by weight). Persistent profile stash is shown by `TreasureListWidget` in MainMenu, MatchScene HUD (top-right), Results, and Gambler Street. Coins (`PlayerProfile.coins`) remain the soft currency for shops but are **not** earned in-match. Persistent `PlayerProfile` instances are stored as JSON files under `production/player-data/` by `PlayerStore`.
+**Treasures** are the in-match currency picked up from chests + dead bodies (10 types, defined in `src/shared/config/treasures.ts`). Stored as a sparse `TreasureBundle = Partial<Record<TreasureType, number>>` on `Chest`, `DroppedBody`, `BombermanState`, and `PlayerProfile`. Rolled with `rollTreasureLoot` (mirrors `rollBombLoot` — pick K unique types, distribute total by weight). Persistent profile stash is shown by `TreasureListWidget` (horizontal layout, right-aligned) in MainMenu, MatchScene HUD, Results, Bombs Shop, and Factory. Coins (`PlayerProfile.coins`) remain the soft currency for shops but are **not** earned in-match. Persistent `PlayerProfile` instances are stored as JSON files under `production/player-data/` by `PlayerStore`.
 
 Maps are authored in Tiled (`public/maps/*.tmj`) and converted to JSON under `src/shared/maps/` via `npm run convert-map` (`tools/tiled-to-roombov.ts`); the pipeline expects a `Collision` layer. At runtime, `src/shared/maps/map-loader.ts` resolves a map by ID through three strategies in order: static imports (`STATIC_MAPS` — must be edited when adding a shippable map), Vite `import.meta.glob` (browser only, for iteration), and a Node `fs` fallback (server only).
 
@@ -113,3 +113,5 @@ The following files are auto-included by Claude Code and contain standards, coor
 - `docs/keys-system.md` — keys/escape-hatch design (15 keys per floor, 3 keys per player to escape)
 - `docs/escape-hatch-rework.md` — current hatch behavior and UX (lock badge, ready-to-escape indicator)
 - `docs/bot-behavior.md` — AI behavior tree and decision-making for `BotPlayer.ts`
+- `docs/BOMB_SHOP_CHANGE.md` — Bombs Shop three-panel redesign spec (implemented; kept for reference on tooltip / category / panel intent)
+- `docs/sprite-animation-guide.md` — sprite-sheet authoring + `BombermanAnimations` conventions

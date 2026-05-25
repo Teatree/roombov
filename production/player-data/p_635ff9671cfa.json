@@ -41,7 +41,13 @@
         ]
       },
       "purchasedAt": 1778099687331,
-      "sourceTemplateId": "cycle_p_635ff9671cfa_mouin5oz_0_free"
+      "sourceTemplateId": "cycle_p_635ff9671cfa_mouin5oz_0_free",
+      "sp": 0,
+      "upgrades": {
+        "cap": 0,
+        "stack": 0,
+        "hp": 0
+      }
     },
     {
       "id": "owned_p_635ff9671cfa_1778099689025_o584",
@@ -74,7 +80,13 @@
         ]
       },
       "purchasedAt": 1778099689025,
-      "sourceTemplateId": "cycle_p_635ff9671cfa_mouin5oz_1_free"
+      "sourceTemplateId": "cycle_p_635ff9671cfa_mouin5oz_1_free",
+      "sp": 0,
+      "upgrades": {
+        "cap": 0,
+        "stack": 0,
+        "hp": 0
+      }
     }
   ],
   "equippedBombermanId": "owned_p_635ff9671cfa_1778099687331_a1x1",

@@ -1090,6 +1090,13 @@ export class MatchScene extends Phaser.Scene {
       ?? (this.myEscapeTreasures && hasAnyTreasure(this.myEscapeTreasures) ? { ...this.myEscapeTreasures } : null)
       ?? (me?.treasures ? { ...me.treasures } : {});
 
+    // SP earned this match — ONLY trust the server's authoritative
+    // match_end payload. Falling back to `me.sp` reads the in-match
+    // accumulator, which can be non-zero even if the server's bank-on-escape
+    // never ran (e.g. stale server holding pre-bank-code in memory). That
+    // would lie to the player about a credit they didn't actually receive.
+    const spEarned = msg?.spEarned?.[this.myPlayerId ?? ''] ?? 0;
+
     this.scene.start('ResultsScene', {
       outcome,
       treasuresEarned: myTreasures,
@@ -1098,6 +1105,7 @@ export class MatchScene extends Phaser.Scene {
       kills: this.myKills,
       killerName: this.myKillerName,
       myBombermanName: me ? (this.state?.bombermen.find(b => b.playerId === this.myPlayerId) as any)?.name ?? null : null,
+      spEarned,
     });
   }
 
@@ -1828,18 +1836,14 @@ export class MatchScene extends Phaser.Scene {
   /** Lazy-create the escape banner + ring (hidden). Idempotent. */
   private ensureEscapeIndicator(): void {
     if (this.escapeBanner) return;
-    // Compact pill: 44×10, dark green fill + thin green outline.
+    // Hourglass glyph only — no pill, no label. The countdown ring around
+    // the player already conveys the timing.
     const c = this.add.container(0, 0).setDepth(180);
-    const bg = this.add.graphics();
-    bg.fillStyle(0x0a3a18, 0.85);
-    bg.fillRoundedRect(-22, -5, 44, 10, 2);
-    bg.lineStyle(1, 0x44ff88, 1);
-    bg.strokeRoundedRect(-22, -5, 44, 10, 2);
-    const txt = this.add.text(0, 0, 'STAY TO ESCAPE', {
-      fontSize: '4px', color: '#88ffaa', fontFamily: 'Arial, sans-serif', fontStyle: 'bold',
-      stroke: '#000000', strokeThickness: 1,
+    const txt = this.add.text(0, 0, '⌛', {
+      fontSize: '12px', color: '#88ffaa', fontFamily: 'Arial, sans-serif',
+      stroke: '#000000', strokeThickness: 2,
     }).setOrigin(0.5, 0.5);
-    c.add([bg, txt]);
+    c.add(txt);
     if (this.hudCamera) this.hudCamera.ignore(c);
     this.escapeBanner = c;
     this.escapeBannerPulseTween = this.tweens.add({
@@ -3245,6 +3249,7 @@ export class MatchScene extends Phaser.Scene {
 
   private renderBombSlots(me: BombermanState): void {
     // Slot layout: 0 = Rock (infinite), 1..maxCustomSlots = custom inventory[0..N-1]
+    const stackLimit = this.localStackSize();
     for (let i = 0; i < this.localTotalSlotCount(); i++) {
       let sub = '';
       let bombType: import('@shared/types/bombs.ts').BombType | null = null;
@@ -3256,7 +3261,7 @@ export class MatchScene extends Phaser.Scene {
         const slot = me.inventory.slots[i - 1];
         if (slot) {
           bombType = slot.type;
-          sub = `x${slot.count}`;
+          sub = `${slot.count}/${stackLimit}`;
         }
       }
 
@@ -3284,6 +3289,25 @@ export class MatchScene extends Phaser.Scene {
         hl.strokeRoundedRect(this.hudTrayX + i * (SLOT_SIZE + SLOT_GAP), this.hudTrayY, SLOT_SIZE, SLOT_SIZE, 4);
       }
     }
+  }
+
+  /** Quick horizontal shake on the slot's "n/N" text — used as cap-reached
+   *  feedback when the player tries to loot a same-type bomb. */
+  private jiggleSlotCount(slotIndex: number): void {
+    const t = this.slotCountTexts[slotIndex];
+    if (!t) return;
+    const baseX = (t as unknown as { __jiggleBaseX?: number }).__jiggleBaseX ?? t.x;
+    (t as unknown as { __jiggleBaseX?: number }).__jiggleBaseX = baseX;
+    this.tweens.killTweensOf(t);
+    t.x = baseX;
+    this.tweens.add({
+      targets: t,
+      x: { from: baseX - 3, to: baseX + 3 },
+      duration: 50,
+      yoyo: true,
+      repeat: 3,
+      onComplete: () => { t.x = baseX; },
+    });
   }
 
   private onSlotClicked(slotIndex: number): void {
@@ -3353,6 +3377,9 @@ export class MatchScene extends Phaser.Scene {
       bombs: Array<{ type: import('@shared/types/bombs.ts').BombType; count: number }>;
       label: string;
       slotCount: number;
+      /** Bombs from bodies show `count/stackSize` to mirror the loadout HUD.
+       *  Chests stay as a flat `xN` because their slot cap is implicit. */
+      stackSize?: number;
     };
 
     const CHEST_LOOT_SLOT_COUNT = 5;
@@ -3376,6 +3403,7 @@ export class MatchScene extends Phaser.Scene {
           bombs: b.bombs.map(bb => ({ type: bb.type, count: bb.count })),
           label: 'BODY LOOT',
           slotCount: b.maxCustomSlots,
+          stackSize: b.stackSize,
         });
       }
     }
@@ -3456,7 +3484,10 @@ export class MatchScene extends Phaser.Scene {
         ).setDisplaySize(28, 28).setDepth(1012));
         this.lootPanelObjects.push(lootIcon);
 
-        const countText = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + 42, `x${bomb.count}`, {
+        const countLabel = src.kind === 'body' && src.stackSize
+          ? `${bomb.count}/${src.stackSize}`
+          : `x${bomb.count}`;
+        const countText = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + 42, countLabel, {
           fontSize: '12px', color: isPending ? '#ffcc44' : '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
         }).setOrigin(0.5, 1).setDepth(1012));
         this.lootPanelObjects.push(countText);
@@ -3607,6 +3638,17 @@ export class MatchScene extends Phaser.Scene {
       if (slot && slot.type === loot.type && slot.count < stackLimit) {
         targetSlot = i + 1; // network convention: 1..maxCustomSlots
         break;
+      }
+    }
+    // Cap-feedback: even if we proceed to use an empty slot, jiggle any
+    // existing same-type slot that's at cap so the player learns where the
+    // ceiling is.
+    if (targetSlot === -1) {
+      for (let i = 0; i < this.localCustomSlotCount(); i++) {
+        const slot = me.inventory.slots[i];
+        if (slot && slot.type === loot.type && slot.count >= stackLimit) {
+          this.jiggleSlotCount(i + 1);
+        }
       }
     }
     // Second: empty slot

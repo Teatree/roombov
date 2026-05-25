@@ -249,6 +249,15 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
     if (typeof b.stackSize !== 'number' || b.stackSize <= 0) {
       b.stackSize = defaults.stackSize;
     }
+    // SP + upgrades backfill for profiles created before the upgrade system.
+    if (typeof b.sp !== 'number' || b.sp < 0) b.sp = 0;
+    if (!b.upgrades || typeof b.upgrades !== 'object') {
+      b.upgrades = { cap: 0, stack: 0, hp: 0 };
+    } else {
+      b.upgrades.cap = typeof b.upgrades.cap === 'number' ? b.upgrades.cap : 0;
+      b.upgrades.stack = typeof b.upgrades.stack === 'number' ? b.upgrades.stack : 0;
+      b.upgrades.hp = typeof b.upgrades.hp === 'number' ? b.upgrades.hp : 0;
+    }
     if (b.inventory && Array.isArray(b.inventory.slots)) {
       if (b.inventory.slots.length > b.maxCustomSlots) {
         // Trim — push any non-null overflow back to the stockpile.

@@ -14,6 +14,8 @@ import { createShopBombermanSprite, pickRandomUiAnimation } from './BombermanAni
 import { bombIconFrame } from './BombIcons.ts';
 import type { OwnedBomberman } from '@shared/types/bomberman.ts';
 import { attachTierInfoBadge } from './TierInfoBadge.ts';
+import { BALANCE } from '@shared/config/balance.ts';
+import { tiersRemaining, isFullyUpgraded } from '@shared/utils/bomberman-stats.ts';
 
 const SELECTOR_CARD_W = 140;
 const SELECTOR_CARD_H = 180;
@@ -69,8 +71,41 @@ export class BombermanSelector {
       const isEquipped = owned.id === profile.equippedBombermanId;
       const x = startX + i * (SELECTOR_CARD_W + SELECTOR_GAP);
       const card = this.buildCard(x, this.y, owned, isEquipped);
+      // Breadcrumb pip — subtle non-red dot when any of the three upgrade
+      // tracks has an affordable next tier for this Bomberman. Suppressed
+      // entirely when nothing is affordable so the pip remains a meaningful
+      // signal rather than constant clutter.
+      if (this.cardHasAffordableUpgrade(owned, profile.coins, profile.treasures)) {
+        const pip = this.scene.add.graphics();
+        pip.fillStyle(0x44ff88, 1);
+        pip.fillCircle(SELECTOR_CARD_W / 2 - 8, -SELECTOR_CARD_H / 2 + 8, 4);
+        pip.lineStyle(1, 0x0a3a18, 1);
+        pip.strokeCircle(SELECTOR_CARD_W / 2 - 8, -SELECTOR_CARD_H / 2 + 8, 4);
+        card.add(pip);
+      }
       this.containers.push(card);
     }
+  }
+
+  /** True if any of the three upgrade tracks has a tier the player can
+   *  afford right now (SP + coins + treasure). Drives the breadcrumb pip. */
+  private cardHasAffordableUpgrade(
+    owned: OwnedBomberman,
+    coins: number,
+    treasures: Partial<Record<string, number>>,
+  ): boolean {
+    for (const track of ['cap', 'stack', 'hp'] as const) {
+      if (tiersRemaining(owned, track) <= 0) continue;
+      const applied = owned.upgrades?.[track] ?? 0;
+      const tier = BALANCE.upgrades[track].tiers[applied];
+      if (!tier) continue;
+      if ((owned.sp ?? 0) < tier.sp) continue;
+      if (coins < tier.coins) continue;
+      const treasureType = BALANCE.upgrades[track].treasure;
+      if ((treasures[treasureType] ?? 0) < tier.treasure) continue;
+      return true;
+    }
+    return false;
   }
 
   private buildCard(x: number, y: number, owned: OwnedBomberman, isEquipped: boolean): Phaser.GameObjects.Container {
@@ -83,6 +118,31 @@ export class BombermanSelector {
     bg.lineStyle(2, isEquipped ? 0x44ff88 : 0x333355, 1);
     bg.strokeRoundedRect(-SELECTOR_CARD_W / 2, -SELECTOR_CARD_H / 2, SELECTOR_CARD_W, SELECTOR_CARD_H, 6);
     container.add(bg);
+
+    // Card-wide hit target — click opens the Upgrade popup. Added before
+    // child interactives (EQUIP / loadout) so those win clicks when over
+    // them. Phaser's topOnly=true sends pointerover to whichever interactive
+    // is topmost under the cursor — the gold outline therefore appears
+    // ONLY when the pointer is over the "bare" card area, not over EQUIP
+    // or the loadout button.
+    const cardHover = this.scene.add.graphics();
+    container.add(cardHover);
+    const cardZone = this.scene.add.zone(0, 0, SELECTOR_CARD_W, SELECTOR_CARD_H)
+      .setInteractive({ useHandCursor: true });
+    cardZone.on('pointerover', () => {
+      cardHover.clear();
+      cardHover.lineStyle(2, 0xffd944, 1);
+      cardHover.strokeRoundedRect(-SELECTOR_CARD_W / 2 + 1, -SELECTOR_CARD_H / 2 + 1,
+        SELECTOR_CARD_W - 2, SELECTOR_CARD_H - 2, 6);
+    });
+    cardZone.on('pointerout', () => cardHover.clear());
+    cardZone.on('pointerdown', () => {
+      // Don't open the Upgrade popup if the card is fully maxed —
+      // there's nothing actionable. Click is a no-op in that case.
+      if (isFullyUpgraded(owned)) return;
+      this.scene.scene.launch('BombermanUpgradeScene', { ownedId: owned.id });
+    });
+    container.add(cardZone);
 
     // Animated preview sprite. The equipped entry keeps its anim stable
     // (UiAnimLock); other roster entries re-roll a random animation per open.
@@ -115,6 +175,17 @@ export class BombermanSelector {
     const totalIconW = slotCount * iconSize + Math.max(0, slotCount - 1) * iconGap;
     const iconStartX = -totalIconW / 2 + iconSize / 2;
     const iconY = 16;
+    // Loadout-as-button: the icons row is a single hit target. Hover shows
+    // a gold outline. Click jumps to the Bombs Shop with this bomberman as
+    // the active one (auto-equips first if it isn't already).
+    const loadoutPadX = 6;
+    const loadoutPadY = 14;
+    const loadoutLeft = iconStartX - iconSize / 2 - loadoutPadX;
+    const loadoutTop = iconY - iconSize / 2 - 2;
+    const loadoutWidth = totalIconW + loadoutPadX * 2;
+    const loadoutHeight = iconSize + loadoutPadY;
+    const loadoutHover = this.scene.add.graphics();
+    container.add(loadoutHover);
 
     for (let si = 0; si < slotCount; si++) {
       const slot = slots[si];
@@ -131,6 +202,32 @@ export class BombermanSelector {
           fontSize: '10px', color: '#444', fontFamily: 'monospace',
         }).setOrigin(0.5));
       }
+    }
+
+    // Click target on top so it wins over the icons. Skip when we're
+    // already inside the Bombs Shop — would just reopen the same scene.
+    const sceneKey = this.scene.scene.key;
+    if (sceneKey !== 'BombsShopScene') {
+      const zone = this.scene.add.zone(
+        loadoutLeft + loadoutWidth / 2,
+        loadoutTop + loadoutHeight / 2,
+        loadoutWidth,
+        loadoutHeight,
+      ).setInteractive({ useHandCursor: true });
+      zone.on('pointerover', () => {
+        loadoutHover.clear();
+        loadoutHover.lineStyle(2, 0xffd944, 1);
+        loadoutHover.strokeRoundedRect(loadoutLeft, loadoutTop, loadoutWidth, loadoutHeight, 4);
+      });
+      zone.on('pointerout', () => loadoutHover.clear());
+      zone.on('pointerdown', () => {
+        if (!isEquipped) {
+          NetworkManager.track('equip_bomberman', 'profile');
+          NetworkManager.getSocket().emit('equip_bomberman', { ownedId: owned.id });
+        }
+        this.scene.scene.start('BombsShopScene', { backScene: sceneKey });
+      });
+      container.add(zone);
     }
 
     // Equip button or "EQUIPPED" label

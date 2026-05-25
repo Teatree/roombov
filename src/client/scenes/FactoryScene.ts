@@ -218,12 +218,12 @@ const POPUP = {
   SECTION_BG: 0x0e1820,
   SECTION_BG_DARKER: 0x0a1218,
   DESC_BG: 0x16212c,
-  // commission button (very light blue)
-  CBTN_BG: 0xdbeafe,
-  CBTN_BG_HOVER: 0xeaf3fe,
-  CBTN_BG_DOWN: 0xbfd6f5,
-  CBTN_BORDER: 0x93b6e8,
-  CBTN_BORDER_DARK: 0x4a72b8,
+  // commission button (light yellow)
+  CBTN_BG: 0xfef3c7,
+  CBTN_BG_HOVER: 0xfff8da,
+  CBTN_BG_DOWN: 0xfde68a,
+  CBTN_BORDER: 0xeab308,
+  CBTN_BORDER_DARK: 0xa16207,
   CBTN_TEXT: '#0f172a',
   CBTN_BG_DISABLED: 0x475569,
   CBTN_TEXT_DISABLED: '#94a3b8',
@@ -1120,8 +1120,6 @@ export class FactoryScene extends Phaser.Scene {
     this.popup.overlay.destroy();
     this.popup = null;
     this.popupFactoryId = null;
-    this.wallet?.destroy();
-    this.wallet = null;
   }
 }
 

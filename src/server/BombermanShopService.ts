@@ -195,6 +195,8 @@ export class BombermanShopService {
       inventory: cloneInventory(template.inventory),
       purchasedAt: Date.now(),
       sourceTemplateId: templateId,
+      sp: 0,
+      upgrades: { cap: 0, stack: 0, hp: 0 },
     };
 
     profile.coins -= priceToPay;

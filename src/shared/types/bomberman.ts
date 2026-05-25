@@ -151,6 +151,20 @@ export interface OwnedBomberman {
    * buying the same template twice within a single shop cycle.
    */
   sourceTemplateId: string;
+  /** Banked Skill Points — earned in-match (chest opens, kills, survival),
+   *  credited on escape, lost on death. Spent at the Upgrade popup. */
+  sp: number;
+  /** Number of upgrade tiers applied per track. Each tier adds +1 to the
+   *  corresponding stat (max cap, stack size, hp). Cap'd by
+   *  BALANCE.upgrades.<track>.maxTiers and the absolute stat ceilings. */
+  upgrades: BombermanUpgradeState;
+}
+
+/** Tier-count per upgrade track. 0 = no upgrades purchased yet. */
+export interface BombermanUpgradeState {
+  cap: number;
+  stack: number;
+  hp: number;
 }
 
 /** Runtime Bomberman state inside an active match. */
@@ -190,6 +204,14 @@ export interface BombermanState {
    *  In-match logic (loot panel, equip-to-slot, throws) reads from these. */
   maxCustomSlots: number;
   stackSize: number;
+  /** Skill Points earned this match. Credited to the OwnedBomberman's
+   *  persistent `sp` on escape; discarded on death. Bots and scavs use
+   *  this too but their accumulated SP is never banked. */
+  sp: number;
+  /** Set true the first time this bomberman opens any chest (auto-loot of
+   *  treasures/coins on walk-on). One-shot per chest per match — we credit
+   *  perChestOpen SP only on the first opener. Stored on the chest, not here. */
+  // (no field — see Chest.openedBy)
   /** Live bomb inventory (mutates as bombs are thrown / looted). */
   inventory: BombInventory;
   /** Turns remaining bleeding (0 = not bleeding). */

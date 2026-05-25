@@ -118,6 +118,8 @@ export interface MatchEndMsg {
   escapedPlayerIds: string[];
   /** Per-player treasures earned this match (keyed by playerId). */
   treasuresEarned: Record<string, TreasureBundle>;
+  /** Per-player SP earned this match, banked on escape. 0 for dead players. */
+  spEarned: Record<string, number>;
 }
 
 // --- Loot (real-time during match, not turn-gated) ---
@@ -148,9 +150,17 @@ export interface LootBombMsg {
 /** Server → client result of a shop action. Usable for user-facing toast. */
 export interface ShopResultMsg {
   ok: boolean;
-  action: 'buy_bomberman' | 'equip_bomberman' | 'buy_bomb' | 'equip_bomb';
+  action: 'buy_bomberman' | 'equip_bomberman' | 'buy_bomb' | 'equip_bomb' | 'upgrade_bomberman';
   reason?: string;
   message?: string;
+}
+
+// --- Bomberman upgrades ---
+
+/** Client → server: spend SP/coins/treasure to bump one upgrade track. */
+export interface UpgradeBombermanMsg {
+  ownedId: string;
+  track: 'cap' | 'stack' | 'hp';
 }
 
 // --- Gambler Street ---
@@ -248,6 +258,7 @@ export interface ClientToServerEvents {
   buy_bomb: (msg: BuyBombMsg) => void;
   equip_bomb: (msg: EquipBombMsg) => void;
   unequip_bomb: (msg: UnequipBombMsg) => void;
+  upgrade_bomberman: (msg: UpgradeBombermanMsg) => void;
   match_listings_request: () => void;
   join_match: (msg: JoinMatchMsg) => void;
   leave_match: () => void;

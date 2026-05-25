@@ -13,8 +13,10 @@ export const BALANCE = {
   lobby: {
     visibleMatches: 3,
     matchIntervalSeconds: 3,
-    // Dev: short countdown for fast iteration. Bump back up before shipping.
-    countdownDuration: 5,
+    // Minimum countdown for the first card in the carousel; subsequent cards
+    // are staggered by MatchScheduler.MIN_STAGGER_MS so the second is ≥20s,
+    // third is ≥30s, etc.
+    countdownDuration: 10,
     maxPlayersPerMatch: 4,
     // Dev: allow solo matches so you can test controls without a second tab.
     // Raise back to 2 before shipping.
@@ -129,6 +131,66 @@ export const BALANCE = {
     predictChance: 0.33,
     /** Turns to chase / guess after target leaves LOS. */
     chaseTurns: 3,
+  },
+  /**
+   * Per-Bomberman SP (Skill Points) economy + upgrade costs.
+   *
+   * SP is earned in-match by the Bomberman who scored the action; it banks
+   * to the OwnedBomberman on escape and is lost on death (no body transfer).
+   *
+   * Tuning target (Phase 6): cheapest upgrade ≈ 2 average matches of SP,
+   * most expensive ≈ 15. With the rewards below a "decent" extraction is
+   * ~80 SP (2 chests + 1 kill + 25 turns survived = 10 + 50 + 5).
+   *
+   * Per-tier cost arrays are indexed by 0-based tier (i.e. costs[0] is the
+   * cost of going from 0 tiers applied → 1 tier applied). Each tier carries
+   * its own SP + coin + treasure cost. Treasure type is fixed per track.
+   */
+  upgrades: {
+    sp: {
+      /** First time a Bomberman opens (auto-loots) a chest. */
+      perChestOpen: 5,
+      /** Awarded on confirmed player-Bomberman kill (last hitter). */
+      perPlayerKill: 50,
+      /** Awarded on confirmed scav kill (last hitter). */
+      perScavKill: 25,
+      /** +1 SP per N turns the Bomberman is alive in-match. */
+      perSurvivalTurns: 5,
+    },
+    // Calibration:
+    //   avg extraction ≈ 65 SP (2 chest opens = 10, 1 player kill = 50,
+    //   25 turns survived = 5). Cheapest tier targets ~2 extractions ≈ 130 SP;
+    //   most expensive (HP) targets ~15 extractions ≈ 975 SP.
+    cap: {
+      /** Per-Bomberman upgrade slots available. */
+      maxTiers: 2,
+      /** Hard absolute ceiling on total slots (Rock + custom). */
+      totalSlotCap: 8,
+      treasure: 'mushrooms' as const,
+      /** Cost array, indexed by tier-applied count. */
+      tiers: [
+        { sp: 160, coins: 350, treasure: 12 },  // ~2.5 games
+        { sp: 480, coins: 800, treasure: 25 },  // ~7.4 games
+      ] as Array<{ sp: number; coins: number; treasure: number }>,
+    },
+    stack: {
+      maxTiers: 3,
+      treasure: 'coffee' as const,
+      tiers: [
+        { sp: 130, coins: 300, treasure: 8 },   // ~2 games (cheapest)
+        { sp: 340, coins: 700, treasure: 18 },  // ~5.2 games
+        { sp: 760, coins: 1500, treasure: 38 }, // ~11.7 games
+      ] as Array<{ sp: number; coins: number; treasure: number }>,
+    },
+    hp: {
+      maxTiers: 1,
+      /** Absolute HP cap. Base HP for all Bombermen is currently 2. */
+      cap: 3,
+      treasure: 'grapes' as const,
+      tiers: [
+        { sp: 980, coins: 2200, treasure: 60 }, // ~15 games (most expensive)
+      ] as Array<{ sp: number; coins: number; treasure: number }>,
+    },
   },
   scavs: {
     /** How many scavs spawn per scheduled spawn wave. */

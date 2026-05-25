@@ -77,6 +77,8 @@ export class BombsShopScene extends Phaser.Scene {
   private slotRowRefs: SlotRowRefs[] = [];
   /** Bomberman column container — slot highlight bounds are in its local space. */
   private bombermanContainer: Phaser.GameObjects.Container | null = null;
+  /** Stockpile panel screen rect — fly-to target for buy/unequip. */
+  private stockpileRect: { x: number; y: number; w: number; h: number } | null = null;
   private coinsText!: Phaser.GameObjects.Text;
   private treasureList: TreasureListWidget | null = null;
   private toastText!: Phaser.GameObjects.Text;
@@ -89,8 +91,16 @@ export class BombsShopScene extends Phaser.Scene {
     | ((p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => void)
     | null = null;
 
+  /** Scene to return to on Back/Esc. Set per-launch via init data; defaults
+   *  to the Main Menu when launched without context. */
+  private backScene: string = 'MainMenuScene';
+
   constructor() {
     super({ key: 'BombsShopScene' });
+  }
+
+  init(data?: { backScene?: string }): void {
+    this.backScene = data?.backScene ?? 'MainMenuScene';
   }
 
   preload(): void {
@@ -138,9 +148,9 @@ export class BombsShopScene extends Phaser.Scene {
     }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
     backBtn.on('pointerover', () => backBtn.setColor('#cccccc'));
     backBtn.on('pointerout', () => backBtn.setColor(TEXT_DIM));
-    backBtn.on('pointerdown', () => this.scene.start('MainMenuScene'));
+    backBtn.on('pointerdown', () => this.scene.start(this.backScene));
 
-    this.input.keyboard?.on('keydown-ESC', () => this.scene.start('MainMenuScene'));
+    this.input.keyboard?.on('keydown-ESC', () => this.scene.start(this.backScene));
 
     this.activity = new ActivityIndicator(this);
 
@@ -266,6 +276,28 @@ export class BombsShopScene extends Phaser.Scene {
       this.buildBombermanColumn(colXMid, innerY, colWMid, innerH, profile));
     this.buildPanel('STOCKPILE', colXRight, bodyTop, colWRight, bodyH, (innerY, innerH) =>
       this.buildStockpileColumn(colXRight, innerY, colWRight, innerH, profile));
+    this.stockpileRect = { x: colXRight, y: bodyTop, w: colWRight, h: bodyH };
+  }
+
+  /** Tween a temporary bomb icon from `(fromX, fromY)` to the stockpile
+   *  panel's center. Cosmetic only — the actual server round-trip drives
+   *  the profile update which triggers the rebuild. */
+  private flyBombToStockpile(bombType: BombType, fromX: number, fromY: number): void {
+    if (!this.stockpileRect) return;
+    const targetX = this.stockpileRect.x + this.stockpileRect.w / 2;
+    const targetY = this.stockpileRect.y + this.stockpileRect.h / 4;
+    const icon = this.add.image(fromX, fromY, 'bomb_icons', bombIconFrame(bombType))
+      .setDisplaySize(28, 28).setDepth(2000);
+    this.tweens.add({
+      targets: icon,
+      x: targetX,
+      y: targetY,
+      scale: 0.4,
+      alpha: 0.2,
+      duration: 380,
+      ease: 'Quad.easeIn',
+      onComplete: () => icon.destroy(),
+    });
   }
 
   private buildPanel(
@@ -403,6 +435,7 @@ export class BombsShopScene extends Phaser.Scene {
       btn.on('pointerdown', () => {
         NetworkManager.track('buy_bomb', 'profile');
         NetworkManager.getSocket().emit('buy_bomb', { type: entry.type, quantity: 1 });
+        this.flyBombToStockpile(entry.type, x + w / 2, btnY);
       });
       this.wireHover(btn, entry);
       parent.add(btn);
@@ -734,9 +767,14 @@ export class BombsShopScene extends Phaser.Scene {
               backgroundColor: '#221a2e', padding: { x: 5, y: 2 },
             }).setOrigin(1, 0.5);
         btn.setInteractive({ useHandCursor: true });
+        const bombType = slot.type;
         btn.on('pointerdown', () => {
           NetworkManager.track('unequip_bomb', 'profile');
           NetworkManager.getSocket().emit('unequip_bomb', { slotIndex: slotIdx });
+          // Fly from the slot's screen-space center, not the small × button —
+          // it reads better as "the equipped bomb moves to storage."
+          const m = btn.getWorldTransformMatrix();
+          this.flyBombToStockpile(bombType, m.tx, m.ty);
         });
         if (entry) this.wireHover(btn, entry);
         parent.add(btn);
