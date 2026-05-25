@@ -6,6 +6,7 @@ import { ensureBombermanAnims, createShopBombermanSprite, preloadBombermanSprite
 import { TreasureListWidget } from '../systems/TreasureListWidget.ts';
 import { preloadTreasureIcons } from '../systems/TreasureIcons.ts';
 import { attachTierInfoBadge } from '../systems/TierInfoBadge.ts';
+import { effectiveMaxCustomSlots, effectiveStackSize } from '@shared/utils/bomberman-stats.ts';
 import { NotificationBadge } from '../systems/NotificationBadge.ts';
 import { FACTORY_IDS, projectedClaimable } from '@shared/types/factory.ts';
 import { FACTORIES } from '@shared/config/factories.ts';
@@ -72,10 +73,10 @@ export class MainMenuScene extends Phaser.Scene {
     // Buttons
     const buttons: Array<[string, () => void]> = [
       ['[ PLAY ]', () => this.scene.start('LobbyScene')],
-      ['[ TUTORIAL ]', () => this.scene.start('MatchScene', { mode: 'tutorial' })],
       ['[ BOMBERMAN SHOP ]', () => this.scene.start('BombermanShopScene')],
       ['[ BOMBS SHOP ]', () => this.scene.start('BombsShopScene')],
       ['[ FACTORY ]', () => this.scene.start('FactoryScene')],
+      ['[ TUTORIAL ]', () => this.scene.start('MatchScene', { mode: 'tutorial' })],
     ];
 
     let factoryBtn: Phaser.GameObjects.Text | null = null;
@@ -221,8 +222,8 @@ export class MainMenuScene extends Phaser.Scene {
     attachTierInfoBadge(this, this.equippedContainer, {
       x: 38, y: -36,
       tier: equipped.tier,
-      maxCustomSlots: equipped.maxCustomSlots,
-      stackSize: equipped.stackSize,
+      maxCustomSlots: effectiveMaxCustomSlots(equipped),
+      stackSize: effectiveStackSize(equipped),
     });
 
     const label = this.add.text(0, 70, `${equipped.name ?? equipped.tier.replace('_', ' ')}`, {

@@ -68,6 +68,11 @@ export class MatchRoom {
   /** Per-player SP earned this match. Captured at escape time so the
    *  `match_end` payload can report it after `bm.sp` has been drained. */
   private spEarnedSnapshots = new Map<string, number>();
+  /** Per-player snapshot of the equipped Bomberman's `lifetimeSp` AFTER this
+   *  match's SP has been banked. Captured at escape time alongside the
+   *  earned-this-match snapshot. For dead players we record the pre-death
+   *  value (no banking happened) — see the `died` handler below. */
+  private lifetimeSpSnapshots = new Map<string, number>();
   private onEnd: () => void;
 
   constructor(
@@ -191,6 +196,7 @@ export class MatchRoom {
             purchasedAt: Date.now(),
             sourceTemplateId: 'bot',
             sp: 0,
+            lifetimeSp: 0,
             upgrades: { cap: 0, stack: 0, hp: 0 },
           }],
           equippedBombermanId: `bot_bm_${i}`,
@@ -245,6 +251,7 @@ export class MatchRoom {
         playerId: p.playerId,
         isBot: p.socketId === null,
         bombermanId: equipped?.id ?? 'none',
+        name: equipped?.name ?? '???',
         colors: equipped?.colors ?? { shirt: 0x888888, pants: 0x444444, hair: 0x222222 },
         tint: equipped?.tint ?? 0xffffff,
         character: equipped?.character ?? 'char1',
@@ -550,7 +557,14 @@ export class MatchRoom {
       const bm = this.state.bombermen.find(b => b.playerId === diedPlayerId);
       if (!bm) continue;
       const idx = profile.ownedBombermen.findIndex(ob => ob.id === bm.bombermanId);
-      if (idx >= 0) profile.ownedBombermen.splice(idx, 1);
+      // Snapshot lifetime SP BEFORE removing the OwnedBomberman so the
+      // Results screen can show what this Bomberman accumulated across its
+      // life. On death no banking happened, so we just record the current
+      // lifetime value.
+      if (idx >= 0) {
+        this.lifetimeSpSnapshots.set(diedPlayerId, profile.ownedBombermen[idx].lifetimeSp ?? 0);
+        profile.ownedBombermen.splice(idx, 1);
+      }
       if (profile.equippedBombermanId === bm.bombermanId) {
         profile.equippedBombermanId = profile.ownedBombermen.length > 0 ? profile.ownedBombermen[0].id : null;
       }
@@ -594,7 +608,9 @@ export class MatchRoom {
         const earned = bm.sp;
         const before = ownedBomberman.sp ?? 0;
         ownedBomberman.sp = before + earned;
+        ownedBomberman.lifetimeSp = (ownedBomberman.lifetimeSp ?? before) + earned;
         this.spEarnedSnapshots.set(escapedPlayerId, earned);
+        this.lifetimeSpSnapshots.set(escapedPlayerId, ownedBomberman.lifetimeSp);
         bm.sp = 0;
         console.log(`[SP-BANK] player=${escapedPlayerId} bm=${ownedBomberman.id} earned=${earned} before=${before} after=${ownedBomberman.sp}`);
       } else {
@@ -743,6 +759,15 @@ export class MatchRoom {
         this.state.bombermen.map(b => [
           b.playerId,
           this.spEarnedSnapshots.get(b.playerId) ?? 0,
+        ]),
+      ),
+      // Lifetime SP (cumulative across all matches incl. spent SP). Captured
+      // at escape banking time and at the moment of death so this still
+      // works when the OwnedBomberman has been removed from the profile.
+      lifetimeSp: Object.fromEntries(
+        this.state.bombermen.map(b => [
+          b.playerId,
+          this.lifetimeSpSnapshots.get(b.playerId) ?? 0,
         ]),
       ),
     });

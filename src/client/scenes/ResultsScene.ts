@@ -4,13 +4,18 @@ import { type TreasureBundle, hasAnyTreasure } from '@shared/config/treasures.ts
 import { TreasureListWidget } from '../systems/TreasureListWidget.ts';
 import { createBombIcon } from '../systems/BombIcons.ts';
 import { NotificationBadge } from '../systems/NotificationBadge.ts';
-import { ProfileStore } from '../ClientState.ts';
+import { ProfileStore, UiAnimLock } from '../ClientState.ts';
 import { FACTORY_IDS, projectedClaimable } from '@shared/types/factory.ts';
 import { FACTORIES } from '@shared/config/factories.ts';
 import type { BombType } from '@shared/types/bombs.ts';
 import { BALANCE } from '@shared/config/balance.ts';
 import { tiersRemaining } from '@shared/utils/bomberman-stats.ts';
 import type { OwnedBomberman } from '@shared/types/bomberman.ts';
+import {
+  ensureBombermanAnims,
+  createShopBombermanSprite,
+  preloadBombermanSpritesheets,
+} from '../systems/BombermanAnimations.ts';
 
 export interface MatchResultsData {
   outcome: 'escaped' | 'died' | 'lost';
@@ -27,6 +32,15 @@ export interface MatchResultsData {
   myBombermanName: string | null;
   /** SP earned this match (banked on escape, 0 on death). */
   spEarned: number;
+  /** Total SP this Bomberman gathered across its life — includes SP already
+   *  spent on upgrades. Counted for memorial display on both escape and
+   *  death screens, above the "Turns survived" line. */
+  lifetimeSp: number;
+  /** Visual identity of the local Bomberman for the hero block. Captured
+   *  in-match so the screen still renders the right sprite on death (the
+   *  OwnedBomberman is removed from the profile on death). */
+  myBombermanTint?: number;
+  myBombermanCharacter?: string;
 }
 
 /**
@@ -39,6 +53,13 @@ export interface MatchResultsData {
  */
 export class ResultsScene extends Phaser.Scene {
   private results!: MatchResultsData;
+  /** Pip graphics shown next to the [UPGRADE BOMBERMAN] button when at least
+   *  one upgrade is affordable. Held so it can be cleared on profile updates
+   *  (e.g. after the player applies an upgrade and nothing is affordable). */
+  private upgradePip: Phaser.GameObjects.Graphics | null = null;
+  /** Cached reference to the upgrade button so the pip can re-attach to it. */
+  private upgradeBtn: Phaser.GameObjects.Text | null = null;
+  private profileUnsub: (() => void) | null = null;
 
   constructor() {
     super({ key: 'ResultsScene' });
@@ -54,10 +75,20 @@ export class ResultsScene extends Phaser.Scene {
       killerName: null,
       myBombermanName: null,
       spEarned: 0,
+      lifetimeSp: 0,
     };
   }
 
+  preload(): void {
+    preloadBombermanSpritesheets(this);
+  }
+
   create(): void {
+    ensureBombermanAnims(this);
+    this.events.once('shutdown', () => {
+      this.profileUnsub?.();
+      this.profileUnsub = null;
+    });
     const { width, height } = this.scale;
     const r = this.results;
 
@@ -84,12 +115,12 @@ export class ResultsScene extends Phaser.Scene {
         break;
     }
 
-    this.add.text(width / 2, height * 0.2, title, {
+    this.add.text(width / 2, height * 0.16, title, {
       fontSize: '48px', color: titleColor, fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5);
 
     // Subtitle line
-    let subtitleY = height * 0.32;
+    let subtitleY = height * 0.26;
 
     if (r.outcome === 'escaped') {
       // Section header style is shared between Treasures Gathered + Items
@@ -97,6 +128,13 @@ export class ResultsScene extends Phaser.Scene {
       const headerStyle: Phaser.Types.GameObjects.Text.TextStyle = {
         fontSize: '18px', color: '#c4a566', fontFamily: 'monospace', fontStyle: 'bold',
       };
+
+      // --- SP hero block ---
+      // Bomberman sprite + animated +N SP count-up + reaction headline.
+      // Sits above the haul tallies so the SP banner is the first thing the
+      // eye lands on after the ESCAPED title.
+      subtitleY = this.renderSpHero(width / 2, subtitleY, r.spEarned, r.myBombermanName);
+      subtitleY += 18;
 
       // Treasures earned this match — horizontal row with the same pulse as
       // the in-match HUD so a fat haul "thrums" on the results screen too.
@@ -143,21 +181,26 @@ export class ResultsScene extends Phaser.Scene {
         subtitleY += 30;
       }
 
+      // Lifetime SP — sum of all SP this Bomberman ever earned across all
+      // matches, including SP already spent on upgrades. Memorial-style
+      // total that sits right above the turns-survived line.
+      subtitleY += 10;
+      this.add.text(width / 2, subtitleY, `Lifetime SP: ${r.lifetimeSp}`, {
+        fontSize: '16px', color: '#5db5ff', fontFamily: 'monospace', fontStyle: 'bold',
+      }).setOrigin(0.5);
+      subtitleY += 24;
+
       // Turns — sized to match Bombermen eliminated; keeps its dim gray so
       // the eye lands on the headline tallies first.
-      subtitleY += 10;
       this.add.text(width / 2, subtitleY, `Turns survived: ${r.turnsPlayed}`, {
         fontSize: '16px', color: '#888888', fontFamily: 'monospace',
       }).setOrigin(0.5);
 
     } else if (r.outcome === 'died') {
-      // R.I.P. Bomberman name
-      if (r.myBombermanName) {
-        this.add.text(width / 2, subtitleY, `R.I.P. ${r.myBombermanName}`, {
-          fontSize: '20px', color: '#cc6666', fontFamily: 'monospace', fontStyle: 'bold',
-        }).setOrigin(0.5);
-        subtitleY += 36;
-      }
+      // Dead-Bomberman hero block — mirrors the escape SP hero but with a
+      // dead sprite + animated "R.I.P." in place of "+N SP".
+      subtitleY = this.renderRipHero(width / 2, subtitleY, r.myBombermanName, r.myBombermanTint, r.myBombermanCharacter);
+      subtitleY += 18;
 
       // Killed by
       if (r.killerName) {
@@ -172,7 +215,14 @@ export class ResultsScene extends Phaser.Scene {
         subtitleY += 30;
       }
 
+      // Lifetime SP memorial — same line slot as the escape variant. Even
+      // though the Bomberman is dead, we still honor what they collected.
       subtitleY += 10;
+      this.add.text(width / 2, subtitleY, `Lifetime SP: ${r.lifetimeSp}`, {
+        fontSize: '14px', color: '#5db5ff', fontFamily: 'monospace', fontStyle: 'bold',
+      }).setOrigin(0.5);
+      subtitleY += 22;
+
       this.add.text(width / 2, subtitleY, `Turns survived: ${r.turnsPlayed}`, {
         fontSize: '13px', color: '#888888', fontFamily: 'monospace',
       }).setOrigin(0.5);
@@ -189,46 +239,6 @@ export class ResultsScene extends Phaser.Scene {
       }).setOrigin(0.5);
     }
 
-    // SP earned (escaped only — dead players lose accumulated SP).
-    if (r.outcome === 'escaped' && r.spEarned > 0) {
-      this.add.text(width / 2, height * 0.74, `+${r.spEarned} SP banked to ${r.myBombermanName ?? 'Bomberman'}`, {
-        fontSize: '16px', color: '#5db5ff', fontFamily: 'monospace', fontStyle: 'bold',
-      }).setOrigin(0.5);
-    }
-
-    // "Upgrade Bomberman" text button — same chrome as the back / Factory
-    // buttons. Opens the upgrade popup for the currently-equipped Bomberman.
-    // Only shown for escapees (dead players have no Bomberman to upgrade).
-    if (r.outcome === 'escaped') {
-      const upgradeBtn = this.add.text(width / 2, height * 0.78, '[ UPGRADE BOMBERMAN ]', {
-        fontSize: '18px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
-      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-      upgradeBtn.on('pointerover', () => upgradeBtn.setColor('#fff37a'));
-      upgradeBtn.on('pointerout', () => upgradeBtn.setColor('#ffd944'));
-      upgradeBtn.on('pointerdown', () => {
-        const p = ProfileStore.get();
-        if (!p || !p.equippedBombermanId) return;
-        this.scene.launch('BombermanUpgradeScene', { ownedId: p.equippedBombermanId });
-      });
-
-      // Breadcrumb pip — same widget as on the BombermanSelector card. Shown
-      // when ANY upgrade track is currently affordable for the equipped
-      // Bomberman.
-      const profileForPip = ProfileStore.get();
-      if (profileForPip) {
-        const equipped = profileForPip.ownedBombermen.find(b => b.id === profileForPip.equippedBombermanId);
-        if (equipped && this.hasAffordableUpgrade(equipped, profileForPip.coins, profileForPip.treasures)) {
-          const pip = this.add.graphics();
-          const px = upgradeBtn.x + upgradeBtn.displayWidth / 2 + 10;
-          const py = upgradeBtn.y - upgradeBtn.displayHeight / 2 + 4;
-          pip.fillStyle(0x44ff88, 1);
-          pip.fillCircle(px, py, 5);
-          pip.lineStyle(1, 0x0a3a18, 1);
-          pip.strokeCircle(px, py, 5);
-        }
-      }
-    }
-
     // Back button
     const playBtn = this.add.text(width / 2, height * 0.82, '[ BACK TO LOBBY ]', {
       fontSize: '24px', color: '#44aaff', fontFamily: 'monospace',
@@ -238,8 +248,9 @@ export class ResultsScene extends Phaser.Scene {
     playBtn.on('pointerout', () => playBtn.setColor('#44aaff'));
     playBtn.on('pointerdown', () => this.backToLobby());
 
-    // Shortcut buttons — Factory + Bombs Shop, sitting under the lobby button
-    // so a player can detour straight to spend/produce before re-queueing.
+    // Shortcut row — Factory + Bombs Shop + (escaped only) Upgrade Bomberman,
+    // all sharing the same chrome so the row reads as a parallel set of
+    // detours before re-queueing.
     const shortcutY = height * 0.92;
     const shortcutGap = 24;
     const shortcutStyle: Phaser.Types.GameObjects.Text.TextStyle = {
@@ -248,9 +259,21 @@ export class ResultsScene extends Phaser.Scene {
     };
     const factoryBtn = this.add.text(0, 0, '[ FACTORY ]', shortcutStyle).setOrigin(0.5);
     const bombsBtn = this.add.text(0, 0, '[ BOMBS SHOP ]', shortcutStyle).setOrigin(0.5);
-    const totalW = factoryBtn.width + shortcutGap + bombsBtn.width;
-    factoryBtn.setPosition(width / 2 - totalW / 2 + factoryBtn.width / 2, shortcutY);
-    bombsBtn.setPosition(width / 2 + totalW / 2 - bombsBtn.width / 2, shortcutY);
+    const upgradeBtn = r.outcome === 'escaped'
+      ? this.add.text(0, 0, '[ UPGRADE BOMBERMAN ]', shortcutStyle).setOrigin(0.5)
+      : null;
+
+    // Lay the row out left-to-right with gaps, centered on screen.
+    const rowItems: Phaser.GameObjects.Text[] = upgradeBtn
+      ? [factoryBtn, bombsBtn, upgradeBtn]
+      : [factoryBtn, bombsBtn];
+    const totalW = rowItems.reduce((sum, b) => sum + b.width, 0)
+      + shortcutGap * (rowItems.length - 1);
+    let cursor = width / 2 - totalW / 2;
+    for (const btn of rowItems) {
+      btn.setPosition(cursor + btn.width / 2, shortcutY);
+      cursor += btn.width + shortcutGap;
+    }
 
     for (const [btn, target] of [[factoryBtn, 'FactoryScene'], [bombsBtn, 'BombsShopScene']] as const) {
       btn.setInteractive({ useHandCursor: true });
@@ -260,6 +283,25 @@ export class ResultsScene extends Phaser.Scene {
         NetworkManager.getSocket().emit('leave_match');
         this.scene.start(target);
       });
+    }
+
+    if (upgradeBtn) {
+      this.upgradeBtn = upgradeBtn;
+      upgradeBtn.setInteractive({ useHandCursor: true });
+      upgradeBtn.on('pointerover', () => upgradeBtn.setColor('#88ccff'));
+      upgradeBtn.on('pointerout', () => upgradeBtn.setColor('#44aaff'));
+      upgradeBtn.on('pointerdown', () => {
+        const p = ProfileStore.get();
+        if (!p || !p.equippedBombermanId) return;
+        this.scene.launch('BombermanUpgradeScene', { ownedId: p.equippedBombermanId });
+      });
+
+      // Breadcrumb pip — green dot, shown when any upgrade track is
+      // currently affordable. Refreshed on every profile update so the pip
+      // disappears the moment the player applies an upgrade that empties
+      // their affordable list.
+      this.refreshUpgradePip();
+      this.profileUnsub = ProfileStore.subscribe(() => this.refreshUpgradePip());
     }
 
     // Factory claim badge — only shown when claimable bombs > 0. The results
@@ -279,6 +321,214 @@ export class ResultsScene extends Phaser.Scene {
     }
 
     this.input.keyboard?.on('keydown-ESC', () => this.backToLobby());
+  }
+
+  /**
+   * SP hero block — Bomberman sprite + animated "+N SP" count-up + reaction
+   * message ("Bad" / "Not Bad" / "Nice" / "Excellent") that fades in after
+   * the count finishes.
+   *
+   * Lays out as:
+   *   [sprite] [SP text]
+   *   [reaction message under the SP text, centered on the block]
+   *
+   * Reserves a fixed-height row so downstream content (Treasures Gathered)
+   * doesn't reflow when the reaction message fades in.
+   */
+  private renderSpHero(
+    centerX: number,
+    topY: number,
+    spEarned: number,
+    nameFallback: string | null,
+  ): number {
+    const profile = ProfileStore.get();
+    const equipped = profile?.ownedBombermen.find(b => b.id === profile.equippedBombermanId);
+    const tint = equipped?.tint ?? 0xffffff;
+    const character = equipped?.character ?? 'char4';
+    const anim = equipped ? UiAnimLock.get(equipped.id) : 'idle';
+    const name = equipped?.name ?? nameFallback ?? 'Bomberman';
+
+    // Block geometry — sprite on the left, SP text on the right, reaction
+    // centered beneath. SPRITE_BOX is the sprite's visual cell.
+    const SPRITE_BOX = 80;
+    const SP_TEXT_GAP = 18;
+    const blockTop = topY;
+    const spriteCY = blockTop + SPRITE_BOX / 2;
+
+    // Name label ABOVE the sprite so the player reads identity first.
+    this.add.text(centerX - 50, blockTop - 4, name, {
+      fontSize: '12px', color: '#cfd6e6', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5, 0);
+
+    // Sprite preview — uses the same builder as the Bomberman card on the
+    // main menu so animation parity is automatic. Shifted down a touch to
+    // leave room for the name above.
+    const sprite = createShopBombermanSprite(this, 0, 0, tint, character, anim, 1.3);
+    sprite.setPosition(centerX - 50, spriteCY + 6);
+
+    // SP text — count-up tween from 0 → spEarned. Wallet-blue to match the
+    // upgrade popup's SP cost color.
+    const spText = this.add.text(centerX + SP_TEXT_GAP, spriteCY + 6, '+0 SP', {
+      fontSize: '34px', color: '#5db5ff', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0, 0.5);
+
+    // Reaction message — sits directly UNDER the SP text (not under the
+    // sprite). Hidden until the count-up tween completes.
+    const reactionY = spriteCY + 6 + 24;
+    const reactionText = this.add.text(centerX + SP_TEXT_GAP, reactionY, '', {
+      fontSize: '18px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0, 0).setAlpha(0);
+
+    const COUNT_DURATION = Math.max(600, Math.min(1600, 600 + spEarned * 20));
+    const tween = { value: 0 };
+    this.tweens.add({
+      targets: tween,
+      value: spEarned,
+      duration: COUNT_DURATION,
+      ease: 'Cubic.easeOut',
+      onUpdate: () => {
+        spText.setText(`+${Math.round(tween.value)} SP`);
+      },
+      onComplete: () => {
+        spText.setText(`+${spEarned} SP`);
+        const { label, color } = this.spReaction(spEarned);
+        reactionText.setText(label);
+        reactionText.setColor(color);
+        this.tweens.add({
+          targets: reactionText,
+          alpha: 1,
+          y: reactionY - 4,
+          duration: 380,
+          ease: 'Back.easeOut',
+        });
+      },
+    });
+
+    // Total block height = name + sprite + reaction line.
+    return blockTop + SPRITE_BOX + 28 + 12;
+  }
+
+  /**
+   * Dead-Bomberman hero block — twin of `renderSpHero`. Shows the name
+   * above a corpse sprite playing the one-shot death animation (stops on
+   * the last frame), with an animated "R.I.P." in red to the right where
+   * the "+N SP" sits on the escape variant.
+   *
+   * The R.I.P. letters fade in one-by-one (R → I → P) with a stagger so
+   * the message lands as a slow funeral beat rather than a snap-in.
+   */
+  private renderRipHero(
+    centerX: number,
+    topY: number,
+    nameFallback: string | null,
+    tintArg: number | undefined,
+    characterArg: string | undefined,
+  ): number {
+    // Visual identity — captured pre-death in MatchScene since the
+    // OwnedBomberman is stripped from the profile on death.
+    const tint = tintArg ?? 0xffffff;
+    const character = characterArg ?? 'char4';
+    const name = nameFallback ?? 'Bomberman';
+
+    const SPRITE_BOX = 80;
+    // Pushed right by an extra letter's worth (~22px at 34px monospace bold)
+    // per the dead-screen tuning pass.
+    const RIP_TEXT_GAP = 18 + 22;
+    const blockTop = topY;
+    const spriteCY = blockTop + SPRITE_BOX / 2;
+
+    // Name label ABOVE the sprite — gravestone style. Slightly muted color
+    // so it reads as memorial text.
+    this.add.text(centerX - 50, blockTop - 4, name, {
+      fontSize: '12px', color: '#a8a4b0', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5, 0);
+
+    // Death sprite — plays the one-shot Die animation (registered with
+    // repeat=false in BombermanAnimations.ts) so it lands on and holds the
+    // last frame. Built directly instead of going through
+    // createShopBombermanSprite because that helper's `animation` type
+    // doesn't include 'death'.
+    const deathTexture = `bomber_death_${character}`;
+    const deathAnim = `bomber_death_${character}_down`;
+    const sprite = this.add.sprite(centerX - 50, spriteCY + 6, deathTexture);
+    sprite.setOrigin(0.5, 0.5);
+    sprite.setScale(1.3 * 1.5);
+    sprite.setTint(tint);
+    if (this.anims.exists(deathAnim)) {
+      sprite.play(deathAnim);
+      sprite.anims.timeScale = 0.6;
+    }
+
+    // "R.I.P." — built letter-by-letter so we can fade each in on a stagger.
+    // 34px matches the +N SP text on the escape variant exactly. Red
+    // tombstone color. The text origin is left-baseline so each letter
+    // appears at the right x without re-measuring.
+    const LETTERS = ['R', '.', 'I', '.', 'P', '.'];
+    const LETTER_STAGGER = 220; // ms between each *visible* letter
+    const FADE_DURATION = 280;
+    const ripStyle: Phaser.Types.GameObjects.Text.TextStyle = {
+      fontSize: '34px', color: '#ff4a4a', fontFamily: 'monospace', fontStyle: 'bold',
+    };
+    // Anchor at the same baseline as +N SP would sit.
+    const ripX = centerX + RIP_TEXT_GAP;
+    const ripY = spriteCY + 6;
+    let cursorX = ripX;
+    // Pre-compute each letter's width by adding it momentarily (Phaser needs
+    // to lay out the text first), so we can place subsequent letters cleanly.
+    // We then assign delays so the periods follow their letter almost
+    // immediately (so "R" appears, then ".", then small pause, then "I" etc).
+    let letterIdx = 0;
+    for (let i = 0; i < LETTERS.length; i++) {
+      const ch = LETTERS[i];
+      const isPeriod = ch === '.';
+      const t = this.add.text(cursorX, ripY, ch, ripStyle).setOrigin(0, 0.5).setAlpha(0);
+      // Period hugs the previous letter; the next letter waits a full beat.
+      // Each LETTER consumes one stagger slot; the period attached to it
+      // shares the slot with a short tail.
+      const delay = isPeriod ? letterIdx * LETTER_STAGGER + 80 : letterIdx * LETTER_STAGGER;
+      this.tweens.add({
+        targets: t,
+        alpha: 1,
+        duration: FADE_DURATION,
+        delay,
+        ease: 'Sine.easeOut',
+      });
+      cursorX += t.width;
+      if (!isPeriod) letterIdx++;
+    }
+
+    return blockTop + SPRITE_BOX + 28 + 12;
+  }
+
+  /** Re-evaluate the affordable-upgrade pip. Drawn fresh each time so we
+   *  don't have to track its position when the row reflows. */
+  private refreshUpgradePip(): void {
+    if (!this.upgradeBtn) return;
+    this.upgradePip?.destroy();
+    this.upgradePip = null;
+
+    const profile = ProfileStore.get();
+    if (!profile) return;
+    const equipped = profile.ownedBombermen.find(b => b.id === profile.equippedBombermanId);
+    if (!equipped) return;
+    if (!this.hasAffordableUpgrade(equipped, profile.coins, profile.treasures)) return;
+
+    const pip = this.add.graphics();
+    const px = this.upgradeBtn.x + this.upgradeBtn.displayWidth / 2 - 4;
+    const py = this.upgradeBtn.y - this.upgradeBtn.displayHeight / 2 + 4;
+    pip.fillStyle(0x44ff88, 1);
+    pip.fillCircle(px, py, 5);
+    pip.lineStyle(1, 0x0a3a18, 1);
+    pip.strokeCircle(px, py, 5);
+    this.upgradePip = pip;
+  }
+
+  /** Map SP earned to (reaction label, color) per the design tiers. */
+  private spReaction(sp: number): { label: string; color: string } {
+    if (sp <= 0)  return { label: 'Bad',       color: '#ff5a4a' };
+    if (sp <= 30) return { label: 'Not Bad',   color: '#c4a566' };
+    if (sp <= 80) return { label: 'Nice',      color: '#88ddff' };
+    return         { label: 'Excellent!',     color: '#44ff88' };
   }
 
   /** True when any of the three upgrade tracks has a tier the player can

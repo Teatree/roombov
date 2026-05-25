@@ -374,6 +374,7 @@ export class TutorialMatchBackend implements MatchBackend {
           escapedPlayerIds: [TUTORIAL_PLAYER_ID],
           treasuresEarned,
           spEarned: {},
+          lifetimeSp: {},
         });
       },
       spawnExclamation: (tileX, tileY, color) => {
@@ -439,6 +440,7 @@ export class TutorialMatchBackend implements MatchBackend {
       playerId: TUTORIAL_PLAYER_ID,
       isBot: false,
       bombermanId: 'tutorial-char4',
+      name: 'Tutorial Hero',
       colors: { shirt: 0xffffff, pants: 0xffffff, hair: 0xffffff },
       tint: 0xffffff, // uncolored char4 per brief
       character: 'char4',

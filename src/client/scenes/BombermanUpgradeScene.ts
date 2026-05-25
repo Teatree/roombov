@@ -301,14 +301,28 @@ export class BombermanUpgradeScene extends Phaser.Scene {
     const treasureShort = treasureHave < tier.treasure;
     const affordable = !spShort && !coinShort && !treasureShort;
 
-    // Cost line (above the button). Bumped to 14px.
+    // Cost line (above the button). Each cost splits into [label][number]
+    // so the static label stays its canonical color (SP blue, c yellow) and
+    // only the AMOUNT flips red when the player can't afford it.
     const costY = y + 14;
-    parent.add(this.add.text(col3x + 4, costY, `SP ${tier.sp}`, {
+    // "SP" label — always blue.
+    parent.add(this.add.text(col3x + 4, costY, 'SP', {
+      fontSize: '14px', color: '#5db5ff', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0, 0));
+    // SP amount — blue if affordable, red if short.
+    parent.add(this.add.text(col3x + 28, costY, `${tier.sp}`, {
       fontSize: '14px', color: spShort ? '#ff5a4a' : '#5db5ff', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0, 0));
-    parent.add(this.add.text(col3x + 64, costY, `${tier.coins}c`, {
+    // Coin amount — yellow if affordable, red if short.
+    parent.add(this.add.text(col3x + 64, costY, `${tier.coins}`, {
       fontSize: '14px', color: coinShort ? '#ff5a4a' : '#ffc83a', fontFamily: 'monospace',
     }).setOrigin(0, 0));
+    // "c" suffix — always yellow.
+    const coinNumW = `${tier.coins}`.length * 9;
+    parent.add(this.add.text(col3x + 64 + coinNumW, costY, 'c', {
+      fontSize: '14px', color: '#ffc83a', fontFamily: 'monospace',
+    }).setOrigin(0, 0));
+    // Treasure amount — white if enough, red if short. Icon trails as before.
     parent.add(this.add.text(col3x + 124, costY, `${tier.treasure}`, {
       fontSize: '14px', color: treasureShort ? '#ff5a4a' : TEXT_DEFAULT, fontFamily: 'monospace',
     }).setOrigin(0, 0));

@@ -15,7 +15,7 @@ import { bombIconFrame } from './BombIcons.ts';
 import type { OwnedBomberman } from '@shared/types/bomberman.ts';
 import { attachTierInfoBadge } from './TierInfoBadge.ts';
 import { BALANCE } from '@shared/config/balance.ts';
-import { tiersRemaining, isFullyUpgraded } from '@shared/utils/bomberman-stats.ts';
+import { tiersRemaining, isFullyUpgraded, effectiveMaxCustomSlots, effectiveStackSize } from '@shared/utils/bomberman-stats.ts';
 
 const SELECTOR_CARD_W = 140;
 const SELECTOR_CARD_H = 180;
@@ -156,8 +156,8 @@ export class BombermanSelector {
       x: SELECTOR_CARD_W / 2 - 14,
       y: -SELECTOR_CARD_H / 2 + 14,
       tier: owned.tier,
-      maxCustomSlots: owned.maxCustomSlots,
-      stackSize: owned.stackSize,
+      maxCustomSlots: effectiveMaxCustomSlots(owned),
+      stackSize: effectiveStackSize(owned),
     });
 
     // Name
@@ -167,7 +167,7 @@ export class BombermanSelector {
 
     // Inventory icons row — variable count based on the bomberman's slots.
     const slots = owned.inventory.slots;
-    const slotCount = owned.maxCustomSlots;
+    const slotCount = effectiveMaxCustomSlots(owned);
     // Auto-shrink icon size for higher-tier loadouts so 6 icons still fit
     // inside the 140-wide card. Sizes chosen to stay readable.
     const iconSize = slotCount >= 6 ? 16 : slotCount >= 5 ? 18 : 20;

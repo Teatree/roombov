@@ -31,7 +31,7 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
 
   // --- Prologue -----------------------------------------------------------
   { kind: 'panCamera', focus: 'player', durationMs: 800 },
-  { kind: 'dialogue', portrait: 'char4', text: 'Welcome to tutorial' },
+  { kind: 'dialogue', portrait: 'char4', text: 'Welcome to the tutorial' },
 
   // --- Beat 0: HUD Primer -------------------------------------------------
   { kind: 'highlight', target: { kind: 'timer' } },
@@ -106,8 +106,8 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   { kind: 'highlight', target: { kind: 'lootItem', bombType: 'bomb' } },
   { kind: 'waitForAction', expected: { kind: 'lootBomb', sourceKind: 'chest', bombType: 'bomb' } },
   { kind: 'clearHighlight' },
-  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Coins go straight to your wallet — you saw them fly in.' },
-  { kind: 'dialogue', portrait: 'char4_neutral', text: "That key is for the escape hatch. You'll need one to extract. Keep it safe." },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Coins go straight to your wallet, bet you saw them fly in.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: "That KEY is for the escape hatch. You'll need it to extract. But that's later." },
 
   // --- Beat 4: Flare + Bomb kill (Bot1 at (17, 10)) ----------------------
   {
@@ -237,7 +237,7 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
       b2.hp = 1;
       b2.x = 22;
       b2.y = 8;
-      b2.treasures = { mushrooms: 10, coffee: 5, lanterns: 1};
+      b2.treasures = {};
       b2.inventory.slots[0] = { type: 'ender_pearl', count: 1 };
     },
   },
@@ -340,11 +340,11 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   // here was unreliable and left players stuck on the hatch tile.
   { kind: 'waitForAction', expected: { kind: 'reachTile', x: 25, y: 5 } },
   { kind: 'clearHighlight' },
-  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Extracted. You keep everything you carried.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: "You don't have enough Keys to extract, but I'll spot you this one time." },
 
   // --- Epilogue ----------------------------------------------------------
-  { kind: 'dialogue', portrait: 'char4_neutral', text: 'You have learned: move, loot, throw, dodge, trap, scavenge, escape.' },
-  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Real matches add three more players and fog of war. Same rules.' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Anywwaym, you learned a bunch of shit: moving, looting, throwing, dodging, ambushing, masturbating, escaping, all the things you will ever need' },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: 'In real matches you will have real opponents to deal with. Remember to improve your kit and upgrade you Bomberman to win' },
   { kind: 'pause', text: 'Tutorial complete. Click to return to the menu.' },
   { kind: 'endTutorial', message: 'Tutorial Finished' },
 ];

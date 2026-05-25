@@ -130,6 +130,15 @@ export class MatchScene extends Phaser.Scene {
   private myTreasureTally: TreasureBundle = {};
   private myKills = 0;
   private myKillerName: string | null = null;
+  /** Equipped Bomberman's banked SP captured at match-start. Used as the
+   *  fallback when `match_end.spEarned` is missing/0 — earnings = current
+   *  owned.sp − initial owned.sp. The server's authoritative `match_end`
+   *  payload is still preferred when present and non-zero. */
+  private mySpAtStart = 0;
+  /** Equipped Bomberman's lifetime SP captured at match-start. Survives
+   *  the death case where the OwnedBomberman is removed from the profile
+   *  before `match_end` fires. */
+  private myLifetimeSpAtStart = 0;
   private tiledInfo: ReturnType<typeof preloadTiledMap> = null;
   /** Dedicated HUD camera that ignores world zoom/pan. */
   private hudCamera: Phaser.Cameras.Scene2D.Camera | null = null;
@@ -362,7 +371,12 @@ export class MatchScene extends Phaser.Scene {
     } else {
       const profile = ProfileStore.get();
       this.myPlayerId = profile?.id ?? null;
-      console.log(`[MatchScene] create(): myPlayerId = ${this.myPlayerId}, matchId = ${this.myMatchId}`);
+      // Snapshot equipped Bomberman's banked SP — used as the Results fallback
+      // when the server's match_end.spEarned is missing (see onMatchEnd).
+      const equipped = profile?.ownedBombermen.find(b => b.id === profile.equippedBombermanId);
+      this.mySpAtStart = equipped?.sp ?? 0;
+      this.myLifetimeSpAtStart = equipped?.lifetimeSp ?? 0;
+      console.log(`[MatchScene] create(): myPlayerId = ${this.myPlayerId}, matchId = ${this.myMatchId}, spAtStart = ${this.mySpAtStart}`);
 
       // "The selected Bomberman's UI animation cycles, but only after you play a
       // match with him." Clearing the lock now means the next post-match UI
@@ -1090,13 +1104,33 @@ export class MatchScene extends Phaser.Scene {
       ?? (this.myEscapeTreasures && hasAnyTreasure(this.myEscapeTreasures) ? { ...this.myEscapeTreasures } : null)
       ?? (me?.treasures ? { ...me.treasures } : {});
 
-    // SP earned this match — ONLY trust the server's authoritative
-    // match_end payload. Falling back to `me.sp` reads the in-match
-    // accumulator, which can be non-zero even if the server's bank-on-escape
-    // never ran (e.g. stale server holding pre-bank-code in memory). That
-    // would lie to the player about a credit they didn't actually receive.
-    const spEarned = msg?.spEarned?.[this.myPlayerId ?? ''] ?? 0;
+    // SP earned this match — prefer the server's authoritative match_end
+    // payload when present and non-zero. Fall back to (current owned.sp −
+    // pre-match owned.sp), which is also authoritative since the profile
+    // broadcast lands BEFORE match_end. This catches the edge case where
+    // the per-escape snapshot didn't fire even though SP was banked.
+    const fromServer = msg?.spEarned?.[this.myPlayerId ?? ''] ?? 0;
+    let spEarned = fromServer;
+    if (fromServer <= 0 && outcome === 'escaped') {
+      const profileNow = ProfileStore.get();
+      const equippedNow = profileNow?.ownedBombermen.find(b => b.id === profileNow.equippedBombermanId);
+      const diff = (equippedNow?.sp ?? 0) - this.mySpAtStart;
+      if (diff > 0) spEarned = diff;
+    }
+    // Lifetime SP — prefer the server snapshot; fall back to the live
+    // equipped Bomberman's value (escape case, profile already updated) or
+    // the pre-match cache (death case).
+    let lifetimeSp = msg?.lifetimeSp?.[this.myPlayerId ?? ''] ?? 0;
+    if (lifetimeSp <= 0) {
+      const profileNow = ProfileStore.get();
+      const equippedNow = profileNow?.ownedBombermen.find(b => b.id === profileNow.equippedBombermanId);
+      lifetimeSp = (equippedNow?.lifetimeSp ?? 0) || this.myLifetimeSpAtStart;
+    }
 
+    // Snapshot visual identity from the in-match state so the dead-Bomberman
+    // hero on Results still renders correctly (the OwnedBomberman gets
+    // stripped from the profile on death).
+    const meState = this.state?.bombermen.find(b => b.playerId === this.myPlayerId);
     this.scene.start('ResultsScene', {
       outcome,
       treasuresEarned: myTreasures,
@@ -1104,8 +1138,11 @@ export class MatchScene extends Phaser.Scene {
       inventory,
       kills: this.myKills,
       killerName: this.myKillerName,
-      myBombermanName: me ? (this.state?.bombermen.find(b => b.playerId === this.myPlayerId) as any)?.name ?? null : null,
+      myBombermanName: meState?.name ?? null,
       spEarned,
+      lifetimeSp,
+      myBombermanTint: meState?.tint,
+      myBombermanCharacter: meState?.character,
     });
   }
 
@@ -1193,6 +1230,11 @@ export class MatchScene extends Phaser.Scene {
       const intermediate = ev.intermediate as { x: number; y: number } | undefined;
       if (hurtQueued.has(victimId)) continue; // victim already queued
       hurtQueued.add(victimId);
+      // SMACK_CONNECT_FRAC = 0.65 mirrors BombermanSpriteSystem's connect-at
+      // timing for Attack3 (see ATTACK3_DURATION_MS * 0.65). Fire the impact
+      // burst at that moment so it reads as the actual contact.
+      const ATTACK3_DURATION_MS = 600; // matches BombermanSpriteSystem constant
+      const connectAtMs = Math.round(ATTACK3_DURATION_MS * 0.65);
       if (intermediate) {
         // Trigger Attack3 at the walk midpoint so it looks like the strike
         // intercepts the rushing victim. Walk takes half the transition;
@@ -1201,6 +1243,9 @@ export class MatchScene extends Phaser.Scene {
         this.time.delayedCall(delay, () => {
           this.bombermanSpriteSystem?.applyMeleeAttack(attackerId, victimId, killed);
         });
+        this.time.delayedCall(delay + connectAtMs, () => {
+          this.spawnMeleeSmackVfx(victimId);
+        });
       } else {
         // Walk-end or mutual trigger — fire Attack3 after the walk lerp
         // completes (50% of transition) for step-in, or immediately for
@@ -1208,6 +1253,9 @@ export class MatchScene extends Phaser.Scene {
         const delay = Math.round((BALANCE.match.transitionPhaseSeconds * 1000) * 0.5);
         this.time.delayedCall(delay, () => {
           this.bombermanSpriteSystem?.applyMeleeAttack(attackerId, victimId, killed);
+        });
+        this.time.delayedCall(delay + connectAtMs, () => {
+          this.spawnMeleeSmackVfx(victimId);
         });
       }
     }
@@ -1454,10 +1502,12 @@ export class MatchScene extends Phaser.Scene {
             ds.state = 'open';
             ds.sprite.play(`door_${prefix}_open`);
           });
-        } else {
-          ds.state = 'open';
-          ds.sprite.play(`door_${prefix}_open`);
         }
+        // Not in LoS: keep the closed visual frozen. `ds.opened` is true so
+        // when the player next gains LoS, `updateDoors()` will snap the
+        // sprite to the open frame. Previously this branch played the open
+        // animation regardless of fog state, which leaked the door-open
+        // signal through lesser-fog memory.
       });
     }
 
@@ -1667,10 +1717,10 @@ export class MatchScene extends Phaser.Scene {
   /** Floating "+N [coin]" popup mirroring the treasure pickup VFX.
    *  Coin icon drawn inline as Graphics (mirrors tooltip 'coin' shape). */
   private spawnCoinPopup(worldX: number, worldY: number, amount: number): void {
-    const POPUP_ICON = 22;
+    const POPUP_ICON = 7;
     const c = this.add.container(worldX, worldY).setDepth(500).setAlpha(0);
     const r = POPUP_ICON / 2;
-    const iconY = -8;
+    const iconY = -3;
     const icon = this.add.graphics();
     icon.fillStyle(0xffd944, 1);
     icon.fillCircle(0, iconY, r);
@@ -1678,9 +1728,9 @@ export class MatchScene extends Phaser.Scene {
     icon.fillCircle(0, iconY, r * 0.7);
     icon.fillStyle(0xffd944, 1);
     icon.fillRect(-r * 0.1, iconY - r * 0.45, r * 0.2, r * 0.9);
-    const text = this.add.text(0, 12, `+${amount}`, {
-      fontSize: '16px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
-      stroke: '#000000', strokeThickness: 3,
+    const text = this.add.text(0, 4, `+${amount}`, {
+      fontSize: '7px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
+      stroke: '#000000', strokeThickness: 1,
     }).setOrigin(0.5, 0.5);
     c.add(icon);
     c.add(text);
@@ -1688,7 +1738,7 @@ export class MatchScene extends Phaser.Scene {
     this.tweens.add({ targets: c, alpha: 1, duration: 120 });
     this.tweens.add({
       targets: c,
-      y: worldY - 40,
+      y: worldY - 16,
       alpha: 0,
       duration: 1200,
       delay: 120,
@@ -1702,12 +1752,12 @@ export class MatchScene extends Phaser.Scene {
    *  same tile. Also spawns a flying-to-HUD icon that triggers the HUD key
    *  counter pulse on arrival. */
   private spawnKeyPopup(worldX: number, worldY: number): void {
-    const POPUP_ICON = 36;
+    const POPUP_ICON = 11;
     const c = this.add.container(worldX, worldY).setDepth(500).setAlpha(0).setScale(0.6);
-    const icon = this.add.image(0, -10, 'key').setDisplaySize(POPUP_ICON, POPUP_ICON);
-    const text = this.add.text(0, 16, '+KEY', {
-      fontSize: '20px', color: '#88ddff', fontFamily: 'monospace', fontStyle: 'bold',
-      stroke: '#000022', strokeThickness: 4,
+    const icon = this.add.image(0, -3, 'key').setDisplaySize(POPUP_ICON, POPUP_ICON);
+    const text = this.add.text(0, 5, '+KEY', {
+      fontSize: '7px', color: '#88ddff', fontFamily: 'monospace', fontStyle: 'bold',
+      stroke: '#000022', strokeThickness: 2,
     }).setOrigin(0.5, 0.5);
     c.add([icon, text]);
     if (this.hudCamera) this.hudCamera.ignore(c);
@@ -1716,7 +1766,7 @@ export class MatchScene extends Phaser.Scene {
     this.tweens.add({ targets: c, alpha: 1, scale: 1, duration: 160, ease: 'Back.easeOut' });
     this.tweens.add({
       targets: c,
-      y: worldY - 56,
+      y: worldY - 22,
       alpha: 0,
       duration: 1800,
       delay: 200,
@@ -1880,17 +1930,17 @@ export class MatchScene extends Phaser.Scene {
    *  Bomberman so the player sees ONE popup, not a "left icon" + "right
    *  number" pair. */
   private spawnTreasurePopup(worldX: number, worldY: number, type: TreasureType, amount: number, delayMs: number): void {
-    const POPUP_ICON = 22;
+    const POPUP_ICON = 7;
     const c = this.add.container(worldX, worldY).setDepth(500).setAlpha(0);
-    const icon = this.add.image(0, -8, TREASURE_TEXTURE_KEY, treasureIconFrame(type))
+    const icon = this.add.image(0, -3, TREASURE_TEXTURE_KEY, treasureIconFrame(type))
       .setDisplaySize(POPUP_ICON, POPUP_ICON);
-    const text = this.add.text(0, 12, `+${amount}`, {
-      fontSize: '16px',
+    const text = this.add.text(0, 4, `+${amount}`, {
+      fontSize: '7px',
       color: '#ffd944',
       fontFamily: 'monospace',
       fontStyle: 'bold',
       stroke: '#000000',
-      strokeThickness: 3,
+      strokeThickness: 1,
     }).setOrigin(0.5, 0.5);
     c.add(icon);
     c.add(text);
@@ -1904,7 +1954,7 @@ export class MatchScene extends Phaser.Scene {
     });
     this.tweens.add({
       targets: c,
-      y: worldY - 40,
+      y: worldY - 16,
       alpha: 0,
       duration: 1200,
       delay: delayMs + 120,
@@ -2183,6 +2233,7 @@ export class MatchScene extends Phaser.Scene {
 
     // Add sprites for new chests.
     const existingIds = new Set(this.chestSprites.map(cs => cs.id));
+    const isTutorial = state.isTutorial === true;
     for (const chest of stateChests) {
       if (existingIds.has(chest.id)) continue;
       const key = `chest_${chest.tier}` as 'chest_1' | 'chest_2' | 'chest_3';
@@ -2201,6 +2252,142 @@ export class MatchScene extends Phaser.Scene {
         sprite, state: opened ? 'open' : 'closed',
         permanentlyOpened: opened,
         wasVisible: false,
+      });
+
+      // Tutorial: chests appear via scripted `spawnChest`, so puff smoke
+      // underneath them so the appearance reads as an event rather than a
+      // jump-cut. Skipped in real matches (chests are placed at match start).
+      if (isTutorial && !opened) {
+        this.spawnChestAppearSmoke(chest.x, chest.y, mapTs);
+      }
+    }
+  }
+
+  /** Smack impact burst at a Bomberman's tile center. Drives the visible
+   *  payoff of a melee ambush or step-in counter — a bright yellow shockwave
+   *  + radial starburst + central white flash, all in world-space at the
+   *  victim's tile. Scheduled by the melee_attack handler to fire at the
+   *  Attack3 connect frame so it reads as contact.
+   *
+   *  Renders inside `explosionLayer` (depth 120, always-above-fog) — same
+   *  container the existing teleport puff uses. The previous implementation
+   *  used `add.graphics().setDepth(160)` at scene root, which Phaser's render
+   *  pipeline ordered below the bomberman sprite container in some scene
+   *  states and the burst never showed. Going through the dedicated layer
+   *  guarantees ordering. */
+  private spawnMeleeSmackVfx(victimId: string): void {
+    if (!this.state || !this.mapData) return;
+    const victim = this.state.bombermen.find(b => b.playerId === victimId);
+    if (!victim) return;
+    if (!this.explosionLayer) return;
+    const ts = this.mapData.tileSize;
+    const cx = victim.x * ts + ts / 2;
+    const cy = victim.y * ts + ts / 2;
+    // Half the previous duration — twice as fast.
+    const duration = 400;
+    // Quarter of the previous baseR — 4× smaller.
+    const baseR = Math.max(ts, 24) / 4;
+
+    // Single static draw at peak intensity, then alpha-tween it out.
+    // Spokes go on a SEPARATE Graphics — mixing `strokeCircle/fillCircle`
+    // with `lineBetween` in the same Graphics object causes the renderer
+    // to drop the whole batch silently. Splitting keeps both visible.
+    // Half transparent overall — rings drawn at 0.5 alpha.
+    const rings = this.add.graphics();
+    this.explosionLayer.add(rings);
+    rings.lineStyle(3, 0xffe44a, 0.5);
+    rings.strokeCircle(cx, cy, baseR * 1.2);
+    rings.lineStyle(2.5, 0xfff080, 0.5);
+    rings.strokeCircle(cx, cy, baseR * 0.9);
+    rings.fillStyle(0xffffff, 0.45);
+    rings.fillCircle(cx, cy, baseR * 0.5);
+
+    // 10-spoke POW starburst on its own Graphics.
+    const starburst = this.add.graphics();
+    this.explosionLayer.add(starburst);
+    starburst.lineStyle(2, 0xfff080, 0.5);
+    for (let s = 0; s < 10; s++) {
+      const angle = (s / 10) * Math.PI * 2;
+      const r1 = baseR * 0.6;
+      const r2 = baseR * 1.4;
+      starburst.lineBetween(
+        cx + Math.cos(angle) * r1,
+        cy + Math.sin(angle) * r1,
+        cx + Math.cos(angle) * r2,
+        cy + Math.sin(angle) * r2,
+      );
+    }
+
+    // Group both under one container so the fade callback can address them
+    // together.
+    const all = [rings, starburst];
+
+    // Hold at full alpha for a beat, then fade out via discrete alpha steps.
+    // (Phaser's tween manager misreports duration under `forceSetTimeOut`,
+    // so a setTimeout chain is the safest way to control the fade.)
+    const HOLD_MS = Math.round(duration * 0.35);
+    const FADE_MS = duration - HOLD_MS;
+    const fadeSteps = 8;
+    const fadeStepMs = Math.floor(FADE_MS / fadeSteps);
+    window.setTimeout(() => {
+      let fadeIdx = 0;
+      const fadeStep = (): void => {
+        fadeIdx++;
+        if (!all[0].active) return;
+        const a = Math.max(0, 1 - fadeIdx / fadeSteps);
+        for (const g of all) g.alpha = a;
+        if (fadeIdx >= fadeSteps) {
+          for (const g of all) g.destroy();
+          return;
+        }
+        window.setTimeout(fadeStep, fadeStepMs);
+      };
+      window.setTimeout(fadeStep, fadeStepMs);
+    }, HOLD_MS);
+  }
+
+  /** Gray smoke puff under a tile — used in the tutorial when a scripted
+   *  chest pops into existence. Renders below the chest sprite (depth 14)
+   *  so the chest itself stays on top. */
+  private spawnChestAppearSmoke(tileX: number, tileY: number, ts: number): void {
+    const cx = tileX * ts + ts / 2;
+    const cy = tileY * ts + ts - 4; // near the chest's bottom edge
+    const duration = 600;
+
+    const g = this.add.graphics().setDepth(14);
+    if (this.hudCamera) this.hudCamera.ignore(g);
+    this.tweens.add({
+      targets: g,
+      duration,
+      ease: 'Cubic.easeOut',
+      onUpdate: (tw) => {
+        const t = tw.progress;
+        g.clear();
+        g.fillStyle(0x9a9a9a, (1 - t) * 0.7);
+        g.fillCircle(cx, cy, ts * (0.25 + 0.55 * t));
+        g.fillStyle(0xcccccc, (1 - t) * 0.5);
+        g.fillCircle(cx, cy - ts * 0.1 * t, ts * (0.15 + 0.35 * t));
+      },
+      onComplete: () => g.destroy(),
+    });
+
+    // A few drifting puff particles for shape; rise up and outward, fade.
+    for (let i = 0; i < 5; i++) {
+      const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI; // mostly upward
+      const dist = ts * (0.35 + Math.random() * 0.35);
+      const dot = this.add.graphics().setDepth(14);
+      if (this.hudCamera) this.hudCamera.ignore(dot);
+      dot.fillStyle(0xb0b0b0, 0.7);
+      dot.fillCircle(0, 0, 2 + Math.random() * 1.5);
+      dot.setPosition(cx, cy);
+      this.tweens.add({
+        targets: dot,
+        x: cx + Math.cos(angle) * dist,
+        y: cy + Math.sin(angle) * dist,
+        alpha: 0,
+        duration: duration * 0.9,
+        ease: 'Cubic.easeOut',
+        onComplete: () => dot.destroy(),
       });
     }
   }

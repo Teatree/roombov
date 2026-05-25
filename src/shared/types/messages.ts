@@ -120,6 +120,11 @@ export interface MatchEndMsg {
   treasuresEarned: Record<string, TreasureBundle>;
   /** Per-player SP earned this match, banked on escape. 0 for dead players. */
   spEarned: Record<string, number>;
+  /** Per-player lifetime SP for the equipped Bomberman — includes SP already
+   *  spent on upgrades. For escapees this is the post-bank value; for dead
+   *  players this is the value as it stood just before the OwnedBomberman
+   *  was stripped from the profile. */
+  lifetimeSp: Record<string, number>;
 }
 
 // --- Loot (real-time during match, not turn-gated) ---

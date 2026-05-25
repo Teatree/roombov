@@ -251,6 +251,10 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
     }
     // SP + upgrades backfill for profiles created before the upgrade system.
     if (typeof b.sp !== 'number' || b.sp < 0) b.sp = 0;
+    // Lifetime SP backfill — defaults to current banked SP since old profiles
+    // didn't track upgrades-spent SP separately. Going forward this only
+    // grows. Never decremented when SP is spent on upgrades.
+    if (typeof b.lifetimeSp !== 'number' || b.lifetimeSp < 0) b.lifetimeSp = b.sp;
     if (!b.upgrades || typeof b.upgrades !== 'object') {
       b.upgrades = { cap: 0, stack: 0, hp: 0 };
     } else {

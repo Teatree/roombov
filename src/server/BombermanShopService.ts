@@ -196,6 +196,7 @@ export class BombermanShopService {
       purchasedAt: Date.now(),
       sourceTemplateId: templateId,
       sp: 0,
+      lifetimeSp: 0,
       upgrades: { cap: 0, stack: 0, hp: 0 },
     };
 

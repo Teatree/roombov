@@ -154,6 +154,10 @@ export interface OwnedBomberman {
   /** Banked Skill Points — earned in-match (chest opens, kills, survival),
    *  credited on escape, lost on death. Spent at the Upgrade popup. */
   sp: number;
+  /** Total Skill Points this Bomberman has earned across all matches,
+   *  including SP already spent on upgrades. Pure history counter — never
+   *  decremented. Used for the lifetime-SP badge on the Results screen. */
+  lifetimeSp: number;
   /** Number of upgrade tiers applied per track. Each tier adds +1 to the
    *  corresponding stat (max cap, stack size, hp). Cap'd by
    *  BALANCE.upgrades.<track>.maxTiers and the absolute stat ceilings. */
@@ -181,6 +185,10 @@ export interface BombermanState {
   isScav?: boolean;
   /** The OwnedBomberman id at the time of match start. */
   bombermanId: string;
+  /** Display name copied from the OwnedBomberman at match start. Carried
+   *  in-state so the Results screen still has it after death (the
+   *  OwnedBomberman is stripped from the profile when its Bomberman dies). */
+  name: string;
   colors: CosmeticColors;
   tint: number;
   /** Sprite-sheet variant copied from the equipped OwnedBomberman. */

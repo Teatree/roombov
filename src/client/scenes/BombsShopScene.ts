@@ -12,6 +12,7 @@ import type { PlayerProfile } from '@shared/types/player-profile.ts';
 import { attachTierInfoBadge } from '../systems/TierInfoBadge.ts';
 import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
 import { BombShopTooltip } from '../systems/BombShopTooltip.ts';
+import { effectiveMaxCustomSlots, effectiveStackSize } from '@shared/utils/bomberman-stats.ts';
 
 /**
  * Bombs Shop scene — three-column layout (CATALOG / BOMBERMAN / STOCKPILE).
@@ -555,9 +556,10 @@ export class BombsShopScene extends Phaser.Scene {
     const profile = ProfileStore.get();
     const equipped = profile?.ownedBombermen.find(b => b.id === profile.equippedBombermanId);
     if (equipped) {
-      const stackLimit = equipped.stackSize;
+      const stackLimit = effectiveStackSize(equipped);
       const slots = equipped.inventory.slots;
-      for (let i = 0; i < equipped.maxCustomSlots; i++) {
+      const slotCount = effectiveMaxCustomSlots(equipped);
+      for (let i = 0; i < slotCount; i++) {
         const slot = slots[i];
         if (slot && slot.type === type && slot.count < stackLimit) {
           NetworkManager.track('equip_bomb', 'profile');
@@ -606,11 +608,13 @@ export class BombsShopScene extends Phaser.Scene {
       equipped.tint, equipped.character, UiAnimLock.get(equipped.id), 1.0,
     );
     previewContainer.add(preview);
+    const effSlots = effectiveMaxCustomSlots(equipped);
+    const effStack = effectiveStackSize(equipped);
     attachTierInfoBadge(this, previewContainer, {
       x: 30, y: -28,
       tier: equipped.tier,
-      maxCustomSlots: equipped.maxCustomSlots,
-      stackSize: equipped.stackSize,
+      maxCustomSlots: effSlots,
+      stackSize: effStack,
       tooltipSide: 'left',
     });
     container.add(previewContainer);
@@ -621,7 +625,7 @@ export class BombsShopScene extends Phaser.Scene {
     }));
     const totalCarried = (equipped.inventory?.slots ?? [])
       .reduce((acc: number, s) => acc + (s?.count ?? 0), 0);
-    const totalCapacity = equipped.maxCustomSlots * equipped.stackSize;
+    const totalCapacity = effSlots * effStack;
     container.add(this.add.text(textX, 32, `Tier ${equipped.tier} · ${totalCarried}/${totalCapacity} carried`, {
       fontSize: '10px', color: TEXT_DIM, fontFamily: 'monospace',
     }));
@@ -649,19 +653,19 @@ export class BombsShopScene extends Phaser.Scene {
 
     // --- Slot rows ---
     const slotsStartY = headerH + 8;
-    const totalRows = equipped.maxCustomSlots + 1;
+    const totalRows = effSlots + 1;
     const slotH = totalRows >= 7 ? 28 : totalRows >= 6 ? 32 : 36;
     const slotGap = 3;
-    const stackLimit = equipped.stackSize;
+    const stackLimit = effStack;
 
-    for (let slotIdx = 0; slotIdx < equipped.maxCustomSlots; slotIdx++) {
+    for (let slotIdx = 0; slotIdx < effSlots; slotIdx++) {
       const slot = equipped.inventory.slots[slotIdx];
       const rowY = slotsStartY + slotIdx * (slotH + slotGap);
       this.buildSlotRow(container, w, rowY, slotH, slotIdx, slot, stackLimit, false);
     }
 
-    const rockY = slotsStartY + equipped.maxCustomSlots * (slotH + slotGap);
-    this.buildSlotRow(container, w, rockY, slotH, equipped.maxCustomSlots,
+    const rockY = slotsStartY + effSlots * (slotH + slotGap);
+    this.buildSlotRow(container, w, rockY, slotH, effSlots,
       { type: 'rock' as BombType, count: 0 }, stackLimit, true);
 
     this.containers.push(container);

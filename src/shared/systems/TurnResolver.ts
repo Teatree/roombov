@@ -1639,6 +1639,7 @@ export function resolveTurn(
         isBot: true,
         isScav: true,
         bombermanId: 'scav',
+        name: 'Scavenger',
         colors: { shirt: tint, pants: tint, hair: tint },
         tint,
         character: SCAV_CHARACTER,

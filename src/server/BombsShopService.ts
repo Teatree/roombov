@@ -18,6 +18,7 @@ import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import type { OwnedBomberman } from '../shared/types/bomberman.ts';
 import type { TreasureType } from '../shared/config/treasures.ts';
 import { BOMB_CATALOG, PURCHASABLE_BOMBS } from '../shared/config/bombs.ts';
+import { effectiveMaxCustomSlots, effectiveStackSize } from '../shared/utils/bomberman-stats.ts';
 import type { PlayerStore } from './PlayerStore.ts';
 
 export type BombsShopResult =
@@ -117,9 +118,14 @@ export class BombsShopService {
     const bomberman = this.getEquipped(profile);
     if (!bomberman) return { ok: false, reason: 'invalid_bomberman' };
 
-    if (slotIndex < 0 || slotIndex >= bomberman.maxCustomSlots) return { ok: false, reason: 'slot_out_of_range' };
+    const effSlots = effectiveMaxCustomSlots(bomberman);
+    if (slotIndex < 0 || slotIndex >= effSlots) return { ok: false, reason: 'slot_out_of_range' };
 
-    const stackLimit = bomberman.stackSize;
+    // Pad the persisted slots array to the effective slot count so CAP upgrades
+    // can equip into newly-unlocked slots that weren't part of the original array.
+    while (bomberman.inventory.slots.length < effSlots) bomberman.inventory.slots.push(null);
+
+    const stackLimit = effectiveStackSize(bomberman);
     const stockpiled = profile.bombStockpile[type] ?? 0;
     if (stockpiled <= 0) return { ok: false, reason: 'not_in_stockpile' };
 
@@ -156,7 +162,7 @@ export class BombsShopService {
   async unequipSlot(profile: PlayerProfile, slotIndex: number): Promise<BombsShopResult> {
     const bomberman = this.getEquipped(profile);
     if (!bomberman) return { ok: false, reason: 'no_equipped_bomberman' };
-    if (slotIndex < 0 || slotIndex >= bomberman.maxCustomSlots) return { ok: false, reason: 'slot_out_of_range' };
+    if (slotIndex < 0 || slotIndex >= effectiveMaxCustomSlots(bomberman)) return { ok: false, reason: 'slot_out_of_range' };
 
     const slot = bomberman.inventory.slots[slotIndex];
     if (!slot) return { ok: true };
