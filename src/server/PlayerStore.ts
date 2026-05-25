@@ -137,6 +137,20 @@ export class PlayerStore {
    */
   async save(profile: PlayerProfile): Promise<void> {
     profile.updatedAt = Date.now();
+    // Defensive inventory normalization — every save guarantees the slots
+    // array is sized to the effective custom-slot count (base + cap tiers).
+    // Belt-and-suspenders against any code path that might trim or leave the
+    // array short and clobber a bomb the player just equipped into a
+    // CAP-unlocked slot.
+    for (const b of profile.ownedBombermen) {
+      if (!b.inventory || !Array.isArray(b.inventory.slots)) continue;
+      const targetLen = (b.maxCustomSlots ?? 0) + (b.upgrades?.cap ?? 0);
+      if (targetLen <= 0) continue;
+      while (b.inventory.slots.length < targetLen) b.inventory.slots.push(null);
+      if (b.inventory.slots.length > targetLen) {
+        b.inventory.slots = b.inventory.slots.slice(0, targetLen);
+      }
+    }
     this.cache.set(profile.id, profile);
     void this.persist(profile).catch((err) => {
       console.warn(`[PlayerStore] background save failed for ${profile.id}:`, err);
@@ -263,9 +277,14 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
       b.upgrades.hp = typeof b.upgrades.hp === 'number' ? b.upgrades.hp : 0;
     }
     if (b.inventory && Array.isArray(b.inventory.slots)) {
-      if (b.inventory.slots.length > b.maxCustomSlots) {
+      // CAP upgrades widen the effective slot count past the base
+      // `maxCustomSlots`; size the persisted inventory to the EFFECTIVE
+      // count so a bomb equipped into a newly-unlocked slot isn't trimmed
+      // back to the stockpile on the next save/load round-trip.
+      const targetLen = b.maxCustomSlots + (b.upgrades?.cap ?? 0);
+      if (b.inventory.slots.length > targetLen) {
         // Trim — push any non-null overflow back to the stockpile.
-        for (let i = b.maxCustomSlots; i < b.inventory.slots.length; i++) {
+        for (let i = targetLen; i < b.inventory.slots.length; i++) {
           const s = b.inventory.slots[i];
           if (s) {
             const mapped = normalizeBombType(s.type as unknown as string);
@@ -274,9 +293,9 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
             }
           }
         }
-        b.inventory.slots = b.inventory.slots.slice(0, b.maxCustomSlots);
-      } else if (b.inventory.slots.length < b.maxCustomSlots) {
-        const extra = b.maxCustomSlots - b.inventory.slots.length;
+        b.inventory.slots = b.inventory.slots.slice(0, targetLen);
+      } else if (b.inventory.slots.length < targetLen) {
+        const extra = targetLen - b.inventory.slots.length;
         b.inventory.slots = [...b.inventory.slots, ...new Array(extra).fill(null)];
       }
     }

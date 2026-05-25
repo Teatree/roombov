@@ -47,7 +47,8 @@
         "cap": 0,
         "stack": 0,
         "hp": 0
-      }
+      },
+      "lifetimeSp": 0
     },
     {
       "id": "owned_p_635ff9671cfa_1778099689025_o584",
@@ -86,7 +87,8 @@
         "cap": 0,
         "stack": 0,
         "hp": 0
-      }
+      },
+      "lifetimeSp": 0
     }
   ],
   "equippedBombermanId": "owned_p_635ff9671cfa_1778099687331_a1x1",

@@ -50,7 +50,8 @@
         "cap": 1,
         "stack": 0,
         "hp": 0
-      }
+      },
+      "lifetimeSp": 33
     }
   ],
   "equippedBombermanId": "owned_p_4b2e993c255e_1779713575523_3fhy",

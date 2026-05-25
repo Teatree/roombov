@@ -131,7 +131,14 @@ export function hasLineOfSight(
       tMaxY += tDeltaY;
     }
 
-    if (isBlocker(tx, ty)) return false;
+    if (isBlocker(tx, ty)) {
+      // If the ray landed ON the target tile and it's a blocker (e.g. a
+      // wall the bomberman is standing next to), treat the target itself
+      // as visible — you can see the surface of a wall you're staring at.
+      // Rays passing THROUGH a blocker still return false.
+      if (tx === endTx && ty === endTy) return true;
+      return false;
+    }
   }
   // Shouldn't reach here for well-formed input — fall back to true.
   return true;

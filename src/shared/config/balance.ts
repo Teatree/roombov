@@ -116,6 +116,13 @@ export const BALANCE = {
      *  Used when state.isTutorial === true. See docs/NEW_META.md §7. */
     tutorialRequiredPerHatch: 1,
   },
+  escapeHatches: {
+    /** Number of escape hatches spawned per match — chosen at random from the
+     *  map's pre-authored `escapeTiles[]` candidate pool. If the map declares
+     *  fewer candidates than `count`, every candidate is used. Mirrors how
+     *  chest zones are seeded into a smaller subset. */
+    count: 5,
+  },
   bots: {
     /** Max bots that can be added to a single match. */
     maxPerMatch: 2,

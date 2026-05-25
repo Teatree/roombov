@@ -139,6 +139,19 @@ export class MatchScene extends Phaser.Scene {
    *  the death case where the OwnedBomberman is removed from the profile
    *  before `match_end` fires. */
   private myLifetimeSpAtStart = 0;
+  /** Equipped Bomberman's display name captured at match-start. Survives
+   *  the death case where the OwnedBomberman is stripped from the profile
+   *  before the Results scene reads from it. */
+  private myBombermanNameAtStart: string | null = null;
+  /** Equipped Bomberman's visual identity captured at match-start. Used to
+   *  render the dead-screen corpse correctly even though the OwnedBomberman
+   *  is gone from the profile by match-end. */
+  private myBombermanTintAtStart: number | undefined = undefined;
+  private myBombermanCharacterAtStart: string | undefined = undefined;
+  /** Latest in-match SP accumulator for the local Bomberman — mirrored from
+   *  every `match_state` update so we can compute lifetime SP even on death
+   *  when the server-side snapshot machinery misses this match's accruals. */
+  private myInMatchSp = 0;
   private tiledInfo: ReturnType<typeof preloadTiledMap> = null;
   /** Dedicated HUD camera that ignores world zoom/pan. */
   private hudCamera: Phaser.Cameras.Scene2D.Camera | null = null;
@@ -250,6 +263,8 @@ export class MatchScene extends Phaser.Scene {
   private escapeSprites: Array<{
     x: number; y: number;
     sprite: Phaser.GameObjects.Sprite;
+    /** Pit-and-ladder backdrop drawn under the animated hatch. */
+    underSprite: Phaser.GameObjects.Image;
     state: 'intact' | 'opening' | 'closing' | 'broken';
     memoryBroken: boolean;
   }> = [];
@@ -332,6 +347,9 @@ export class MatchScene extends Phaser.Scene {
       frameWidth: 48,
       frameHeight: 32,
     });
+    // Pit-and-ladder backdrop rendered UNDER the escape_hatch animation so the
+    // closed/opening/open frames sit on top of a visible shaft.
+    this.load.image('escape_hatch_under', 'sprites/escape_hatch_under.png');
     // Broken hatch: 288x32 spritesheet, same layout as escape_hatch — we use
     // frame 0 only, as a 1:1 replacement for the closed-hatch frame.
     this.load.spritesheet('escape_hatch_broken', 'sprites/escape_hatch_broken.png', {
@@ -376,7 +394,11 @@ export class MatchScene extends Phaser.Scene {
       const equipped = profile?.ownedBombermen.find(b => b.id === profile.equippedBombermanId);
       this.mySpAtStart = equipped?.sp ?? 0;
       this.myLifetimeSpAtStart = equipped?.lifetimeSp ?? 0;
-      console.log(`[MatchScene] create(): myPlayerId = ${this.myPlayerId}, matchId = ${this.myMatchId}, spAtStart = ${this.mySpAtStart}`);
+      this.myBombermanNameAtStart = equipped?.name ?? null;
+      this.myBombermanTintAtStart = equipped?.tint;
+      this.myBombermanCharacterAtStart = equipped?.character;
+      this.myInMatchSp = 0;
+      console.log(`[MatchScene] create(): myPlayerId = ${this.myPlayerId}, matchId = ${this.myMatchId}, name = ${this.myBombermanNameAtStart}, spAtStart = ${this.mySpAtStart}, lifetimeSpAtStart = ${this.myLifetimeSpAtStart}`);
 
       // "The selected Bomberman's UI animation cycles, but only after you play a
       // match with him." Clearing the lock now means the next post-match UI
@@ -676,7 +698,7 @@ export class MatchScene extends Phaser.Scene {
     this.uavBannerTimer?.remove();
     this.uavBannerTimer = null;
     this.lastBuiltSlotCount = -1;
-    for (const esc of this.escapeSprites) esc.sprite.destroy();
+    for (const esc of this.escapeSprites) { esc.sprite.destroy(); esc.underSprite.destroy(); }
     this.escapeSprites = [];
     for (const b of this.lockBadges) b.container.destroy();
     this.lockBadges = [];
@@ -750,6 +772,12 @@ export class MatchScene extends Phaser.Scene {
     }
     const firstFrame = this.state === null;
     const phaseBecameInput = state.phase === 'input' && this.lastPhase !== 'input';
+    // Mirror the local Bomberman's in-match SP accumulator so we can recover
+    // it on death (the server zeroes bm.sp before sending match_end).
+    if (this.myPlayerId) {
+      const me = state.bombermen.find(b => b.playerId === this.myPlayerId);
+      if (me && typeof me.sp === 'number') this.myInMatchSp = me.sp;
+    }
     // Snapshot the outgoing flare light set before swapping state — the fog
     // update below unions it with the incoming set so tiles that ARE losing
     // illumination this turn stay lit through the transition animations
@@ -768,12 +796,28 @@ export class MatchScene extends Phaser.Scene {
         // rendered at native 48x32 pixel size and centered on the escape
         // tile's world position. No setDisplaySize() — let the art render
         // at its native resolution so pixels stay crisp.
-        for (const spr of this.escapeSprites) spr.sprite.destroy();
+        for (const spr of this.escapeSprites) { spr.sprite.destroy(); spr.underSprite.destroy(); }
         this.escapeSprites = [];
         for (const b of this.lockBadges) b.container.destroy();
         this.lockBadges = [];
         const mapTs = this.mapData.tileSize;
-        for (const esc of this.mapData.escapeTiles) {
+        // Use the server's per-match `escapeTiles` (a random subset of the
+        // map's authored pool, see MatchRoom.buildInitialState) so each match
+        // gets a fresh hatch placement. Falls back to the map's full pool
+        // only if state didn't ship escapeTiles (legacy / tutorial backend).
+        const escapeTilesFromState = state.escapeTiles?.length ? state.escapeTiles : this.mapData.escapeTiles;
+        for (const esc of escapeTilesFromState) {
+          // Under-layer: pit-and-ladder backdrop drawn at depth 9 so the
+          // animated hatch sits on top. Same anchor as the hatch sprite.
+          const underSprite = this.add.image(
+            esc.x * mapTs + mapTs / 2,
+            esc.y * mapTs + mapTs,
+            'escape_hatch_under',
+          );
+          underSprite.setDepth(9);
+          underSprite.setOrigin(0.5, 1);
+          if (this.hudCamera) this.hudCamera.ignore(underSprite);
+
           // Anchor: horizontally centered, bottom of sprite aligned to bottom
           // of the escape tile. The 48x32 sprite splits into a 3x2 grid of
           // 16x16 cells, and the middle-bottom cell is the one that should
@@ -787,7 +831,7 @@ export class MatchScene extends Phaser.Scene {
           sprite.setOrigin(0.5, 1);
           sprite.play('hatch_closed');
           if (this.hudCamera) this.hudCamera.ignore(sprite);
-          this.escapeSprites.push({ x: esc.x, y: esc.y, sprite, state: 'intact', memoryBroken: false });
+          this.escapeSprites.push({ x: esc.x, y: esc.y, sprite, underSprite, state: 'intact', memoryBroken: false });
 
           // Lock badge — floats above the hatch. Hidden by default; renderHud
           // toggles visibility based on local-player adjacency + key shortfall.
@@ -1117,15 +1161,21 @@ export class MatchScene extends Phaser.Scene {
       const diff = (equippedNow?.sp ?? 0) - this.mySpAtStart;
       if (diff > 0) spEarned = diff;
     }
-    // Lifetime SP — prefer the server snapshot; fall back to the live
-    // equipped Bomberman's value (escape case, profile already updated) or
-    // the pre-match cache (death case).
-    let lifetimeSp = msg?.lifetimeSp?.[this.myPlayerId ?? ''] ?? 0;
-    if (lifetimeSp <= 0) {
-      const profileNow = ProfileStore.get();
-      const equippedNow = profileNow?.ownedBombermen.find(b => b.id === profileNow.equippedBombermanId);
-      lifetimeSp = (equippedNow?.lifetimeSp ?? 0) || this.myLifetimeSpAtStart;
-    }
+    // Lifetime SP — the design ask is "all SP this Bomberman ever gathered,
+    // including SP spent on upgrades AND including the run they just played
+    // even if they died". We compute it client-side from the values we
+    // captured at match start + the mirrored in-match accumulator. The
+    // server's `match_end.lifetimeSp` is used only as a sanity ceiling
+    // since it doesn't always include the lost-on-death this-match SP.
+    const serverLifetime = msg?.lifetimeSp?.[this.myPlayerId ?? ''] ?? 0;
+    const profileNow = ProfileStore.get();
+    const equippedNow = profileNow?.ownedBombermen.find(b => b.id === profileNow.equippedBombermanId);
+    const liveLifetime = equippedNow?.lifetimeSp ?? 0;
+    // For escapees, owned.lifetimeSp on the profile has already been bumped
+    // by THIS match. For dead players, owned is gone, so we add the
+    // in-match accumulator to the pre-match snapshot ourselves.
+    const computedFromDeath = this.myLifetimeSpAtStart + this.myInMatchSp;
+    const lifetimeSp = Math.max(serverLifetime, liveLifetime, computedFromDeath);
 
     // Snapshot visual identity from the in-match state so the dead-Bomberman
     // hero on Results still renders correctly (the OwnedBomberman gets
@@ -1138,11 +1188,11 @@ export class MatchScene extends Phaser.Scene {
       inventory,
       kills: this.myKills,
       killerName: this.myKillerName,
-      myBombermanName: meState?.name ?? null,
+      myBombermanName: meState?.name ?? this.myBombermanNameAtStart,
       spEarned,
       lifetimeSp,
-      myBombermanTint: meState?.tint,
-      myBombermanCharacter: meState?.character,
+      myBombermanTint: meState?.tint ?? this.myBombermanTintAtStart,
+      myBombermanCharacter: meState?.character ?? this.myBombermanCharacterAtStart,
     });
   }
 

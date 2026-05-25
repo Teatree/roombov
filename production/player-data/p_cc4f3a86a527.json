@@ -42,7 +42,8 @@
         "cap": 0,
         "stack": 0,
         "hp": 0
-      }
+      },
+      "lifetimeSp": 0
     },
     {
       "id": "owned_p_cc4f3a86a527_1777924148726_l8as",
@@ -85,7 +86,8 @@
         "cap": 0,
         "stack": 0,
         "hp": 0
-      }
+      },
+      "lifetimeSp": 0
     },
     {
       "id": "owned_p_cc4f3a86a527_1777930939851_1o8l",
@@ -124,7 +126,8 @@
         "cap": 0,
         "stack": 0,
         "hp": 0
-      }
+      },
+      "lifetimeSp": 0
     }
   ],
   "equippedBombermanId": "owned_p_cc4f3a86a527_1777924112640_s4j9",

@@ -356,7 +356,7 @@ export class ResultsScene extends Phaser.Scene {
     const spriteCY = blockTop + SPRITE_BOX / 2;
 
     // Name label ABOVE the sprite so the player reads identity first.
-    this.add.text(centerX - 50, blockTop - 4, name, {
+    this.add.text(centerX - 50, blockTop - 16, name, {
       fontSize: '12px', color: '#cfd6e6', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5, 0);
 
@@ -439,7 +439,7 @@ export class ResultsScene extends Phaser.Scene {
 
     // Name label ABOVE the sprite — gravestone style. Slightly muted color
     // so it reads as memorial text.
-    this.add.text(centerX - 50, blockTop - 4, name, {
+    this.add.text(centerX - 50, blockTop - 16, name, {
       fontSize: '12px', color: '#a8a4b0', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5, 0);
 

@@ -1,59 +1,15 @@
 {
   "id": "p_50ce14b0cd91",
   "createdAt": 1779656068607,
-  "updatedAt": 1779737620114,
-  "coins": 1670,
+  "updatedAt": 1779746447224,
+  "coins": 1440,
   "treasures": {
-    "coffee": 15,
-    "grapes": 4,
-    "lanterns": 1,
-    "mushrooms": 55
+    "coffee": 48,
+    "grapes": 18,
+    "mushrooms": 168
   },
-  "ownedBombermen": [
-    {
-      "id": "owned_p_50ce14b0cd91_1779737440742_br7v",
-      "name": "McBride",
-      "tier": "free",
-      "colors": {
-        "shirt": 10437335,
-        "pants": 4204682,
-        "hair": 7713332
-      },
-      "tint": 7856340,
-      "character": "char1",
-      "maxCustomSlots": 4,
-      "stackSize": 7,
-      "inventory": {
-        "slots": [
-          {
-            "type": "bomb",
-            "count": 3
-          },
-          {
-            "type": "bomb_wide",
-            "count": 4
-          },
-          {
-            "type": "shield",
-            "count": 2
-          },
-          {
-            "type": "flare",
-            "count": 3
-          }
-        ]
-      },
-      "purchasedAt": 1779737440742,
-      "sourceTemplateId": "cycle_p_50ce14b0cd91_mpllpxlw_0_free",
-      "sp": 62,
-      "upgrades": {
-        "cap": 0,
-        "stack": 0,
-        "hp": 0
-      }
-    }
-  ],
-  "equippedBombermanId": "owned_p_50ce14b0cd91_1779737440742_br7v",
+  "ownedBombermen": [],
+  "equippedBombermanId": null,
   "bombStockpile": {},
   "gamblerStreet": {
     "gamblers": [],

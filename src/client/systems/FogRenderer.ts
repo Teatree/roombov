@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import type { MapData } from '@shared/types/map.ts';
+import { type MapData, TileType } from '@shared/types/map.ts';
 import { getSeeThroughTileSet, hasLineOfSight } from '@shared/systems/LineOfSight.ts';
 
 /** Warm cream tint drawn over tiles currently lit by a flare-type source
@@ -140,6 +140,32 @@ export class FogRenderer {
       // External reveals (Flare) — force-visible regardless of LOS
       for (const key of this.externalReveals) {
         this.state.set(key, 'visible');
+      }
+
+      // Adjacent-wall pass — walls (and furniture) within radius become
+      // visible if ANY 4-neighbor tile is already visible. This mirrors the
+      // classic roguelike rule "you can see the inside face of every wall
+      // bordering your visible area" and fixes the prior gap where walls
+      // diagonally adjacent to the player rendered as unseen-black because
+      // the strict-corner LOS ray got blocked one step out.
+      for (let dy = -this.radius; dy <= this.radius; dy++) {
+        for (let dx = -this.radius; dx <= this.radius; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) > this.radius) continue;
+          const tx = centerX + dx;
+          const ty = centerY + dy;
+          if (tx < 0 || ty < 0 || tx >= this.mapData.width || ty >= this.mapData.height) continue;
+          const t = this.mapData.grid[ty]?.[tx];
+          if (t !== TileType.WALL && t !== TileType.FURNITURE) continue;
+          const key = `${tx},${ty}`;
+          if (this.state.get(key) === 'visible') continue;
+          // 4-neighbor check.
+          const adjVisible =
+               this.state.get(`${tx + 1},${ty}`) === 'visible'
+            || this.state.get(`${tx - 1},${ty}`) === 'visible'
+            || this.state.get(`${tx},${ty + 1}`) === 'visible'
+            || this.state.get(`${tx},${ty - 1}`) === 'visible';
+          if (adjVisible) this.state.set(key, 'visible');
+        }
       }
     }
 

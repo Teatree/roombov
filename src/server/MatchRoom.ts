@@ -371,7 +371,12 @@ export class MatchRoom {
       shieldShards: [],
       flares: [],
       bloodTiles: [],
-      escapeTiles: this.map.escapeTiles.map(t => ({ x: t.x, y: t.y })),
+      // Randomly select a fixed-size subset of the map's authored escape-tile
+      // pool — same pattern as chest zone selection. If the map declares
+      // fewer hatches than the configured count, all candidates are used.
+      escapeTiles: seededShuffle(rng, this.map.escapeTiles)
+        .slice(0, BALANCE.escapeHatches.count)
+        .map(t => ({ x: t.x, y: t.y })),
       brokenHatches: [],
       keys: pickedKeys,
       smokeClouds: [],
@@ -562,7 +567,13 @@ export class MatchRoom {
       // life. On death no banking happened, so we just record the current
       // lifetime value.
       if (idx >= 0) {
-        this.lifetimeSpSnapshots.set(diedPlayerId, profile.ownedBombermen[idx].lifetimeSp ?? 0);
+        // Lifetime SP is a pure history counter — even SP earned on a doomed
+        // run counts toward "all SP this Bomberman was ever able to gather".
+        // Bank the in-match accumulator into lifetimeSp BEFORE we strip the
+        // Bomberman so the Results screen can still report it.
+        const owned = profile.ownedBombermen[idx];
+        const dyingLifetime = (owned.lifetimeSp ?? 0) + (bm.sp ?? 0);
+        this.lifetimeSpSnapshots.set(diedPlayerId, dyingLifetime);
         profile.ownedBombermen.splice(idx, 1);
       }
       if (profile.equippedBombermanId === bm.bombermanId) {
