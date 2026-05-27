@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+.cache/
+.git/
+.venv/
+__pycache__/
+*.png
+*.jpg
+*.webp
+*.mp4
+*.zip

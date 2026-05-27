@@ -68,16 +68,25 @@ function idleActions(ids: string[]): Map<string, PlayerAction> {
 }
 
 describe('Escape hatch — one-time use', () => {
-  it('test_escapeHatch_idleOneTurn_marksEscapedAndBreaksHatch', () => {
+  it('test_escapeHatch_idleTwoTurns_marksEscapedAndBreaksHatch', () => {
     // Arrange — single bomberman standing on the only hatch, idle action.
+    // Escape now requires BALANCE.escapeHatches.idleTurnsRequired (2) full
+    // idle turns; the first idle turn must not yet trigger escape.
     const map = mapWithHatch(3, 3);
     const bm = makeBomberman('p1', 3, 3);
     const state = makeState([bm], map.escapeTiles, []);
 
-    // Act
-    const { state: next, events } = resolveTurn(state, idleActions(['p1']), map);
+    // Act — first idle turn (counter ticks to 1, escape NOT yet)
+    const { state: afterFirst, events: eventsFirst } = resolveTurn(state, idleActions(['p1']), map);
+    expect(afterFirst.bombermen[0].escaped).toBe(false);
+    expect(afterFirst.bombermen[0].onHatchIdleTurns).toBe(1);
+    expect(afterFirst.brokenHatches).toEqual([]);
+    expect(eventsFirst.filter(e => e.kind === 'escaped')).toHaveLength(0);
 
-    // Assert — bomberman is marked escaped.
+    // Act — second idle turn (counter ticks to 2, escape resolves)
+    const { state: next, events } = resolveTurn(afterFirst, idleActions(['p1']), map);
+
+    // Assert — bomberman is marked escaped on the second idle turn.
     expect(next.bombermen[0].escaped).toBe(true);
     // brokenHatches now contains the hatch coord.
     expect(next.brokenHatches).toEqual([{ x: 3, y: 3 }]);
@@ -112,6 +121,8 @@ describe('Escape hatch — one-time use', () => {
     const map = mapWithHatch(4, 4);
     const bm = makeBomberman('p1', 4, 4);
     let state = makeState([bm], map.escapeTiles, []);
+    // Two idle turns to escape (BALANCE.escapeHatches.idleTurnsRequired).
+    state = resolveTurn(state, idleActions(['p1']), map).state;
     state = resolveTurn(state, idleActions(['p1']), map).state;
     // After first escape, brokenHatches has [{4,4}]. The match doesn't end
     // because match-end check happens after step 10, so a sole escaped player

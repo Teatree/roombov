@@ -1858,10 +1858,12 @@ export function resolveTurn(
   // --- 9.5. Escape-hatch evaluation ---
   // Run after all position changes (movement in step 1, teleport in step 5)
   // and after death handling in step 9, so a bomberman killed on the hatch
-  // doesn't escape post-mortem. Escape requires one full turn of idle-on-
-  // hatch — a player walking through the tile or throwing from it does not
-  // extract. `onHatchIdleTurns` increments on consecutive idle-on-hatch
-  // turns and resets otherwise; escape fires at count 1.
+  // doesn't escape post-mortem. Escape requires `BALANCE.escapeHatches
+  // .idleTurnsRequired` consecutive turns of idle-on-hatch — a player walking
+  // through the tile or throwing from it does not extract. The turn the
+  // bomberman moves onto the hatch does NOT count (action was 'move').
+  // `onHatchIdleTurns` increments on consecutive idle-on-hatch turns and
+  // resets otherwise; escape fires once the count reaches the threshold.
   for (const b of state.bombermen) {
     if (!b.alive || b.escaped) continue;
     const action = effectiveActions.get(b.playerId) ?? { kind: 'idle' };
@@ -1875,7 +1877,7 @@ export function resolveTurn(
     const hasEnoughKeys = (b.keys ?? 0) >= keysCap;
     if (onHatch && !onBrokenHatch && hasEnoughKeys && action.kind === 'idle') {
       b.onHatchIdleTurns += 1;
-      if (b.onHatchIdleTurns >= 1) {
+      if (b.onHatchIdleTurns >= BALANCE.escapeHatches.idleTurnsRequired) {
         b.escaped = true;
         // Keys are spent on the hatch.
         b.keys = 0;

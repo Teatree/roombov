@@ -21,6 +21,31 @@ const ICON_LANDED_BOMBS = new Set<BombType>([
 ]);
 
 /**
+ * Sprite-explosion wave effect (see docs/explosion-sprite-animation.md).
+ * When enabled, per-tile sprite explosions fan out from the bomb center —
+ * each tile's animation is delayed by `stepDist * EXPLOSION_WAVE_MS_PER_STEP`,
+ * where stepDist is the Chebyshev distance from the bomb center. Setting
+ * EXPLOSION_WAVE_ENABLED = false reverts to simultaneous per-tile spawns
+ * without touching anything else — flip this for A/B testing.
+ */
+const EXPLOSION_WAVE_ENABLED = true;
+const EXPLOSION_WAVE_MS_PER_STEP = 33;
+
+/** Tint applied to Delay Tricky's sprite explosion so it reads as the
+ *  plasma/magenta variant the bomb used pre-sprite-sheet. */
+const DELAY_TRICKY_TINT = 0xcc66ff;
+
+/** BombTypes whose per-tile burst uses the shared explosion_sprite_anim. */
+const SPRITE_EXPLOSION_TYPES = new Set<BombType>([
+  'bomb',
+  'bomb_wide',
+  'contact',
+  'banana_child',
+  'big_huge',
+  'delay_tricky',
+]);
+
+/**
  * Decal decay — see BALANCE.decalDecay in `src/shared/config/balance.ts`.
  * Returns the opacity multiplier for a decal of a given age (turns since
  * stamp). Full opacity for the first `fullTurns` turns, then linearly
@@ -359,21 +384,34 @@ export class BombRenderer {
         // also bails here for any code path that still calls in generically.
         return;
       }
+      // Bombs in SPRITE_EXPLOSION_TYPES use the shared explosion_sprite_anim;
+      // outer tiles fan out from the bomb center if EXPLOSION_WAVE_ENABLED.
+      // Legacy renderers (rockDust, flareFlash, fireSplash, fireBoom for flash)
+      // keep their previous simultaneous spawns.
       for (const tile of tiles) {
-        switch (type) {
-          case 'rock': this.rockDust(tile, dur); break;
-          case 'bomb': this.fireBoom(tile, { core: 0xffffaa, mid: 0xff8822, outer: 0xcc2200, maxRadius: 0.7, duration: dur, emberCount: 7 }); break;
-          case 'bomb_wide': this.fireBoom(tile, { core: 0xffffcc, mid: 0xffbb44, outer: 0xee6622, maxRadius: 0.6, duration: dur, emberCount: 5 }); break;
-          case 'contact': this.fireBoom(tile, { core: 0xffeeaa, mid: 0xff6633, outer: 0xaa0000, maxRadius: 0.5, duration: dur, emberCount: 4 }); break;
-          case 'banana_child': this.fireBoom(tile, { core: 0xffee44, mid: 0xffcc22, outer: 0xaa8811, maxRadius: 0.5, duration: dur, emberCount: 4 }); break;
-          case 'delay_tricky': this.plasmaBurst(tile, dur); break;
-          case 'flare': this.flareFlash(tile, dur); break;
-          case 'molotov': this.fireSplash(tile, dur); break;
-          // New bombs:
-          case 'flash': this.fireBoom(tile, { core: 0xaaddff, mid: 0x4488ff, outer: 0x1133aa, maxRadius: 0.7, duration: dur, emberCount: 7 }); break;
-          case 'big_huge': this.fireBoom(tile, { core: 0xffffcc, mid: 0xff9944, outer: 0xaa2200, maxRadius: 0.8, duration: dur, emberCount: 9 }); break;
-          case 'fart_escape': /* no per-tile explosion; smoke sync handles visuals */ break;
-          case 'motion_detector_flare': /* mine placement — sync handles visuals */ break;
+        const fireTile = (): void => {
+          switch (type) {
+            case 'rock': this.rockDust(tile, dur); break;
+            case 'bomb': this.spriteExplosion(tile, dur); break;
+            case 'bomb_wide': this.spriteExplosion(tile, dur); break;
+            case 'contact': this.spriteExplosion(tile, dur); break;
+            case 'banana_child': this.spriteExplosion(tile, dur); break;
+            case 'big_huge': this.spriteExplosion(tile, dur); break;
+            case 'delay_tricky': this.spriteExplosion(tile, dur, { tint: DELAY_TRICKY_TINT }); break;
+            case 'flare': this.flareFlash(tile, dur); break;
+            case 'molotov': this.fireSplash(tile, dur); break;
+            case 'flash': this.fireBoom(tile, { core: 0xaaddff, mid: 0x4488ff, outer: 0x1133aa, maxRadius: 0.7, duration: dur, emberCount: 7 }); break;
+            case 'fart_escape': /* no per-tile explosion; smoke sync handles visuals */ break;
+            case 'motion_detector_flare': /* mine placement — sync handles visuals */ break;
+          }
+        };
+        if (EXPLOSION_WAVE_ENABLED && SPRITE_EXPLOSION_TYPES.has(type)) {
+          const stepDist = Math.max(Math.abs(tile.x - centerX), Math.abs(tile.y - centerY));
+          const waveDelay = stepDist * EXPLOSION_WAVE_MS_PER_STEP;
+          if (waveDelay > 0) this.scene.time.delayedCall(waveDelay, fireTile);
+          else fireTile();
+        } else {
+          fireTile();
         }
       }
     };
@@ -692,6 +730,27 @@ export class BombRenderer {
         onComplete: () => dot.destroy(),
       });
     }
+  }
+
+  /** Sprite-sheet per-tile explosion. Plays explosion_sprite_anim at its
+   *  registered frameRate (24 fps × 8 frames ≈ 333ms) — fixed visual length,
+   *  independent of the surrounding transition window. It is fine for the
+   *  burst to outlast the parent spawnExplosion's nominal duration; decals
+   *  and smoke fire on their own schedule. Optional `tint` colors the whole
+   *  sprite — used by Delay Tricky for its purple variant. Renders on
+   *  explosionLayer (above fog), same as fireBoom — fog behavior unchanged.
+   *  See docs/explosion-sprite-animation.md.
+   *  @param _durationMs ignored — kept for call-site symmetry with fireBoom. */
+  private spriteExplosion(tile: Tile, _durationMs: number, opts?: { tint?: number }): void {
+    const ts = this.tileSize;
+    const cx = tile.x * ts + ts / 2;
+    const cy = tile.y * ts + ts / 2;
+    const sprite = this.scene.add.sprite(cx, cy, 'explosion_sprite');
+    sprite.setDisplaySize(ts, ts);
+    if (opts?.tint !== undefined) sprite.setTint(opts.tint);
+    this.explosionLayer.add(sprite);
+    sprite.play('explosion_sprite_anim');
+    sprite.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => sprite.destroy());
   }
 
   private fireBoom(tile: Tile, opts: {

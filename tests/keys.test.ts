@@ -183,8 +183,9 @@ describe('Keys system', () => {
     const bm = makeBomberman('p1', 5, 5, { keys: cap });
     const state = makeState({ bombermen: [bm] });
 
-    // Act
-    const { state: next, events } = resolveTurn(state, idleActions(['p1']), map);
+    // Act — two idle turns to satisfy BALANCE.escapeHatches.idleTurnsRequired.
+    const afterFirst = resolveTurn(state, idleActions(['p1']), map).state;
+    const { state: next, events } = resolveTurn(afterFirst, idleActions(['p1']), map);
 
     // Assert
     expect(next.bombermen[0].escaped).toBe(true);
@@ -220,8 +221,9 @@ describe('Keys system', () => {
     const bm = makeBomberman('p1', 5, 5, { keys: 1 });
     const state = makeState({ bombermen: [bm], isTutorial: true });
 
-    // Act
-    const { state: next, events } = resolveTurn(state, idleActions(['p1']), map);
+    // Act — two idle turns (idleTurnsRequired applies in tutorial too).
+    const afterFirst = resolveTurn(state, idleActions(['p1']), map).state;
+    const { state: next, events } = resolveTurn(afterFirst, idleActions(['p1']), map);
 
     // Assert — escape goes through with the reduced tutorial cost.
     expect(next.bombermen[0].escaped).toBe(true);

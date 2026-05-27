@@ -283,11 +283,6 @@ export class MatchScene extends Phaser.Scene {
    *  clears. */
   private keyHudPulseTween: Phaser.Tweens.Tween | null = null;
 
-  /** "Ready to escape" floating banner above the local player's head. Lazy
-   *  created on first show; toggled via setVisible. */
-  private escapeBanner: Phaser.GameObjects.Container | null = null;
-  /** Yoyo pulse on the escape banner; paused/resumed alongside visibility. */
-  private escapeBannerPulseTween: Phaser.Tweens.Tween | null = null;
   /** Circular progress ring drawn around the local player while ready-to-escape;
    *  fills clockwise over the input phase. */
   private escapeRing: Phaser.GameObjects.Graphics | null = null;
@@ -346,6 +341,13 @@ export class MatchScene extends Phaser.Scene {
     this.load.spritesheet('escape_hatch', 'sprites/escape_hatch.png', {
       frameWidth: 48,
       frameHeight: 32,
+    });
+    // Explosion sprite-sheet: 384x48 sheet, 8 frames of 48x48. Replaces the
+    // hand-drawn fireBoom/plasmaBurst graphics on the bombs listed in
+    // docs/explosion-sprite-animation.md.
+    this.load.spritesheet('explosion_sprite', 'sprites/explosion_sprite_sheet.png', {
+      frameWidth: 48,
+      frameHeight: 48,
     });
     // Pit-and-ladder backdrop rendered UNDER the escape_hatch animation so the
     // closed/opening/open frames sit on top of a visible shaft.
@@ -448,6 +450,19 @@ export class MatchScene extends Phaser.Scene {
         key: 'hatch_closing',
         frames: this.anims.generateFrameNumbers('escape_hatch', { start: 5, end: 0 }),
         frameRate: 10,
+        repeat: 0,
+      });
+    }
+
+    // Explosion sprite animation (8 frames). Plays at fixed frameRate —
+    // spriteExplosion does NOT pass a duration override, so this rate is
+    // what plays. 12 fps × 8 frames ≈ 667 ms per cycle. Tune here to
+    // change playback speed. See docs/explosion-sprite-animation.md.
+    if (!this.anims.exists('explosion_sprite_anim')) {
+      this.anims.create({
+        key: 'explosion_sprite_anim',
+        frames: this.anims.generateFrameNumbers('explosion_sprite', { start: 0, end: 7 }),
+        frameRate: 12,
         repeat: 0,
       });
     }
@@ -706,11 +721,6 @@ export class MatchScene extends Phaser.Scene {
     this.keyHudPulseTween?.stop();
     this.keyHudPulseTween?.remove();
     this.keyHudPulseTween = null;
-    this.escapeBannerPulseTween?.stop();
-    this.escapeBannerPulseTween?.remove();
-    this.escapeBannerPulseTween = null;
-    this.escapeBanner?.destroy();
-    this.escapeBanner = null;
     this.escapeRing?.destroy();
     this.escapeRing = null;
     for (const s of this.keySprites.values()) s.destroy();
@@ -1904,10 +1914,11 @@ export class MatchScene extends Phaser.Scene {
     });
   }
 
-  /** Per-frame driver for the ready-to-escape feedback: a compact banner
-   *  above the local player's head + a clockwise-filling progress ring at
-   *  their feet. Visible only during the input phase, on an unbroken hatch,
-   *  with keys >= cap. Lazily creates the GameObjects on first show. */
+  /** Per-frame driver for the ready-to-escape feedback: a clockwise-filling
+   *  progress ring at the local player's feet. Spans the full wait window
+   *  from step-on to escape (both input AND transition phases of every wait
+   *  turn). Hidden during the transition that walks the bomberman onto the
+   *  hatch — the ring only "starts playing" the moment they actually arrive. */
   private updateEscapeReadyIndicator(): void {
     if (!this.state || !this.mapData) {
       this.setEscapeIndicatorVisible(false);
@@ -1922,8 +1933,16 @@ export class MatchScene extends Phaser.Scene {
     const onBroken = this.state.brokenHatches.some(t => t.x === me.x && t.y === me.y);
     const cap = BALANCE.keys.requiredPerHatch;
     const heldKeys = me.keys ?? 0;
-    const ready = onHatch && !onBroken && heldKeys >= cap && this.state.phase === 'input';
-    if (!ready) {
+    if (!onHatch || onBroken || heldKeys < cap) {
+      this.setEscapeIndicatorVisible(false);
+      return;
+    }
+    // Suppress the ring during the arrival transition (action was 'move', so
+    // onHatchIdleTurns is still 0 and the bomberman is still visually lerping
+    // toward the hatch). The ring should appear the moment they're standing
+    // on it — i.e. at the start of the next input phase.
+    const onHatchTurns = me.onHatchIdleTurns ?? 0;
+    if (this.state.phase === 'transition' && onHatchTurns === 0) {
       this.setEscapeIndicatorVisible(false);
       return;
     }
@@ -1932,13 +1951,34 @@ export class MatchScene extends Phaser.Scene {
     const ts = this.mapData.tileSize;
     const cx = me.x * ts + ts / 2;
     const cy = me.y * ts + ts / 2;
-    this.escapeBanner!.setPosition(cx, cy - ts * 0.9);
 
-    // Ring fill: progress through the input phase. phaseEndsAt is wall-clock
-    // ms; inputPhaseSeconds drives the assumed duration.
-    const phaseDuration = BALANCE.match.inputPhaseSeconds * 1000;
-    const remaining = Math.max(0, this.state.phaseEndsAt - Date.now());
-    const progress = Math.max(0, Math.min(1, 1 - remaining / phaseDuration));
+    // Ring fill: continuous progress from step-on (end of the arrival
+    // transition = start of the first wait input phase) to escape (end of
+    // the last wait input phase, when the resolver flips `escaped`).
+    //   - required: BALANCE.escapeHatches.idleTurnsRequired wait turns.
+    //   - each wait turn = inputMs + transitionMs.
+    //   - escape fires at end of the LAST wait turn's input phase, so total
+    //     duration = (required - 1) full turn cycles + 1 input phase
+    //              = required * inputMs + (required - 1) * transitionMs.
+    // `onHatchIdleTurns` (= completed idle input phases) + phaseRemaining are
+    // sufficient to derive elapsed continuously across phase boundaries.
+    const required = BALANCE.escapeHatches.idleTurnsRequired;
+    const inputMs = BALANCE.match.inputPhaseSeconds * 1000;
+    const transitionMs = BALANCE.match.transitionPhaseSeconds * 1000;
+    const totalMs = required * inputMs + (required - 1) * transitionMs;
+    const phaseRemaining = Math.max(0, this.state.phaseEndsAt - Date.now());
+    let elapsed: number;
+    if (this.state.phase === 'input') {
+      // We're in input of wait turn (onHatchTurns + 1).
+      elapsed = onHatchTurns * (inputMs + transitionMs) + (inputMs - phaseRemaining);
+    } else {
+      // We're in transition of wait turn `onHatchTurns` (resolver just
+      // incremented). Skip-on-arrival is handled above (onHatchTurns >= 1
+      // is guaranteed here).
+      elapsed = (onHatchTurns - 1) * (inputMs + transitionMs) + inputMs
+        + (transitionMs - phaseRemaining);
+    }
+    const progress = Math.max(0, Math.min(1, elapsed / totalMs));
     const g = this.escapeRing!;
     g.clear();
     const radius = ts * 0.55;
@@ -1954,41 +1994,16 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  /** Lazy-create the escape banner + ring (hidden). Idempotent. */
+  /** Lazy-create the escape progress ring (hidden). Idempotent. */
   private ensureEscapeIndicator(): void {
-    if (this.escapeBanner) return;
-    // Hourglass glyph only — no pill, no label. The countdown ring around
-    // the player already conveys the timing.
-    const c = this.add.container(0, 0).setDepth(180);
-    const txt = this.add.text(0, 0, '⌛', {
-      fontSize: '12px', color: '#88ffaa', fontFamily: 'Arial, sans-serif',
-      stroke: '#000000', strokeThickness: 2,
-    }).setOrigin(0.5, 0.5);
-    c.add(txt);
-    if (this.hudCamera) this.hudCamera.ignore(c);
-    this.escapeBanner = c;
-    this.escapeBannerPulseTween = this.tweens.add({
-      targets: c,
-      scale: 1.08,
-      duration: 600,
-      yoyo: true,
-      repeat: -1,
-      ease: 'Sine.easeInOut',
-    });
-
+    if (this.escapeRing) return;
     const ring = this.add.graphics().setDepth(15);
     if (this.hudCamera) this.hudCamera.ignore(ring);
     this.escapeRing = ring;
   }
 
-  /** Toggle visibility for the escape indicator pair, pausing/resuming the
-   *  banner pulse to keep it from running invisibly. */
+  /** Toggle visibility for the escape progress ring. */
   private setEscapeIndicatorVisible(visible: boolean): void {
-    if (this.escapeBanner) {
-      this.escapeBanner.setVisible(visible);
-      if (visible) this.escapeBannerPulseTween?.resume();
-      else this.escapeBannerPulseTween?.pause();
-    }
     if (this.escapeRing) {
       this.escapeRing.setVisible(visible);
       if (!visible) this.escapeRing.clear();

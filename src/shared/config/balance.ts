@@ -122,6 +122,12 @@ export const BALANCE = {
      *  fewer candidates than `count`, every candidate is used. Mirrors how
      *  chest zones are seeded into a smaller subset. */
     count: 5,
+    /** Consecutive idle-on-hatch turns required before escape resolves. The
+     *  turn during which the bomberman walks onto the hatch does NOT count
+     *  (action was 'move', not 'idle'); the counter starts on the next turn.
+     *  Increase to make extraction more committed. The client's progress ring
+     *  derives its fill duration from this value. */
+    idleTurnsRequired: 2,
   },
   bots: {
     /** Max bots that can be added to a single match. */
