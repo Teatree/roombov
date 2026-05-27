@@ -515,14 +515,10 @@ export class BombermanSpriteSystem {
     const hpPips = this.scene.add.graphics();
     this.layer.add(hpPips);
 
-    // Self-only overlay: red aim shadow ellipse. Yellow ring removed per
-    // user request — the sprite itself is distinct enough.
-    let aimShadow: Phaser.GameObjects.Graphics | null = null;
-    if (isMe) {
-      aimShadow = this.scene.add.graphics();
-      aimShadow.setVisible(false);
-      this.layer.add(aimShadow);
-    }
+    // Self-only red aim-shadow ellipse REMOVED per user request — the
+    // throw-target highlight in MatchScene is now the sole aiming indicator,
+    // so this overlay was redundant and visually noisy.
+    const aimShadow: Phaser.GameObjects.Graphics | null = null;
 
     // Stun icon — blue star/bolt above the head. All players can see it.
     const stunIcon = this.scene.add.graphics();
@@ -738,13 +734,6 @@ export class BombermanSpriteSystem {
       entry.swordIcon.setPosition(visualX, visualY - ts * 1.8 + swordBob);
     }
 
-    if (entry.aimShadow) {
-      entry.aimShadow.clear();
-      entry.aimShadow.fillStyle(0xff2222, 0.45);
-      entry.aimShadow.fillEllipse(visualX, visualY + ts * 0.15, ts * 0.75, ts * 0.3);
-      entry.aimShadow.lineStyle(1, 0xff4444, 0.9);
-      entry.aimShadow.strokeEllipse(visualX, visualY + ts * 0.15, ts * 0.75, ts * 0.3);
-    }
   }
 
   private drawHpPips(entry: BombermanSpriteEntry): void {

@@ -40,7 +40,8 @@
           {
             "type": "molotov",
             "count": 4
-          }
+          },
+          null
         ]
       },
       "purchasedAt": 1779713575523,

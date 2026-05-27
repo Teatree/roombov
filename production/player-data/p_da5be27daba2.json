@@ -40,7 +40,8 @@
           {
             "type": "delay_tricky",
             "count": 6
-          }
+          },
+          null
         ]
       },
       "purchasedAt": 1779710746003,

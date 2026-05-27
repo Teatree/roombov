@@ -510,8 +510,9 @@ export class MatchScene extends Phaser.Scene {
     // Explosion layer is ABOVE fog — shockwaves always visible.
     this.explosionLayer = this.add.container(0, 0).setDepth(120);
     this.effectsLayer = this.add.container(0, 0).setDepth(150);
-    this.highlightGraphics = this.add.graphics().setDepth(150);
-    this.effectsLayer.add(this.highlightGraphics);
+    // Aim indicator sits below bombermen (depth 100) so it doesn't paint over
+    // sprites that overlap the target tile. Just above pathGraphics for layering.
+    this.highlightGraphics = this.add.graphics().setDepth(65);
     this.pathGraphics = this.add.graphics().setDepth(60);
 
     // HUD uses a second camera that never zooms/scrolls. It ignores all world
@@ -735,6 +736,13 @@ export class MatchScene extends Phaser.Scene {
 
     // Update ready-to-escape feedback (banner above head + progress ring)
     this.updateEscapeReadyIndicator();
+
+    // Redraw the path each frame so the path[0] hourglass arc animates
+    // smoothly during the input phase (instead of stepping only on
+    // server-state updates).
+    if (this.inputMode.kind === 'pathing') {
+      this.drawPath();
+    }
 
     // Camera follow: snap to the local player's tile center every frame.
     // Skips if the player has escaped (sprite is gone) so the last framing
@@ -1040,8 +1048,15 @@ export class MatchScene extends Phaser.Scene {
     }
     // After the transition resolves, a staged throw has been consumed — drop
     // aim mode so the next input phase doesn't re-throw from the same slot.
+    // Spawn a 1s fade-out of the aim indicator so the target tile lingers
+    // visibly as the bomb flies/lands instead of vanishing the moment phase
+    // flips.
     if (state.phase === 'transition' && this.inputMode.kind === 'aim') {
+      const aim = this.inputMode;
       this.inputMode = { kind: 'idle' };
+      if (aim.targetX !== null && aim.targetY !== null) {
+        this.spawnAimFadeOut(aim.targetX, aim.targetY);
+      }
     }
     // Note: selectedSlot is NOT cleared on transition — it persists until the
     // player either throws (onClick clears it) or toggles it off (same key).
@@ -1067,10 +1082,17 @@ export class MatchScene extends Phaser.Scene {
         return;
 
       case 'pathing': {
-        // Pop waypoints we've already reached (may be 1 or 2 if rush was active)
-        while (this.inputMode.path.length > 0 &&
-               this.inputMode.path[0].x === me.x && this.inputMode.path[0].y === me.y) {
-          this.inputMode.path.shift();
+        // Pop tiles up to and including me's current position. Handles both
+        // 1-tile moves (me === path[0]) and 2-tile rush moves (me === path[1]
+        // with path[0] being the consumed passthrough). Rush no longer pre-
+        // shifts before send — keeping the passthrough in path until the
+        // bomberman has actually traversed it means drawPath can render the
+        // full path (and identify pause vs. passthrough tiles correctly).
+        for (let i = 0; i < Math.min(2, this.inputMode.path.length); i++) {
+          if (this.inputMode.path[i].x === me.x && this.inputMode.path[i].y === me.y) {
+            this.inputMode.path.splice(0, i + 1);
+            break;
+          }
         }
         if (this.inputMode.path.length === 0) {
           this.inputMode = { kind: 'idle' };
@@ -1083,7 +1105,6 @@ export class MatchScene extends Phaser.Scene {
         const first = this.inputMode.path[0];
         if (rushActive && this.inputMode.path.length >= 2) {
           const second = this.inputMode.path[1];
-          this.inputMode.path.shift(); // pop the first waypoint (will be consumed this turn)
           this.sendAction({ kind: 'move', x: first.x, y: first.y, rushX: second.x, rushY: second.y });
         } else {
           this.sendAction({ kind: 'move', x: first.x, y: first.y });
@@ -2623,9 +2644,22 @@ export class MatchScene extends Phaser.Scene {
     if (!me) return;
     const ts = this.mapData.tileSize;
 
+    // Skip tiles already traversed this turn. During transition `me.x/y` has
+    // already advanced to the resolved-post-turn position, but flushStaged-
+    // Action only pops in the *next* input phase. Without this skip the path
+    // line backtracks (e.g. in rush: me=B, path[0]=A, line goes B→A→B→...).
+    let skipUpTo = 0;
+    for (let i = 0; i < Math.min(2, this.inputMode.path.length); i++) {
+      if (this.inputMode.path[i].x === me.x && this.inputMode.path[i].y === me.y) {
+        skipUpTo = i + 1;
+        break;
+      }
+    }
+    const drawTiles = this.inputMode.path.slice(skipUpTo);
+
     const points: Phaser.Math.Vector2[] = [];
     points.push(new Phaser.Math.Vector2(me.x * ts + ts / 2, me.y * ts + ts / 2));
-    for (const p of this.inputMode.path) {
+    for (const p of drawTiles) {
       points.push(new Phaser.Math.Vector2(p.x * ts + ts / 2, p.y * ts + ts / 2));
     }
 
@@ -2636,26 +2670,137 @@ export class MatchScene extends Phaser.Scene {
     for (let i = 1; i < points.length; i++) this.pathGraphics.lineTo(points[i].x, points[i].y);
     this.pathGraphics.strokePath();
 
-    // Waypoint markers — appearance depends on match phase:
-    //   Input phase: ALL points are changeable (hollow cyan) — player can still re-click
-    //   Resolution phase: first point is LOCKED (solid yellow + ring), rest are queued (cyan)
-    const isResolution = this.state?.phase === 'transition';
-    for (let i = 0; i < this.inputMode.path.length; i++) {
-      const p = this.inputMode.path[i];
+    // Pause-aware waypoint markers, computed over the post-skip drawTiles so
+    // they reflect the FUTURE path from me's current position.
+    //   - Non-rush, length N: every index is a pause.
+    //   - Rush, length N: pause if (i % 2 === 1) OR (i === N - 1). drawTiles[0]
+    //     is the passthrough the rush sweeps through; drawTiles[1] is the
+    //     pause/landing. Final tile is always a pause (1-tile fallback if the
+    //     parity would otherwise make it a passthrough).
+    //
+    // Hourglass on pauseIndices[0] (= next-walk-target). Empties at walk-start,
+    // then *switches* to the next pause and refills:
+    //   - input phase:      remaining = phaseRemaining  (drains over input,
+    //                       reaches 0 at end-of-input = walk-start).
+    //   - transition phase: remaining = phaseRemaining + inputMs  (refills to
+    //                       full at walk-start = start of transition because
+    //                       drawTiles has shifted past the just-walked tile,
+    //                       drains through transition + next input, hits 0 at
+    //                       the next walk-start).
+    // Denominator = totalMs = inputMs + transitionMs. A click mid-input shows
+    // the hourglass partially drained (the cycle started at the prior walk-
+    // start).
+    // Dots render on every other pause tile (the non-hourglass ones). Rush
+    // passthrough tiles get no marker; the path line still draws through them.
+    const phase = this.state?.phase;
+    const inputMs = BALANCE.match.inputPhaseSeconds * 1000;
+    const transitionMs = BALANCE.match.transitionPhaseSeconds * 1000;
+    const totalMs = inputMs + transitionMs;
+    const phaseRemaining = this.state ? Math.max(0, this.state.phaseEndsAt - Date.now()) : 0;
+    const rushActive = me.rushActive;
+    const N = drawTiles.length;
+    const pauseIndices: number[] = [];
+    for (let i = 0; i < N; i++) {
+      const isPause = !rushActive || (i % 2 === 1) || (i === N - 1);
+      if (isPause) pauseIndices.push(i);
+    }
+    let hourglassIdx = -1;
+    let hourglassRemaining = 0;
+    if (this.state && pauseIndices.length > 0 && (phase === 'input' || phase === 'transition')) {
+      hourglassIdx = pauseIndices[0];
+      hourglassRemaining = phase === 'input' ? phaseRemaining : phaseRemaining + inputMs;
+    }
+    for (let i = 0; i < N; i++) {
+      const p = drawTiles[i];
       const cx = p.x * ts + ts / 2;
       const cy = p.y * ts + ts / 2;
-      if (i === 0 && isResolution) {
-        // Locked — solid yellow dot with ring (can't change during resolution)
-        this.pathGraphics.fillStyle(0xffcc44, 0.95);
-        this.pathGraphics.fillCircle(cx, cy, 3);
-        this.pathGraphics.lineStyle(1.5, 0xffcc44, 0.6);
-        this.pathGraphics.strokeCircle(cx, cy, 6);
-      } else {
-        // Changeable (input phase) or queued future step — hollow cyan
+      if (i === hourglassIdx) {
+        const progress = Math.max(0, Math.min(1, hourglassRemaining / totalMs));
+        const radius = ts * 0.255;
+        this.pathGraphics.lineStyle(1.5, 0x223344, 0.4);
+        this.pathGraphics.strokeCircle(cx, cy, radius);
+        if (progress > 0) {
+          this.pathGraphics.lineStyle(2.5, 0x44aaff, 0.76);
+          this.pathGraphics.beginPath();
+          const start = -Math.PI / 2;
+          this.pathGraphics.arc(cx, cy, radius, start, start + progress * Math.PI * 2, false);
+          this.pathGraphics.strokePath();
+        }
+      } else if (pauseIndices.includes(i)) {
         this.pathGraphics.lineStyle(1, 0x44aaff, 0.4);
         this.pathGraphics.strokeCircle(cx, cy, 3);
       }
+      // else: rush passthrough tile — path line draws through it, no marker
     }
+  }
+
+  /** Pop-in feedback ring on the clicked tile (final move destination for
+   *  pathing, or target tile for an attack). Outline only (transparent
+   *  interior). Grows fast then slow-fades out. Depth 90 — below the
+   *  bomberman sprite at 100. */
+  private spawnClickFeedback(kind: 'move' | 'attack', tileX: number, tileY: number): void {
+    if (!this.mapData) return;
+    const ts = this.mapData.tileSize;
+    const cx = tileX * ts + ts / 2;
+    const cy = tileY * ts + ts / 2;
+    const color = kind === 'move' ? 0x44ff88 : 0xff4466;
+    // 30% smaller than the prior ts*0.55 → ts*0.385.
+    const baseRadius = ts * 0.385;
+
+    const g = this.add.graphics().setDepth(90);
+    if (this.hudCamera) this.hudCamera.ignore(g);
+    g.lineStyle(3, color, 1);
+    g.strokeCircle(0, 0, baseRadius);
+    g.setPosition(cx, cy);
+    g.setScale(0.15);
+
+    // Two-stage tween: fast pop to full size, then slow expand + fade-out.
+    this.tweens.add({
+      targets: g,
+      scale: 1.0,
+      duration: 90,
+      ease: 'Quad.easeOut',
+      onComplete: () => {
+        this.tweens.add({
+          targets: g,
+          scale: 1.45,
+          alpha: 0,
+          duration: 320,
+          ease: 'Sine.easeOut',
+          onComplete: () => g.destroy(),
+        });
+      },
+    });
+  }
+
+
+  /** Spawn a transient copy of the aim indicator that fades out over 1s when
+   *  the bomb has actually been thrown. The live highlightGraphics is cleared
+   *  the moment inputMode flips to idle, so we render the fading copy as a
+   *  separate one-shot Graphics. Same depth as highlightGraphics (65) so it
+   *  stays beneath any bomberman sprite overlapping the target tile. */
+  private spawnAimFadeOut(tileX: number, tileY: number): void {
+    if (!this.mapData) return;
+    const ts = this.mapData.tileSize;
+    const cx = tileX * ts + ts / 2;
+    const cy = tileY * ts + ts / 2;
+    const half = ts * 0.35;
+
+    const g = this.add.graphics().setDepth(65);
+    if (this.hudCamera) this.hudCamera.ignore(g);
+    g.fillStyle(0xff4444, 0.15);
+    g.fillRect(tileX * ts, tileY * ts, ts, ts);
+    g.lineStyle(1, 0xff4444, 0.8);
+    g.lineBetween(cx - half, cy - half, cx + half, cy + half);
+    g.lineBetween(cx - half, cy + half, cx + half, cy - half);
+
+    this.tweens.add({
+      targets: g,
+      alpha: 0,
+      duration: 1000,
+      ease: 'Sine.easeOut',
+      onComplete: () => g.destroy(),
+    });
   }
 
   private drawHighlights(): void {
@@ -2663,30 +2808,32 @@ export class MatchScene extends Phaser.Scene {
     if (!this.mapData) return;
     const ts = this.mapData.tileSize;
 
-    // Committed throw target (aim mode) — rendered while the action is
-    // queued and during the transition phase.
-    if (this.inputMode.kind === 'aim' && this.inputMode.targetX !== null && this.inputMode.targetY !== null) {
-      this.highlightGraphics.lineStyle(3, 0xff4444, 1);
-      this.highlightGraphics.strokeRect(
-        this.inputMode.targetX * ts + 2,
-        this.inputMode.targetY * ts + 2,
-        ts - 4, ts - 4,
-      );
-      return;
-    }
-
-    // Hover preview — while a bomb slot is armed and no aim is committed
-    // yet, show a red reticle on the tile under the cursor so the player
-    // can see where their throw will land before they click.
-    if (this.selectedSlot !== null
+    // Pick the attack-target tile (committed aim > armed-hover preview).
+    let tx: number | null = null;
+    let ty: number | null = null;
+    if (this.inputMode.kind === 'aim'
+        && this.inputMode.targetX !== null && this.inputMode.targetY !== null) {
+      tx = this.inputMode.targetX;
+      ty = this.inputMode.targetY;
+    } else if (this.selectedSlot !== null
         && this.hoveredTileX !== null && this.hoveredTileY !== null) {
-      this.highlightGraphics.lineStyle(3, 0xff4444, 0.85);
-      this.highlightGraphics.strokeRect(
-        this.hoveredTileX * ts + 2,
-        this.hoveredTileY * ts + 2,
-        ts - 4, ts - 4,
-      );
+      tx = this.hoveredTileX;
+      ty = this.hoveredTileY;
     }
+    if (tx === null || ty === null) return;
+
+    // 15% red filled square — exactly tile-sized.
+    this.highlightGraphics.fillStyle(0xff4444, 0.15);
+    this.highlightGraphics.fillRect(tx * ts, ty * ts, ts, ts);
+
+    // 80% red X cross — ~70% of tile, centered. Thin stroke so the cross
+    // reads as a delicate reticle rather than a heavy bar.
+    const cx = tx * ts + ts / 2;
+    const cy = ty * ts + ts / 2;
+    const half = ts * 0.35;
+    this.highlightGraphics.lineStyle(1, 0xff4444, 0.8);
+    this.highlightGraphics.lineBetween(cx - half, cy - half, cx + half, cy + half);
+    this.highlightGraphics.lineBetween(cx - half, cy + half, cx + half, cy - half);
   }
 
   private onClick(pointer: Phaser.Input.Pointer): void {
@@ -2780,6 +2927,7 @@ export class MatchScene extends Phaser.Scene {
         targetY: ty,
       };
       this.selectedSlot = null;
+      this.spawnClickFeedback('attack', tx, ty);
       this.flushStagedAction();
       this.rebuildEntities();
       this.renderHud();
@@ -2793,6 +2941,10 @@ export class MatchScene extends Phaser.Scene {
       return;
     }
     this.inputMode = { kind: 'pathing', path };
+    // Spawn feedback at the final destination tile of the chosen path —
+    // that's the player's intent, not the immediate next step.
+    const dest = path[path.length - 1];
+    this.spawnClickFeedback('move', dest.x, dest.y);
     this.flushStagedAction();
     this.rebuildEntities();
   }
