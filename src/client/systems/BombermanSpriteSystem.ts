@@ -93,13 +93,17 @@ interface BombermanSpriteEntry {
   preThrowFacing: Facing;
   /** Wall-clock time at which this escaped Bomberman should be destroyed. 0 means not pending. */
   escapeDestroyAt: number;
+  /** Latch — set true the first frame an escape fade-out tween is started so
+   *  tick() doesn't keep restarting the tween every frame after lerp end. */
+  escapeFadeStarted: boolean;
   /** Mirrors BombermanState.rushActive — drives walk vs run anim selection. */
   rushActive: boolean;
   /** Which char1/char2/char3 sprite sheet this Bomberman uses. */
   character: CharacterVariant;
-  /** Stun indicator icon above the bomberman's head. Shown to all players
-   *  whenever the bomberman has the `stunned` status effect. */
-  stunIcon: Phaser.GameObjects.Graphics;
+  /** Stun indicator above the bomberman's head — 2-frame question-mark
+   *  sprite (`stunned_effect_anim`) shown to all players whenever the
+   *  bomberman has the `stunned` status effect. */
+  stunIcon: Phaser.GameObjects.Sprite;
   /** Sword icon shown above the head while the bomberman is in Melee Trap
    *  Mode. Visible to all players when they have LOS on the bomberman.
    *  Bobs slightly; fades out on exit. */
@@ -460,10 +464,32 @@ export class BombermanSpriteSystem {
         entry.hpDisplayUpdateAt = 0;
         this.drawHpPips(entry);
       }
-      // Escape: destroy only after the walk lerp has finished AND the grace
-      // window has passed, so the sprite is seen reaching the hatch.
-      if (entry.escapeDestroyAt > 0 && nowMs >= entry.escapeDestroyAt && entry.lerpEndMs === 0) {
-        toDestroy.push(playerId);
+      // Escape: once the walk lerp finishes (sprite has reached the hatch
+      // tile), start a one-shot fade-out tween and let its onComplete remove
+      // the entry. The current animation frame is frozen so the fade reads
+      // cleanly without footstep cycling. `escapeFadeStarted` is a latch so
+      // the tween fires exactly once per escape even though tick() runs
+      // every frame.
+      if (entry.escapeDestroyAt > 0 && entry.lerpEndMs === 0 && !entry.escapeFadeStarted) {
+        entry.escapeFadeStarted = true;
+        entry.sprite.anims.stop();
+        const fadeTargets: Phaser.GameObjects.GameObject[] = [
+          entry.sprite, entry.hpPips, entry.stunIcon, entry.swordIcon,
+        ];
+        if (entry.aimShadow) fadeTargets.push(entry.aimShadow);
+        const pidForFade = playerId;
+        this.scene.tweens.add({
+          targets: fadeTargets,
+          alpha: 0,
+          duration: 300,
+          onComplete: () => {
+            const e = this.entries.get(pidForFade);
+            if (e) {
+              this.destroyEntry(e);
+              this.entries.delete(pidForFade);
+            }
+          },
+        });
       }
     }
     for (const pid of toDestroy) {
@@ -520,10 +546,15 @@ export class BombermanSpriteSystem {
     // so this overlay was redundant and visually noisy.
     const aimShadow: Phaser.GameObjects.Graphics | null = null;
 
-    // Stun icon — blue star/bolt above the head. All players can see it.
-    const stunIcon = this.scene.add.graphics();
+    // Stun icon — 2-frame question-mark sprite above the head. All players
+    // see it whenever the bomberman has the `stunned` status effect. Anim
+    // is registered in MatchScene.create() at 2 fps.
+    const stunIcon = this.scene.add.sprite(cx, cy, 'stunned_effect');
+    stunIcon.setDisplaySize(this.tileSize * 0.7, this.tileSize * 0.7);
     stunIcon.setVisible(false);
-    this.drawStunIcon(stunIcon);
+    if (this.scene.anims.exists('stunned_effect_anim')) {
+      stunIcon.play('stunned_effect_anim');
+    }
     this.layer.add(stunIcon);
 
     // Sword icon — shown above the head while in Melee Trap Mode. All
@@ -561,6 +592,7 @@ export class BombermanSpriteSystem {
       resumeAfter: 'idle',
       preThrowFacing: 'down',
       escapeDestroyAt: 0,
+      escapeFadeStarted: false,
       rushActive: b.rushActive ?? false,
       character,
     };
@@ -660,32 +692,6 @@ export class BombermanSpriteSystem {
     entry.aimShadow?.destroy();
     entry.stunIcon.destroy();
     entry.swordIcon.destroy();
-  }
-
-  /** Draw a stylized blue stun icon (5-point star) into the given graphics. */
-  private drawStunIcon(g: Phaser.GameObjects.Graphics): void {
-    const ts = this.tileSize;
-    const outerR = ts * 0.2;
-    const innerR = ts * 0.09;
-    g.clear();
-    // Outer glow
-    g.fillStyle(0x88ccff, 0.4);
-    g.fillCircle(0, 0, outerR * 1.4);
-    // Star body
-    g.fillStyle(0x3399ff, 1);
-    g.lineStyle(1.5, 0xffffff, 1);
-    g.beginPath();
-    const spikes = 5;
-    for (let i = 0; i < spikes * 2; i++) {
-      const r = i % 2 === 0 ? outerR : innerR;
-      const ang = (Math.PI / spikes) * i - Math.PI / 2;
-      const px = Math.cos(ang) * r;
-      const py = Math.sin(ang) * r;
-      if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
-    }
-    g.closePath();
-    g.fillPath();
-    g.strokePath();
   }
 
   /**

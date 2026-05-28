@@ -72,6 +72,36 @@ function isStunned(b: BombermanState): boolean {
   return (b.statusEffects ?? []).some(s => s.kind === 'stunned' && s.turnsRemaining > 0);
 }
 
+/**
+ * Pick a random 8-neighbour tile a stunned ("confused") bomberman stumbles
+ * into. Returns null if every neighbor is blocked (wall / off-map / active
+ * shield wall). Fire, mines, bombs, and other bombermen are VALID
+ * destinations — the roguelike intent is that a confused stumble can walk
+ * you into a hazard. Seeded by `matchId:turnNumber:playerId:confused` so
+ * the same inputs deterministically produce the same stumble.
+ */
+function pickConfusedMove(
+  b: BombermanState,
+  state: MatchState,
+  map: MapData,
+): { x: number; y: number } | null {
+  const seed = hashString(`${state.matchId}:${state.turnNumber}:${b.playerId}:confused`);
+  const rng = createSeededRandom(seed);
+  const deltas: Array<[number, number]> = [
+    [-1, -1], [0, -1], [1, -1],
+    [-1,  0],          [1,  0],
+    [-1,  1], [0,  1], [1,  1],
+  ];
+  const candidates: Array<{ x: number; y: number }> = [];
+  for (const [dx, dy] of deltas) {
+    const nx = b.x + dx;
+    const ny = b.y + dy;
+    if (isPassable(state, map, nx, ny)) candidates.push({ x: nx, y: ny });
+  }
+  if (candidates.length === 0) return null;
+  return candidates[Math.floor(rng() * candidates.length)] ?? null;
+}
+
 /** Bomb types that do NOT break Out-of-Combat Rush when thrown. */
 const NON_RUSH_BREAKING_BOMBS = new Set<BombType>([
   'flare',
@@ -285,14 +315,22 @@ export function resolveTurn(
   // Only alive, non-escaped Bombermen can act
   const actors = state.bombermen.filter(b => b.alive && !b.escaped);
 
-  // Stun gating: build the effective action map. Stunned bombermen's actions
-  // are replaced with idle (no move, no throw). Status decrement happens at
-  // end of turn so the player sees a stun-locked turn here.
+  // Stun gating: build the effective action map. Stunned bombermen are
+  // "confused" — their submitted action is discarded and replaced with a
+  // forced 1-tile move to a seeded-random passable 8-neighbour. They cannot
+  // throw while stunned. If every neighbour is blocked they stay put.
+  // Status decrement still happens at end of turn so the confusion clears
+  // on the following turn.
   const effectiveActions = new Map<string, PlayerAction>();
   for (const b of actors) {
     const raw = actions.get(b.playerId) ?? { kind: 'idle' as const };
     if (isStunned(b)) {
-      effectiveActions.set(b.playerId, { kind: 'idle' });
+      const stumble = pickConfusedMove(b, state, map);
+      if (stumble) {
+        effectiveActions.set(b.playerId, { kind: 'move', x: stumble.x, y: stumble.y });
+      } else {
+        effectiveActions.set(b.playerId, { kind: 'idle' });
+      }
     } else {
       effectiveActions.set(b.playerId, raw);
     }
@@ -1260,16 +1298,19 @@ export function resolveTurn(
       });
     }
 
-    // Phosphorus: impact turn reveal + queue deferred fire spawn for next turn
+    // Phosphorus: impact turn reveal + queue deferred fire spawn for next turn.
+    // The flare's lifetime is sized to cover the impact turn AND the entire
+    // fire-burning lifetime that follows, so the lit area visibly persists
+    // while the phosphorus fires are present rather than blinking out after
+    // a single turn. fireDurationTurns + 2 = (impact turn) + (fire turns) + (1
+    // buffer for end-of-turn aging that runs immediately after the push).
     if (trigger.phosphorusSeed) {
-      // +1 on turnsRemaining so the flare survives the end-of-turn aging
-      // step and is still in state when the impact turn is broadcast.
       state.flares.push({
         id: bomb.id,
         x: bomb.x,
         y: bomb.y,
         initialRadius: 5,
-        turnsRemaining: trigger.lightDuration + 1,
+        turnsRemaining: trigger.phosphorusSeed.fireDurationTurns + 2,
         kind: 'phosphorus',
       });
       state.phosphorusPending.push({
@@ -1702,7 +1743,12 @@ export function resolveTurn(
     .filter(f => f.turnsRemaining > 0);
   state.lightTiles = [];
   for (const flare of state.flares) {
-    const radius = flare.turnsRemaining <= 1
+    // Last-turn radius-shrink is a cosmetic fade for multi-turn flares (the
+    // `flare` bomb itself). Phosphorus is sized to match its fire footprint
+    // and should hold its full configured radius for the entire active
+    // window — shrinking it on its last turn looks like a bug because the
+    // lit area abruptly contracts while fires are still burning under it.
+    const radius = flare.turnsRemaining <= 1 && flare.kind !== 'phosphorus'
       ? Math.max(1, flare.initialRadius - 1)
       : flare.initialRadius;
     for (let dy = -radius; dy <= radius; dy++) {

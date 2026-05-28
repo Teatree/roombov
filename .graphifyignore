@@ -1,3 +1,4 @@
+# Dependencies / build output
 node_modules/
 dist/
 build/
@@ -5,8 +6,28 @@ build/
 .git/
 .venv/
 __pycache__/
+
+# Graphify output
+graphify-out/
+
+# Runtime / generated / player data
+production/
+production/player-data/
+logs/
+tmp/
+coverage/
+
+# Binary/media assets
 *.png
 *.jpg
+*.jpeg
 *.webp
 *.mp4
 *.zip
+
+# Claude process/meta docs that are noisy
+.claude/skills/
+.claude/docs/templates/
+.claude/docs/coordination-rules.md
+.claude/docs/context-management.md
+.claude/docs/coding-standards.md

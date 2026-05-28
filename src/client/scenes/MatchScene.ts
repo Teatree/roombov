@@ -14,6 +14,7 @@ const SWORD_FADE_MS = BombermanSpriteSystem.SWORD_FADE_MS;
 import { ensureBombermanAnims, preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
 import { loadMapById } from '@shared/maps/map-loader.ts';
 import { findPath, type PathTile } from '@shared/systems/Pathfinding.ts';
+import { resolveBombTrigger } from '@shared/systems/BombResolver.ts';
 import type { MapData } from '@shared/types/map.ts';
 import type { MatchState } from '@shared/types/match.ts';
 import type { BombermanState } from '@shared/types/bomberman.ts';
@@ -221,6 +222,37 @@ export class MatchScene extends Phaser.Scene {
   /** Small sword icon shown on the left of the bomb tray while the local
    *  bomberman is in Melee Trap Mode. Disappears instantly on exit. */
   private meleeHudIcon: Phaser.GameObjects.Image | null = null;
+  /** Rush_Mode icon sitting in the HUD buffs row (left of the loadout,
+   *  immediately left of the sword icon) while the local bomberman has
+   *  `rushActive`. Pops off (scale up + fade) on rush exit, pulses while
+   *  active to match the treasure-row "thrum". */
+  private rushHudIcon: Phaser.GameObjects.Image | null = null;
+  /** Active pop-off tween for the rush HUD badge, so a re-entry into rush
+   *  can cancel the in-flight pop and snap the badge back to its base size. */
+  private rushHudPopTween: Phaser.Tweens.Tween | null = null;
+  /** Active pulse tween for the rush HUD badge (yoyo scale, treasure-style). */
+  private rushHudPulseTween: Phaser.Tweens.Tween | null = null;
+  /** Active pop-off tween for the melee-trap (sword) HUD icon — mirrors
+   *  the rush badge's exit animation. */
+  private meleeHudPopTween: Phaser.Tweens.Tween | null = null;
+  /** Active pulse tween for the melee-trap (sword) HUD icon. */
+  private meleeHudPulseTween: Phaser.Tweens.Tween | null = null;
+  /** Buffs-row ordering. Index 0 = rightmost (first activated). Each entry
+   *  is a stable per-buff ID ('melee' for the sword, 'rush' for rush mode).
+   *  A buff is added on first activation and removed only AFTER its pop-off
+   *  animation completes, so the visible slot doesn't shift mid-pop. */
+  private buffOrder: string[] = [];
+  /** Right-edge x of the buffs row (computed in buildHudTray). All icons
+   *  use origin (0.5, 0.5) and are positioned so their right edges step
+   *  leftward from here by BUFF_SIZE + 8 per index. */
+  private buffsRightX = 0;
+  /** Vertical center of the buffs row, aligned to the loadout center. */
+  private buffsCenterY = 0;
+  /** Screen-edge warning overlay shown while the local bomberman is standing
+   *  on a tile that a currently-fusing bomb will hit. Red when any damaging
+   *  bomb is incoming, blue when only a Flash (stun) is incoming. Hidden
+   *  otherwise. Lives in the HUD camera so it stays viewport-locked. */
+  private bombThreatEdge: Phaser.GameObjects.Graphics | null = null;
   private errorText!: Phaser.GameObjects.Text;
   // UAV indicator (top HUD) + "UAV is Revealing the whole area" banner.
   // Hidden in tutorial matches. Throbs when the next UAV is <=3 turns away.
@@ -308,6 +340,11 @@ export class MatchScene extends Phaser.Scene {
     sprite: Phaser.GameObjects.Sprite;
     state: 'closed' | 'opening' | 'open';
     opened: boolean;
+    /** True between the moment a `door_opened` event lands and the BEAT3-
+     *  delayed callback that decides whether to animate or snap. While true,
+     *  `updateDoors()` must NOT snap the sprite to the open frame, or it
+     *  races and beats the animation handler. */
+    openingPending: boolean;
   }> = [];
 
   // Blood trail decals (persistent, one per tile, tracked separately from
@@ -368,6 +405,17 @@ export class MatchScene extends Phaser.Scene {
     this.load.image('double_doors', 'sprites/double_doors.png');
     // Sword icon — Melee Trap Mode indicator (HUD + above-head overlay).
     this.load.image('sword_icon', 'sprites/sword_icon.png');
+    // Stunned effect — 2-frame 32x32 question-mark loop above the head while
+    // the bomberman has the `stunned` status effect. Animation registered in
+    // create() at 2 fps so the two frames read as a slow, deliberate blink.
+    this.load.spritesheet('stunned_effect', 'sprites/stunned_effect.png', {
+      frameWidth: 32,
+      frameHeight: 32,
+    });
+    // Rush Mode icon — single 32x32 image used as the fly-up VFX when the
+    // local bomberman enters out-of-combat Rush. Replaces the previous green
+    // up-arrow text glyph.
+    this.load.image('rush_mode', 'sprites/Rush_Mode.png');
     // Bomb icons (safety fallback — normally loaded by BootScene)
     preloadBombIcons(this);
     preloadTreasureIcons(this);
@@ -467,6 +515,18 @@ export class MatchScene extends Phaser.Scene {
       });
     }
 
+    // Stunned effect: 2-frame loop at 2 fps so the question mark blinks
+    // slowly and deliberately. Looped indefinitely; visibility is gated by
+    // BombermanSpriteSystem based on the bomberman's stunned status.
+    if (!this.anims.exists('stunned_effect_anim')) {
+      this.anims.create({
+        key: 'stunned_effect_anim',
+        frames: this.anims.generateFrameNumbers('stunned_effect', { start: 0, end: 1 }),
+        frameRate: 2,
+        repeat: -1,
+      });
+    }
+
     // Chest animations (same pattern as escape hatches)
     if (!this.anims.exists('chest_1_closed')) {
       for (const tier of [1, 2, 3] as const) {
@@ -488,12 +548,12 @@ export class MatchScene extends Phaser.Scene {
 
       const hFrames = Array.from({ length: 6 }, (_, i) => ({ key: 'double_doors', frame: `h_${i}` }));
       this.anims.create({ key: 'door_h_closed',  frames: [hFrames[0]], repeat: -1 });
-      this.anims.create({ key: 'door_h_opening', frames: hFrames, frameRate: 4, repeat: 0 });
+      this.anims.create({ key: 'door_h_opening', frames: hFrames, frameRate: 12, repeat: 0 });
       this.anims.create({ key: 'door_h_open',    frames: [hFrames[5]], repeat: -1 });
 
       const vFrames = Array.from({ length: 6 }, (_, i) => ({ key: 'double_doors', frame: `v_${i}` }));
       this.anims.create({ key: 'door_v_closed',  frames: [vFrames[0]], repeat: -1 });
-      this.anims.create({ key: 'door_v_opening', frames: vFrames, frameRate: 4, repeat: 0 });
+      this.anims.create({ key: 'door_v_opening', frames: vFrames, frameRate: 12, repeat: 0 });
       this.anims.create({ key: 'door_v_open',    frames: [vFrames[5]], repeat: -1 });
     }
 
@@ -704,8 +764,20 @@ export class MatchScene extends Phaser.Scene {
     this.stunHudOverlay = null;
     this.stunHudLabel = null;
     this.meleeHudIcon = null;
+    this.rushHudIcon = null;
+    this.rushHudPopTween?.remove();
+    this.rushHudPopTween = null;
+    this.rushHudPulseTween?.remove();
+    this.rushHudPulseTween = null;
+    this.meleeHudPopTween?.remove();
+    this.meleeHudPopTween = null;
+    this.meleeHudPulseTween?.remove();
+    this.meleeHudPulseTween = null;
+    this.buffOrder = [];
     this.uavText = null;
     this.brokenHatchText = null;
+    this.bombThreatEdge?.destroy();
+    this.bombThreatEdge = null;
     this.uavPulseTween?.stop();
     this.uavPulseTween?.remove();
     this.uavPulseTween = null;
@@ -905,6 +977,7 @@ export class MatchScene extends Phaser.Scene {
             this.doorSprites.push({
               id: door.id, tiles: door.tiles, orientation: door.orientation,
               sprite, state: door.opened ? 'open' : 'closed', opened: door.opened,
+              openingPending: false,
             });
           }
         }
@@ -1254,11 +1327,17 @@ export class MatchScene extends Phaser.Scene {
     // "Action Result") kick in.
     // Bombermen who exited Melee Trap this turn: their walk/throw visuals
     // are held back by the sword-fade duration so the fade-out plays
-    // cleanly before the sprite starts moving (per the spec).
+    // cleanly before the sprite starts moving (per the spec). The HUD
+    // melee icon also pops off / pops on for the LOCAL player here so the
+    // buff row reacts to the same event the in-world sword does.
     const meleeExiters = new Set<string>();
     for (const ev of events) {
-      if (ev.kind === 'melee_trap_changed' && ev.active === false) {
-        meleeExiters.add(ev.playerId as string);
+      if (ev.kind !== 'melee_trap_changed') continue;
+      const pid = ev.playerId as string;
+      if (ev.active === false) meleeExiters.add(pid);
+      if (pid === this.myPlayerId) {
+        if (ev.active === true) this.showMeleeHudIcon();
+        else this.popOffMeleeHudIcon();
       }
     }
     // Three-beat resolve timings. Beat 1 is fixed (walks + throws must
@@ -1569,26 +1648,41 @@ export class MatchScene extends Phaser.Scene {
       if (ev.kind !== 'door_opened') continue;
       const doorId = ev.doorId as number;
       const ds = this.doorSprites.find(d => d.id === doorId);
-      if (!ds || ds.opened) continue;
-      ds.opened = true;
+      if (!ds || ds.opened || ds.openingPending) continue;
       if (ds.state !== 'closed') continue;
-      this.time.delayedCall(BEAT3_START_MS, () => {
-        if (ds.state !== 'closed') return;
+      // Latch openingPending immediately so the per-tick `updateDoors()`
+      // snap-to-open (driven by the server state sync) doesn't race ahead
+      // and replace the closed frame before our delayed handler runs. We
+      // intentionally DO NOT set `ds.opened = true` yet — the delayed
+      // callback owns that flip after it picks animate-vs-snap based on
+      // LoS at event time. Door delay is intentionally ~1/3 of BEAT3 so
+      // the open animation starts crisply right after a bomberman steps up
+      // to a door (rather than waiting through the full beat slot — the
+      // other beat-3 visuals like hurt frames still use the full slot).
+      ds.openingPending = true;
+      const doorDelayMs = Math.round(BEAT3_START_MS / 3);
+      this.time.delayedCall(doorDelayMs, () => {
+        if (ds.state !== 'closed') { ds.openingPending = false; return; }
         const prefix = ds.orientation === 'horizontal' ? 'h' : 'v';
         const inLoS = ds.tiles.some(t => this.fogRenderer?.isVisible(t.x, t.y));
         if (inLoS) {
           ds.state = 'opening';
+          ds.opened = true;
+          ds.openingPending = false;
           ds.sprite.play(`door_${prefix}_opening`);
           ds.sprite.once('animationcomplete', () => {
             ds.state = 'open';
             ds.sprite.play(`door_${prefix}_open`);
           });
+        } else {
+          // Not in LoS at event time: snap straight to open silently so the
+          // animation doesn't leak through seen-dim fog and reveal that an
+          // enemy opened it. Next LoS regain shows an already-open door.
+          ds.state = 'open';
+          ds.opened = true;
+          ds.openingPending = false;
+          ds.sprite.play(`door_${prefix}_open`);
         }
-        // Not in LoS: keep the closed visual frozen. `ds.opened` is true so
-        // when the player next gains LoS, `updateDoors()` will snap the
-        // sprite to the open frame. Previously this branch played the open
-        // animation regardless of fog state, which leaked the door-open
-        // signal through lesser-fog memory.
       });
     }
 
@@ -1720,18 +1814,35 @@ export class MatchScene extends Phaser.Scene {
         const wy = bm.y * ts + ts / 2 - ts * 1.5;
         const active = ev.active as boolean;
         if (active) {
-          const indicator = this.add.text(wx, wy, '\u2191', {
-            fontSize: '20px', color: '#44ff88', fontFamily: 'monospace', fontStyle: 'bold',
-            stroke: '#000000', strokeThickness: 3,
-          }).setOrigin(0.5).setDepth(150);
+          const indicator = this.add.image(wx, wy, 'rush_mode')
+            .setOrigin(0.5)
+            .setDepth(150)
+            .setDisplaySize(ts * 0.9, ts * 0.9);
           if (this.hudCamera) this.hudCamera.ignore(indicator);
           this.tweens.add({
             targets: indicator, y: wy - ts * 1.5, alpha: 0,
             duration: 1200, ease: 'Cubic.easeOut',
             onComplete: () => indicator.destroy(),
           });
+          this.showRushHudBadge();
         } else {
-          this.spawnExclamation(wx, wy, '#ff4444');
+          // Rush exit: red-tinted Rush_Mode image flying DOWN from the same
+          // anchor point used by the entry indicator, then fading. Mirrors
+          // the up-flying entry so the player can read "rush ended" at a
+          // glance regardless of WHAT caused the exit (movement, action,
+          // taking damage, etc.).
+          const indicator = this.add.image(wx, wy, 'rush_mode')
+            .setOrigin(0.5)
+            .setDepth(150)
+            .setDisplaySize(ts * 0.9, ts * 0.9)
+            .setTint(0xff4444);
+          if (this.hudCamera) this.hudCamera.ignore(indicator);
+          this.tweens.add({
+            targets: indicator, y: wy + ts * 1.5, alpha: 0,
+            duration: 1200, ease: 'Cubic.easeIn',
+            onComplete: () => indicator.destroy(),
+          });
+          this.popOffRushHudBadge();
         }
       }
     }
@@ -2349,18 +2460,14 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  /** Smack impact burst at a Bomberman's tile center. Drives the visible
-   *  payoff of a melee ambush or step-in counter — a bright yellow shockwave
-   *  + radial starburst + central white flash, all in world-space at the
-   *  victim's tile. Scheduled by the melee_attack handler to fire at the
-   *  Attack3 connect frame so it reads as contact.
+  /** Melee impact VFX at a Bomberman's center mass — a single yellow circle
+   *  that expands outward from the victim's center-mass point (the tile
+   *  center, lifted ~half a tile so it sits over the torso, not the feet)
+   *  and fades to alpha 0 as it grows. Scheduled by the melee_attack
+   *  handler to fire at the Attack3 connect frame so it reads as contact.
    *
    *  Renders inside `explosionLayer` (depth 120, always-above-fog) — same
-   *  container the existing teleport puff uses. The previous implementation
-   *  used `add.graphics().setDepth(160)` at scene root, which Phaser's render
-   *  pipeline ordered below the bomberman sprite container in some scene
-   *  states and the burst never showed. Going through the dedicated layer
-   *  guarantees ordering. */
+   *  container the existing teleport puff uses. */
   private spawnMeleeSmackVfx(victimId: string): void {
     if (!this.state || !this.mapData) return;
     const victim = this.state.bombermen.find(b => b.playerId === victimId);
@@ -2368,68 +2475,38 @@ export class MatchScene extends Phaser.Scene {
     if (!this.explosionLayer) return;
     const ts = this.mapData.tileSize;
     const cx = victim.x * ts + ts / 2;
-    const cy = victim.y * ts + ts / 2;
-    // Half the previous duration — twice as fast.
-    const duration = 400;
-    // Quarter of the previous baseR — 4× smaller.
-    const baseR = Math.max(ts, 24) / 4;
+    const cy = victim.y * ts + ts / 2 - ts * 0.5;
+    const startR = ts * 0.25;
+    const endR = ts * 0.9;
+    const duration = 360;
 
-    // Single static draw at peak intensity, then alpha-tween it out.
-    // Spokes go on a SEPARATE Graphics — mixing `strokeCircle/fillCircle`
-    // with `lineBetween` in the same Graphics object causes the renderer
-    // to drop the whole batch silently. Splitting keeps both visible.
-    // Half transparent overall — rings drawn at 0.5 alpha.
-    const rings = this.add.graphics();
-    this.explosionLayer.add(rings);
-    rings.lineStyle(3, 0xffe44a, 0.5);
-    rings.strokeCircle(cx, cy, baseR * 1.2);
-    rings.lineStyle(2.5, 0xfff080, 0.5);
-    rings.strokeCircle(cx, cy, baseR * 0.9);
-    rings.fillStyle(0xffffff, 0.45);
-    rings.fillCircle(cx, cy, baseR * 0.5);
+    // One Graphics that holds the circle outline. We re-draw it each tick
+    // of the tween at the interpolated radius. Alpha-tweens the Graphics
+    // itself so the whole shape fades uniformly.
+    const ring = this.add.graphics();
+    this.explosionLayer.add(ring);
+    const draw = (r: number): void => {
+      ring.clear();
+      ring.lineStyle(3, 0xffe44a, 1);
+      ring.strokeCircle(cx, cy, r);
+    };
+    draw(startR);
 
-    // 10-spoke POW starburst on its own Graphics.
-    const starburst = this.add.graphics();
-    this.explosionLayer.add(starburst);
-    starburst.lineStyle(2, 0xfff080, 0.5);
-    for (let s = 0; s < 10; s++) {
-      const angle = (s / 10) * Math.PI * 2;
-      const r1 = baseR * 0.6;
-      const r2 = baseR * 1.4;
-      starburst.lineBetween(
-        cx + Math.cos(angle) * r1,
-        cy + Math.sin(angle) * r1,
-        cx + Math.cos(angle) * r2,
-        cy + Math.sin(angle) * r2,
-      );
-    }
-
-    // Group both under one container so the fade callback can address them
-    // together.
-    const all = [rings, starburst];
-
-    // Hold at full alpha for a beat, then fade out via discrete alpha steps.
-    // (Phaser's tween manager misreports duration under `forceSetTimeOut`,
-    // so a setTimeout chain is the safest way to control the fade.)
-    const HOLD_MS = Math.round(duration * 0.35);
-    const FADE_MS = duration - HOLD_MS;
-    const fadeSteps = 8;
-    const fadeStepMs = Math.floor(FADE_MS / fadeSteps);
-    window.setTimeout(() => {
-      let fadeIdx = 0;
-      const fadeStep = (): void => {
-        fadeIdx++;
-        if (!all[0].active) return;
-        const a = Math.max(0, 1 - fadeIdx / fadeSteps);
-        for (const g of all) g.alpha = a;
-        if (fadeIdx >= fadeSteps) {
-          for (const g of all) g.destroy();
-          return;
-        }
-        window.setTimeout(fadeStep, fadeStepMs);
-      };
-      window.setTimeout(fadeStep, fadeStepMs);
-    }, HOLD_MS);
+    const obj = { r: startR };
+    this.tweens.add({
+      targets: obj,
+      r: endR,
+      duration,
+      ease: 'Cubic.easeOut',
+      onUpdate: () => { if (ring.active) draw(obj.r); },
+    });
+    this.tweens.add({
+      targets: ring,
+      alpha: 0,
+      duration,
+      ease: 'Cubic.easeOut',
+      onComplete: () => ring.destroy(),
+    });
   }
 
   /** Gray smoke puff under a tile — used in the tutorial when a scripted
@@ -2632,20 +2709,24 @@ export class MatchScene extends Phaser.Scene {
         continue;
       }
 
-      // Sync server state
-      const serverDoor = this.state.doors?.find(d => d.id === ds.id);
-      if (serverDoor?.opened && !ds.opened) {
-        ds.opened = true;
+      // Sync server state — but ONLY when no opening animation is pending.
+      // If openingPending is true, a `door_opened` event just arrived and
+      // its BEAT3-delayed handler will set `ds.opened` after picking
+      // animate-vs-snap based on LoS. Setting ds.opened here would let the
+      // snap branch below preempt the animation handler and skip the
+      // opening play entirely.
+      if (!ds.openingPending) {
+        const serverDoor = this.state.doors?.find(d => d.id === ds.id);
+        if (serverDoor?.opened && !ds.opened) {
+          ds.opened = true;
+        }
       }
 
-      // Server is authoritative: `ds.opened` is synced from the server's
-      // `door.opened` flag above. If the door is open, stick on the open
-      // frame; otherwise it stays closed. The opening animation is driven
-      // from the `door_opened` event handler in onTurnResult (Beat 3), so
-      // we don't fire animations from here — previous client-side proximity
-      // rule was removed when the resolver became the single source of
-      // truth for door-open conditions.
-      if (ds.opened && ds.state !== 'open' && ds.state !== 'opening') {
+      // Snap-to-open fallback for doors that opened without a witnessed
+      // event (e.g. the door was already open when this client joined, or
+      // the event was missed). Gated on !openingPending so the pending
+      // animation handler from onTurnResult always wins the race.
+      if (ds.opened && !ds.openingPending && ds.state !== 'open' && ds.state !== 'opening') {
         ds.state = 'open';
         ds.sprite.play(`${animKey}_open`);
       }
@@ -3378,8 +3459,19 @@ export class MatchScene extends Phaser.Scene {
     this.stunHudOverlay = null;
     this.stunHudLabel?.destroy();
     this.stunHudLabel = null;
+    this.meleeHudPopTween?.remove();
+    this.meleeHudPopTween = null;
+    this.meleeHudPulseTween?.remove();
+    this.meleeHudPulseTween = null;
     this.meleeHudIcon?.destroy();
     this.meleeHudIcon = null;
+    this.rushHudPopTween?.remove();
+    this.rushHudPopTween = null;
+    this.rushHudPulseTween?.remove();
+    this.rushHudPulseTween = null;
+    this.rushHudIcon?.destroy();
+    this.rushHudIcon = null;
+    this.buffOrder = [];
     for (const r of this.slotRects) r.destroy();
     for (const t of this.slotLabelTexts) t.destroy();
     for (const i of this.slotIcons) i.destroy();
@@ -3403,6 +3495,15 @@ export class MatchScene extends Phaser.Scene {
     trayBg.fillRoundedRect(trayX - 10, trayY - 10, trayWidth + 20, SLOT_SIZE + 20, 6);
     this.hudTrayBg = this.hud(trayBg);
 
+    // Bomb-threat camera-edge warning — a thick stroked rectangle around
+    // the entire viewport, hidden by default. updateBombThreatWarning()
+    // (called from renderHud) toggles visibility + color based on whether
+    // the local bomberman's tile is in any currently-fusing bomb's
+    // predicted blast. Depth 1100 sits above the buff icons but below the
+    // stun overlay's label so the stun banner remains legible.
+    const threatEdge = this.add.graphics().setDepth(1100).setVisible(false);
+    this.bombThreatEdge = this.hud(threatEdge);
+
     // Stun HUD overlay — drawn on top of the tray + all slots, hidden by
     // default. renderHud toggles visibility based on the local bomberman's
     // status effects. Depth > slot depths (1001–1003) so it fully obscures
@@ -3424,11 +3525,28 @@ export class MatchScene extends Phaser.Scene {
     ).setOrigin(0.5).setDepth(1051).setVisible(false);
     this.stunHudLabel = this.hud(stunLabel);
 
-    // Melee Trap Mode indicator — small sword icon to the left of the tray.
-    const meleeIcon = this.add.image(
-      trayX - 18, trayY + SLOT_SIZE / 2, 'sword_icon',
-    ).setOrigin(1, 0.5).setDepth(1002).setVisible(false).setDisplaySize(32, 32);
+    // Buffs/debuffs row — anchored to the LEFT of the loadout, growing
+    // leftward. Both icons share size + vertical center so the row reads
+    // as a single group. Layout is INSERTION-ORDER driven: the first buff
+    // to become active sits closest to the tray (index 0 = rightmost);
+    // each newer buff stacks one slot to its left. See `layoutBuffsRow`.
+    // Icons here are created at the rightmost position; layoutBuffsRow
+    // moves them into the correct slot when they become visible.
+    this.buffsRightX = trayX - 18;
+    this.buffsCenterY = trayY + SLOT_SIZE / 2;
+    const BUFF_SIZE = this.buffIconBaseSize();
+    const meleeIcon = this.add.image(this.buffsRightX, this.buffsCenterY, 'sword_icon')
+      .setOrigin(0.5, 0.5)
+      .setDepth(1002)
+      .setVisible(false)
+      .setDisplaySize(BUFF_SIZE, BUFF_SIZE);
     this.meleeHudIcon = this.hud(meleeIcon);
+    const rushIcon = this.add.image(this.buffsRightX, this.buffsCenterY, 'rush_mode')
+      .setOrigin(0.5, 0.5)
+      .setDepth(1002)
+      .setVisible(false)
+      .setDisplaySize(BUFF_SIZE, BUFF_SIZE);
+    this.rushHudIcon = this.hud(rushIcon);
 
     for (let i = 0; i < count; i++) {
       const sx = trayX + i * (SLOT_SIZE + SLOT_GAP);
@@ -3609,10 +3727,41 @@ export class MatchScene extends Phaser.Scene {
     this.stunHudOverlay?.setVisible(stunned);
     this.stunHudLabel?.setVisible(stunned);
 
-    // Melee Trap Mode HUD sword icon: shown to the left of the tray
-    // while the local bomberman is trapped and crouching.
-    const meleeTrap = !!me && me.alive && !!me.meleeTrapMode;
-    this.meleeHudIcon?.setVisible(meleeTrap);
+    // Buffs row sync — covers cases where badge state can't be driven by
+    // the corresponding event handler: fresh page load while a buff is
+    // already active, HUD tray rebuilt by slot-count change while a buff
+    // is active, and player dying/escaping while a buff was up (badge
+    // drops). Event-driven entry/exit animations still own the visible
+    // transition; this just keeps the steady state honest.
+    const meleeIcon = this.meleeHudIcon;
+    if (meleeIcon) {
+      const meleeTrap = !!me && me.alive && !me.escaped && !!me.meleeTrapMode;
+      if (meleeTrap && !meleeIcon.visible && !this.meleeHudPopTween) {
+        this.showMeleeHudIcon();
+      } else if (!meleeTrap && meleeIcon.visible && !this.meleeHudPopTween) {
+        meleeIcon.setVisible(false);
+        this.meleeHudPulseTween?.remove();
+        this.meleeHudPulseTween = null;
+        this.removeBuff('melee');
+        this.layoutBuffsRow();
+      }
+    }
+
+    const rushIcon = this.rushHudIcon;
+    if (rushIcon) {
+      const inRush = !!me && me.alive && !me.escaped && (me.rushActive ?? false);
+      if (inRush && !rushIcon.visible && !this.rushHudPopTween) {
+        this.showRushHudBadge();
+      } else if (!inRush && rushIcon.visible && !this.rushHudPopTween) {
+        rushIcon.setVisible(false);
+        this.rushHudPulseTween?.remove();
+        this.rushHudPulseTween = null;
+        this.removeBuff('rush');
+        this.layoutBuffsRow();
+      }
+    }
+
+    this.updateBombThreatWarning(me);
   }
 
   private startUavPulse(): void {
@@ -3625,6 +3774,255 @@ export class MatchScene extends Phaser.Scene {
       repeat: -1,
       ease: 'Sine.easeInOut',
     });
+  }
+
+  /** Base display size shared by every icon in the HUD buffs row. */
+  private buffIconBaseSize(): number {
+    return SLOT_SIZE * 0.6;
+  }
+
+  /** Map a buff ID to its icon GameObject. Central so the layout helper
+   *  doesn't have to know about new buff types — just add a case here. */
+  private buffIcon(id: string): Phaser.GameObjects.Image | null {
+    if (id === 'melee') return this.meleeHudIcon;
+    if (id === 'rush') return this.rushHudIcon;
+    return null;
+  }
+
+  /** Snap every entry in `buffOrder` to its position based on insertion
+   *  index. Index 0 = rightmost; each subsequent index moves one slot
+   *  to the left. Icons mid-pop stay in their slot until removal so the
+   *  exit animation doesn't get yanked sideways. */
+  private layoutBuffsRow(): void {
+    const base = this.buffIconBaseSize();
+    const gap = 8;
+    for (let i = 0; i < this.buffOrder.length; i++) {
+      const icon = this.buffIcon(this.buffOrder[i]);
+      if (!icon) continue;
+      // Center x for origin (0.5, 0.5): right edge at buffsRightX, step
+      // leftward by (BUFF_SIZE + gap) per index.
+      const centerX = this.buffsRightX - base / 2 - i * (base + gap);
+      icon.setPosition(centerX, this.buffsCenterY);
+    }
+  }
+
+  /** Add a buff ID to the row if it isn't already in. */
+  private insertBuffIfMissing(id: string): void {
+    if (this.buffOrder.includes(id)) return;
+    this.buffOrder.push(id);
+  }
+
+  /** Remove a buff ID from the row (called from pop-off onComplete). */
+  private removeBuff(id: string): void {
+    const i = this.buffOrder.indexOf(id);
+    if (i >= 0) this.buffOrder.splice(i, 1);
+  }
+
+  /**
+   * Start (or restart) a continuous yoyo-scale "thrum" on a HUD buff icon.
+   * Matches the treasure-list pulse (amplitude 20%, ~700 ms cycle, eased)
+   * so the whole top-of-tray row breathes at the same cadence.
+   */
+  private startBuffPulse(icon: Phaser.GameObjects.Image, baseSize: number): Phaser.Tweens.Tween {
+    icon.setDisplaySize(baseSize, baseSize);
+    return this.tweens.add({
+      targets: icon,
+      displayWidth: baseSize * 1.20,
+      displayHeight: baseSize * 1.20,
+      duration: 350,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+  }
+
+  /**
+   * Pop-off animation shared by the rush and melee HUD icons: scale up
+   * (base → 0.95 × SLOT_SIZE) while fading alpha 1 → 0 over 400 ms.
+   * Pulse tween (if any) is killed first to avoid display-size tween
+   * conflicts. onComplete restores the icon's base size + alpha so the
+   * next show is clean.
+   */
+  private popOffBuffIcon(
+    icon: Phaser.GameObjects.Image,
+    pulseTween: Phaser.Tweens.Tween | null,
+    baseSize: number,
+    onDone: () => void,
+  ): Phaser.Tweens.Tween {
+    pulseTween?.remove();
+    const popSize = SLOT_SIZE * 0.95;
+    return this.tweens.add({
+      targets: icon,
+      displayWidth: popSize,
+      displayHeight: popSize,
+      alpha: 0,
+      duration: 400,
+      ease: 'Cubic.easeOut',
+      onComplete: () => {
+        icon.setVisible(false);
+        icon.setAlpha(1);
+        icon.setDisplaySize(baseSize, baseSize);
+        onDone();
+      },
+    });
+  }
+
+  /**
+   * Snap the HUD rush badge to its visible-with-pulse state. Called by the
+   * `rush_changed` event handler on entry and by renderHud()'s sync as a
+   * fresh-load safety net. Adds 'rush' to the buffs row if missing so the
+   * insertion-order layout treats it like a freshly activated buff.
+   */
+  private showRushHudBadge(): void {
+    const icon = this.rushHudIcon;
+    if (!icon) return;
+    this.rushHudPopTween?.remove();
+    this.rushHudPopTween = null;
+    this.rushHudPulseTween?.remove();
+    const base = this.buffIconBaseSize();
+    icon.setVisible(true);
+    icon.setAlpha(1);
+    icon.setDisplaySize(base, base);
+    this.insertBuffIfMissing('rush');
+    this.layoutBuffsRow();
+    this.rushHudPulseTween = this.startBuffPulse(icon, base);
+  }
+
+  /** Pop-off + cleanup for the rush HUD badge. Removes 'rush' from the
+   *  buffs row only AFTER the pop completes so the slot it occupied
+   *  doesn't reflow mid-animation. */
+  private popOffRushHudBadge(): void {
+    const icon = this.rushHudIcon;
+    if (!icon || !icon.visible) return;
+    this.rushHudPopTween?.remove();
+    this.rushHudPopTween = this.popOffBuffIcon(
+      icon,
+      this.rushHudPulseTween,
+      this.buffIconBaseSize(),
+      () => {
+        this.rushHudPopTween = null;
+        this.rushHudPulseTween = null;
+        this.removeBuff('rush');
+        this.layoutBuffsRow();
+      },
+    );
+  }
+
+  /** Mirror of showRushHudBadge for the melee-trap sword icon. */
+  private showMeleeHudIcon(): void {
+    const icon = this.meleeHudIcon;
+    if (!icon) return;
+    this.meleeHudPopTween?.remove();
+    this.meleeHudPopTween = null;
+    this.meleeHudPulseTween?.remove();
+    const base = this.buffIconBaseSize();
+    icon.setVisible(true);
+    icon.setAlpha(1);
+    icon.setDisplaySize(base, base);
+    this.insertBuffIfMissing('melee');
+    this.layoutBuffsRow();
+    this.meleeHudPulseTween = this.startBuffPulse(icon, base);
+  }
+
+  /**
+   * Camera-edge bomb-threat warning. Scans every bomb currently in state
+   * (regardless of fuse remaining) and predicts its blast tiles via the
+   * shared `resolveBombTrigger`. If the local bomberman's tile sits in
+   * any predicted damage/fire tile, draw a red outline along the inside
+   * edge of the viewport. If only Flash (stun) tiles cover the bomberman,
+   * draw blue. Both → red wins, since dying matters more than getting
+   * stunned. None → hide.
+   *
+   * Re-run every renderHud pass; state diffs (bombs added/removed, the
+   * bomberman moving) flip the visual on the same frame the state lands.
+   * Doors and shield walls are read live so the prediction respects them
+   * the same way the resolver will at trigger time.
+   */
+  private updateBombThreatWarning(me: BombermanState | null): void {
+    const g = this.bombThreatEdge;
+    if (!g) return;
+    const state = this.state;
+    if (!state || !this.mapData || !me || !me.alive || me.escaped) {
+      g.setVisible(false);
+      return;
+    }
+    const myKey = `${me.x},${me.y}`;
+    let inDamage = false;
+    let inStun = false;
+    // Build closed-door and shield-wall sets once for the whole pass —
+    // resolveBombTrigger needs them to clip its raycasts.
+    const closedDoorTiles = new Set<string>();
+    for (const d of state.doors ?? []) {
+      if (d.opened) continue;
+      for (const t of d.tiles) closedDoorTiles.add(`${t.x},${t.y}`);
+    }
+    const shieldWallTiles = new Set<string>();
+    for (const w of state.shieldWalls ?? []) {
+      for (const t of w.tiles) shieldWallTiles.add(`${t.x},${t.y}`);
+    }
+    for (const bomb of state.bombs) {
+      const trig = resolveBombTrigger(
+        bomb.type, bomb.x, bomb.y, this.mapData, closedDoorTiles, shieldWallTiles,
+      );
+      if (!inDamage) {
+        for (const t of trig.damageTiles) {
+          if (`${t.x},${t.y}` === myKey) { inDamage = true; break; }
+        }
+      }
+      if (!inDamage) {
+        for (const t of trig.fireTiles) {
+          if (`${t.x},${t.y}` === myKey) { inDamage = true; break; }
+        }
+      }
+      if (!inStun) {
+        for (const t of trig.stunTiles) {
+          if (`${t.x},${t.y}` === myKey) { inStun = true; break; }
+        }
+      }
+      if (inDamage) break; // damage already wins, no point scanning more
+    }
+    // Phosphorus-pending fires spawn next turn on tiles around the impact
+    // origin — also threatening even though no bomb entry covers them.
+    if (!inDamage) {
+      for (const p of state.phosphorusPending ?? []) {
+        const dx = me.x - p.originX;
+        const dy = me.y - p.originY;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) <= 1) { inDamage = true; break; }
+      }
+    }
+    if (!inDamage && !inStun) {
+      g.setVisible(false);
+      return;
+    }
+    const color = inDamage ? 0xff3333 : 0x66aaff;
+    const w = this.scale.width;
+    const h = this.scale.height;
+    const thickness = 10;
+    g.clear();
+    g.lineStyle(thickness, color, 0.95);
+    // Stroke is centered on the path — offset by half-thickness so the
+    // rect sits flush with the viewport edge.
+    const half = thickness / 2;
+    g.strokeRect(half, half, w - thickness, h - thickness);
+    g.setVisible(true);
+  }
+
+  /** Mirror of popOffRushHudBadge for the melee-trap sword icon. */
+  private popOffMeleeHudIcon(): void {
+    const icon = this.meleeHudIcon;
+    if (!icon || !icon.visible) return;
+    this.meleeHudPopTween?.remove();
+    this.meleeHudPopTween = this.popOffBuffIcon(
+      icon,
+      this.meleeHudPulseTween,
+      this.buffIconBaseSize(),
+      () => {
+        this.meleeHudPopTween = null;
+        this.meleeHudPulseTween = null;
+        this.removeBuff('melee');
+        this.layoutBuffsRow();
+      },
+    );
   }
 
   private stopUavPulse(): void {
