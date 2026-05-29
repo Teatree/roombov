@@ -1,13 +1,13 @@
 {
   "id": "p_3a9ad8b22613",
   "createdAt": 1779350893447,
-  "updatedAt": 1780011462575,
-  "coins": 1515,
+  "updatedAt": 1780061911269,
+  "coins": 2626,
   "treasures": {
-    "coffee": 255,
-    "lanterns": 53,
-    "mushrooms": 394,
-    "grapes": 39
+    "coffee": 149,
+    "lanterns": 74,
+    "mushrooms": 471,
+    "grapes": 55
   },
   "ownedBombermen": [
     {
@@ -26,29 +26,33 @@
       "inventory": {
         "slots": [
           {
-            "type": "big_huge",
-            "count": 3
+            "type": "bomb",
+            "count": 6
           },
           {
-            "type": "flash",
-            "count": 3
-          },
-          {
-            "type": "delay_tricky",
+            "type": "flare",
             "count": 5
+          },
+          {
+            "type": "ender_pearl",
+            "count": 6
           },
           {
             "type": "contact",
-            "count": 5
+            "count": 3
+          },
+          {
+            "type": "phosphorus",
+            "count": 6
           }
         ]
       },
       "purchasedAt": 1780011236068,
       "sourceTemplateId": "cycle_p_3a9ad8b22613_mpq4q0s8_0_free",
-      "sp": 22,
-      "lifetimeSp": 22,
+      "sp": 85,
+      "lifetimeSp": 245,
       "upgrades": {
-        "cap": 0,
+        "cap": 1,
         "stack": 0,
         "hp": 0
       }
@@ -56,17 +60,15 @@
   ],
   "equippedBombermanId": "owned_p_3a9ad8b22613_1780011236067_xg88",
   "bombStockpile": {
-    "delay_tricky": 13,
-    "bomb_wide": 12,
+    "delay_tricky": 7,
+    "bomb_wide": 15,
     "flare": 3,
     "ender_pearl": 2,
     "bomb": 7,
-    "banana": 1,
-    "fart_escape": 2,
-    "shield": 3,
+    "fart_escape": 3,
+    "shield": 4,
     "molotov": 1,
-    "motion_detector_flare": 1,
-    "phosphorus": 6,
+    "motion_detector_flare": 3,
     "big_huge": 1
   },
   "gamblerStreet": {
@@ -276,8 +278,8 @@
       "firstCycleStartedAt": null,
       "queueLength": 0,
       "storage": [],
-      "sessionDone": 1,
-      "sessionTotal": 1
+      "sessionDone": 2,
+      "sessionTotal": 2
     },
     "3": {
       "firstCycleStartedAt": null,

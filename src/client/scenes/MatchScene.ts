@@ -200,7 +200,26 @@ export class MatchScene extends Phaser.Scene {
   /** Tiny red label shown just right of the turn counter while the local
    *  player is standing on a broken (already-used) escape hatch. */
   private brokenHatchText: Phaser.GameObjects.Text | null = null;
-  private hpText!: Phaser.GameObjects.Text;
+  /** Top-left HP bar widget. Replaces the old "HP X/Y" text and the per-sprite
+   *  pips above the bomberman's head. `hpBarContainer` is jittered on hurt;
+   *  `hpBarFill` is redrawn with one segment per `maxHp` pip, filled when
+   *  `displayedHp` covers them. `hpBarLastHp` tracks the previously-drawn HP
+   *  so a hit can spawn the lost segment as a falling Graphics that fades. */
+  private hpBarContainer: Phaser.GameObjects.Container | null = null;
+  private hpBarLabel: Phaser.GameObjects.Text | null = null;
+  private hpBarFill: Phaser.GameObjects.Graphics | null = null;
+  private hpBarLastHp: number = -1;
+  private hpBarLastMax: number = -1;
+  /** Geometry constants for the HP bar, reused by getHudRect() so the
+   *  tutorial highlight rect tracks the actual widget. */
+  private static readonly HP_BAR_X = 20;
+  private static readonly HP_BAR_Y = 14;
+  private static readonly HP_BAR_LABEL_W = 36;
+  /** Bar width / height — width reduced 40%, height reduced 20% from the
+   *  first pass. `HP_BAR_H` stays even so the bar's vertical center matches
+   *  the label's (the label is anchored origin-Y 0.5 at HP_BAR_H/2). */
+  private static readonly HP_BAR_W = 132;
+  private static readonly HP_BAR_H = 16;
   private treasureList!: TreasureListWidget;
   /** Top-right HUD coin counter (NEW_META §2). Always visible regardless
    *  of amount, pinned above the treasure list. */
@@ -848,7 +867,7 @@ export class MatchScene extends Phaser.Scene {
     const me = this.state.bombermen.find(b => b.playerId === this.myPlayerId);
     if (me && me.alive) {
       const displayedHp = this.bombermanSpriteSystem?.getDisplayedHp(me.playerId) ?? me.hp;
-      this.hpText.setText(`HP ${displayedHp}/${BALANCE.match.bombermanMaxHp}`);
+      this.updateHpBar(displayedHp, BALANCE.match.bombermanMaxHp, /* dead */ false);
     }
   }
 
@@ -1209,6 +1228,12 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private transitionToResults(msg?: MatchEndMsg): void {
+    // Tutorial intentionally rewards nothing — skip ResultsScene (and all
+    // its SP / treasure / kill readout) for a dedicated "you're done" card.
+    if (this.state?.isTutorial === true) {
+      this.scene.start('TutorialEndScene');
+      return;
+    }
     const me = this.state?.bombermen.find(b => b.playerId === this.myPlayerId);
     // Prefer the authoritative escape list from match_end when available;
     // fall back to the per-player flag on state for the client-side-exit
@@ -1393,8 +1418,7 @@ export class MatchScene extends Phaser.Scene {
       // SMACK_CONNECT_FRAC = 0.65 mirrors BombermanSpriteSystem's connect-at
       // timing for Attack3 (see ATTACK3_DURATION_MS * 0.65). Fire the impact
       // burst at that moment so it reads as the actual contact.
-      const ATTACK3_DURATION_MS = 600; // matches BombermanSpriteSystem constant
-      const connectAtMs = Math.round(ATTACK3_DURATION_MS * 0.65);
+      const connectAtMs = Math.round(BombermanSpriteSystem.ATTACK3_DURATION_MS * 0.65);
       if (intermediate) {
         // Trigger Attack3 at the walk midpoint so it looks like the strike
         // intercepts the rushing victim. Walk takes half the transition;
@@ -1498,9 +1522,10 @@ export class MatchScene extends Phaser.Scene {
     // explosion starts when the bomb lands instead.
     const transitionMs = transitionMsTotal;
     const explosionStartMs = BEAT1_END_MS;
-    // Burst lasts ~70% of a transition — with a 1/3 start, it ends around
-    // the end of the transition (slight linger).
-    const burstDurationMs = Math.round(transitionMs * 0.7);
+    // Pinned to an absolute 1400 ms so explosion ember/dust tails keep their
+    // full length regardless of turn-duration tuning. Starts at BEAT1_END_MS
+    // and is allowed to linger past the end of the transition.
+    const burstDurationMs = 1400;
     // Pre-collect cluster mine positions from this turn's mine_placed
     // events so we can animate bombs flying out of the cluster cylinder
     // toward each mine landing site.
@@ -3091,12 +3116,13 @@ export class MatchScene extends Phaser.Scene {
 
     // ---- HUD hit tests (top bar + bomb tray) ----
     if (screenY >= 0 && screenY <= 48) {
-      // phase indicator + timer (left)
-      if (screenX >= 12 && screenX <= 290) return { kind: 'turnsTicks' };
+      // HP bar (top-left) — covers label + segmented bar.
+      const hpRight = MatchScene.HP_BAR_X + MatchScene.HP_BAR_LABEL_W + MatchScene.HP_BAR_W;
+      if (screenX >= MatchScene.HP_BAR_X - 4 && screenX <= hpRight + 4) return { kind: 'hp' };
       // turn counter (centered around W/2)
       if (Math.abs(screenX - W / 2) <= 100) return { kind: 'turnLimit' };
-      // hp (shifted left to make room for coins+treasures column)
-      if (screenX >= W - 300 && screenX <= W - 200) return { kind: 'hp' };
+      // phase indicator + timer (right of the turn counter)
+      if (screenX >= W / 2 + 100 && screenX <= W / 2 + 320) return { kind: 'turnsTicks' };
       // treasure list + coin row (top-right column)
       if (screenX >= W - 130 && screenX <= W - 5) return { kind: 'treasureList' };
     }
@@ -3210,11 +3236,17 @@ export class MatchScene extends Phaser.Scene {
     const H = this.scale.height;
     switch (target.kind) {
       case 'phaseIndicator':
-        return { x: 12, y: 12, w: 150, h: 28, space: 'hud' };
+        return { x: W / 2 + 105, y: 10, w: 130, h: 32, space: 'hud' };
       case 'timer':
-        return { x: 170, y: 12, w: 120, h: 28, space: 'hud' };
-      case 'hp':
-        return { x: W - 300, y: 12, w: 100, h: 28, space: 'hud' };
+        return { x: W / 2 + 235, y: 10, w: 70, h: 32, space: 'hud' };
+      case 'hp': {
+        // Match the HP bar widget exactly (label + bar), padded for clarity.
+        const x = MatchScene.HP_BAR_X - 6;
+        const y = MatchScene.HP_BAR_Y - 6;
+        const w = MatchScene.HP_BAR_LABEL_W + MatchScene.HP_BAR_W + 12;
+        const h = MatchScene.HP_BAR_H + 12;
+        return { x, y, w, h, space: 'hud' };
+      }
       case 'treasureList': {
         const r = this.treasureList?.getRect();
         if (r && r.h > 0) return { x: r.x - 4, y: r.y - 4, w: r.w + 8, h: r.h + 8, space: 'hud' };
@@ -3338,23 +3370,32 @@ export class MatchScene extends Phaser.Scene {
     topBg.fillRect(0, 0, width, 48);
     this.hud(topBg);
 
-    this.phaseText = this.hud(this.add.text(20, 14, 'Phase', {
-      fontSize: '16px', color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setDepth(1001));
-
-    this.timerText = this.hud(this.add.text(180, 14, '0.0s', {
-      fontSize: '18px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setDepth(1001));
+    // Top-left HP bar widget (replaces old phaseText + the right-side hpText).
+    // Container is jittered on hurt; bar fill is redrawn per-frame to track
+    // displayedHp. See HP_BAR_* constants on the class.
+    this.buildHpBar();
 
     this.turnText = this.hud(this.add.text(width / 2, 14, 'Turn 0 / 50', {
       fontSize: '16px', color: '#aaaaaa', fontFamily: 'monospace',
     }).setOrigin(0.5, 0).setDepth(1001));
 
-    // Broken-hatch warning, anchored just to the right of the turn counter.
-    // Visible only while the local bomberman is standing on a broken hatch.
-    this.brokenHatchText = this.hud(this.add.text(width / 2 + 90, 16, 'This Hatch is Broken, you won’t be able to Escape from it', {
+    // Phase ("YOUR TURN" / "RESOLVING...") + timer sit immediately right of
+    // the turn counter. Smaller and quieter than before — the HP bar now
+    // owns the loud spot on the top-left.
+    this.phaseText = this.hud(this.add.text(width / 2 + 110, 14, '', {
+      fontSize: '14px', color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0, 0).setDepth(1001));
+
+    this.timerText = this.hud(this.add.text(width / 2 + 240, 14, '0.0s', {
+      fontSize: '14px', color: '#ffffff', fontFamily: 'monospace',
+    }).setOrigin(0, 0).setDepth(1001));
+
+    // Broken-hatch warning, dropped just below the top bar (phase + timer
+    // now occupy the space right of the turn counter). Visible only while
+    // the local bomberman is standing on a broken or under-keyed hatch.
+    this.brokenHatchText = this.hud(this.add.text(width / 2, 52, 'This Hatch is Broken, you won’t be able to Escape from it', {
       fontSize: '11px', color: '#ff4040', fontFamily: 'monospace',
-    }).setOrigin(0, 0).setDepth(1001).setVisible(false));
+    }).setOrigin(0.5, 0).setDepth(1001).setVisible(false));
 
     // UAV indicator — sits just below the turn counter at the top-center.
     // Throbs when the next UAV is <=3 turns away; hidden in tutorial matches.
@@ -3362,11 +3403,7 @@ export class MatchScene extends Phaser.Scene {
       fontSize: '13px', color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5, 0).setDepth(1001).setVisible(false));
 
-    // HP / Keys are pushed leftward (NEW_META: top-right reserves space for
-    // the coin row + treasure list column).
-    this.hpText = this.hud(this.add.text(width - 290, 14, 'HP --', {
-      fontSize: '16px', color: '#ff6666', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setDepth(1001));
+    // (Old top-right "HP --" text moved to the new top-left HP bar widget.)
 
     // Coin row (NEW_META §2) — pinned at the top of the top-right column,
     // always visible regardless of amount. Drawn as a graphics circle to
@@ -3703,19 +3740,17 @@ export class MatchScene extends Phaser.Scene {
     }
 
     if (me && me.alive) {
-      // Use the sprite system's *displayed* HP so the number tracks the
-      // pip bar's delayed post-animation update instead of dropping
-      // instantly at the start of the transition.
+      // Use the sprite system's *displayed* HP so the bar tracks the
+      // delayed post-animation update instead of dropping instantly at the
+      // start of the transition.
       const displayedHp = this.bombermanSpriteSystem?.getDisplayedHp(me.playerId) ?? me.hp;
-      this.hpText.setText(`HP ${displayedHp}/${BALANCE.match.bombermanMaxHp}`);
-      this.hpText.setColor('#ff6666');
+      this.updateHpBar(displayedHp, BALANCE.match.bombermanMaxHp, /* dead */ false);
       this.treasureList.setBundle(me.treasures);
       if (this.coinHudText) this.coinHudText.setText(`x${me.coins ?? 0}`);
       this.renderBombSlots(me);
       this.renderLootPanel(me);
     } else {
-      this.hpText.setText('DEAD');
-      this.hpText.setColor('#666');
+      this.updateHpBar(0, BALANCE.match.bombermanMaxHp, /* dead */ true);
       this.hideLootPanel();
     }
 
@@ -4046,6 +4081,136 @@ export class MatchScene extends Phaser.Scene {
     this.uavBannerTimer = this.time.delayedCall(3000, () => {
       this.uavBannerText?.destroy();
       this.uavBannerText = null;
+    });
+  }
+
+  /**
+   * Build the top-left HP bar widget: "HP:" label + dark background + a
+   * Graphics that gets redrawn per segment in `updateHpBar`. The whole row
+   * lives inside a Container so a hurt tween can jitter it cheaply.
+   */
+  private buildHpBar(): void {
+    const x = MatchScene.HP_BAR_X;
+    const y = MatchScene.HP_BAR_Y;
+    const labelW = MatchScene.HP_BAR_LABEL_W;
+    const barW = MatchScene.HP_BAR_W;
+    const barH = MatchScene.HP_BAR_H;
+
+    const container = this.add.container(x, y).setDepth(1001);
+    this.hud(container);
+
+    this.hpBarLabel = this.add.text(0, barH / 2, 'HP:', {
+      fontSize: '16px', color: '#ff8888', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0, 0.5);
+    container.add(this.hpBarLabel);
+
+    // Dark frame + fill graphics. Both live inside the container so the
+    // hurt-jitter tween can offset them together.
+    const bg = this.add.graphics();
+    bg.fillStyle(0x111111, 0.85);
+    bg.fillRoundedRect(labelW, 0, barW, barH, 3);
+    bg.lineStyle(1, 0x444444, 1);
+    bg.strokeRoundedRect(labelW, 0, barW, barH, 3);
+    container.add(bg);
+
+    this.hpBarFill = this.add.graphics();
+    container.add(this.hpBarFill);
+
+    this.hpBarContainer = container;
+  }
+
+  /**
+   * Redraw the HP bar with `current` filled segments out of `max`. If
+   * `current` dropped since the last call (and the bar isn't being torn
+   * down by death), play the hurt jitter + fly-down on the lost segment.
+   */
+  private updateHpBar(current: number, max: number, dead: boolean): void {
+    if (!this.hpBarFill || !this.hpBarLabel) return;
+    const labelW = MatchScene.HP_BAR_LABEL_W;
+    const barW = MatchScene.HP_BAR_W;
+    const barH = MatchScene.HP_BAR_H;
+    const innerPad = 2;
+    const segGap = 2;
+    const innerW = barW - innerPad * 2;
+    const innerH = barH - innerPad * 2;
+    const segCount = Math.max(1, max);
+    const segW = (innerW - segGap * (segCount - 1)) / segCount;
+
+    const wasHp = this.hpBarLastHp;
+    const wasMax = this.hpBarLastMax;
+    const hpDropped = wasHp >= 0 && wasMax === max && current < wasHp && !dead;
+
+    const g = this.hpBarFill;
+    g.clear();
+    for (let i = 0; i < segCount; i++) {
+      const sx = labelW + innerPad + i * (segW + segGap);
+      const sy = innerPad;
+      const filled = i < current;
+      g.fillStyle(filled ? 0xdd3333 : 0x2a1a1a, 1);
+      g.fillRect(sx, sy, segW, innerH);
+    }
+
+    if (dead) {
+      this.hpBarLabel.setText('HP: DEAD');
+      this.hpBarLabel.setColor('#666666');
+    } else {
+      this.hpBarLabel.setText('HP:');
+      this.hpBarLabel.setColor('#ff8888');
+    }
+
+    if (hpDropped) {
+      // The lost segment is the one at index `current` (zero-based) — the
+      // one that just turned from filled to empty.
+      const lostIdx = current;
+      const sx = labelW + innerPad + lostIdx * (segW + segGap);
+      const sy = innerPad;
+      this.playHpHurtAnim(sx, sy, segW, innerH);
+    }
+
+    this.hpBarLastHp = current;
+    this.hpBarLastMax = max;
+  }
+
+  /**
+   * Jitter the HP bar container and spawn a transient red rectangle at the
+   * lost segment that falls straight down + fades, travelling at most 4×
+   * its own height before disappearing.
+   */
+  private playHpHurtAnim(localSx: number, localSy: number, segW: number, segH: number): void {
+    const container = this.hpBarContainer;
+    if (!container) return;
+    const baseX = container.x;
+    const baseY = container.y;
+
+    // Bar jitter — quick yoyo nudge in x. Container only, so the falling
+    // segment ghost (added to the scene root) doesn't shake with it.
+    this.tweens.killTweensOf(container);
+    container.setPosition(baseX, baseY);
+    this.tweens.add({
+      targets: container,
+      x: baseX + 4,
+      duration: 50,
+      yoyo: true,
+      repeat: 3,
+      ease: 'Sine.easeInOut',
+      onComplete: () => container.setPosition(baseX, baseY),
+    });
+
+    // Falling segment ghost — drawn at the same screen coords as the lost
+    // segment, falls straight down + fades. Max travel = 4× segment height.
+    const ghost = this.add.graphics().setDepth(1002);
+    this.hud(ghost);
+    const worldSx = baseX + localSx;
+    const worldSy = baseY + localSy;
+    ghost.fillStyle(0xdd3333, 1);
+    ghost.fillRect(worldSx, worldSy, segW, segH);
+    this.tweens.add({
+      targets: ghost,
+      y: segH * 4,        // pixel offset, not absolute y
+      alpha: 0,
+      duration: 600,
+      ease: 'Quad.easeIn',
+      onComplete: () => ghost.destroy(),
     });
   }
 

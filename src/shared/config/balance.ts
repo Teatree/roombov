@@ -25,8 +25,8 @@ export const BALANCE = {
   match: {
     turnLimit: 250,
     turnsLeftWarning: 10,
-    inputPhaseSeconds: 2,
-    transitionPhaseSeconds: 2,
+    inputPhaseSeconds: 1.5,
+    transitionPhaseSeconds: 1.5,
     /** Minimum tile distance between spawning Bombermen (falls back if impossible). */
     minSpawnDistance: 5,
     bombermanMaxHp: 2,

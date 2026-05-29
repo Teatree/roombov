@@ -62,16 +62,15 @@ interface BombermanSpriteEntry {
   playerId: string;
   isMe: boolean;
   sprite: Phaser.GameObjects.Sprite;
-  hpPips: Phaser.GameObjects.Graphics;
   aimShadow: Phaser.GameObjects.Graphics | null;
   facing: Facing;
   animState: AnimState;
   tint: number;
   hp: number;
   /**
-   * HP value actually drawn in the pip bar. Trails `hp` to hide damage
+   * HP value actually shown in the HUD bar. Trails `hp` to hide damage
    * until the turn's animations finish — `hpDisplayUpdateAt` tells tick()
-   * when to swap.
+   * when to swap. The HUD reads this via `getDisplayedHp(playerId)`.
    */
   displayedHp: number;
   /** `scene.time.now` at which displayedHp should be set to hp. 0 = sync now. */
@@ -104,14 +103,21 @@ interface BombermanSpriteEntry {
    *  sprite (`stunned_effect_anim`) shown to all players whenever the
    *  bomberman has the `stunned` status effect. */
   stunIcon: Phaser.GameObjects.Sprite;
-  /** Sword icon shown above the head while the bomberman is in Melee Trap
-   *  Mode. Visible to all players when they have LOS on the bomberman.
-   *  Bobs slightly; fades out on exit. */
-  swordIcon: Phaser.GameObjects.Image;
-  /** Whether the sword icon is currently animating its fade-out. */
-  swordFading: boolean;
+  /** Ambush star — drawn on the tile UNDER the bomberman while in Melee
+   *  Trap Mode. Slowly rotates; pulses on a counter-attack; grows + fades
+   *  on exit. Replaces the old floating sword icon. */
+  ambushStar: Phaser.GameObjects.Graphics;
+  /** Whether the ambush star is currently animating its grow-out fade. */
+  ambushFading: boolean;
   /** Whether this bomberman is currently in Melee Trap Mode (mirror of state). */
   meleeTrapMode: boolean;
+  /** Floating bomberman-name label above the head. Created only for
+   *  real-player Bombermen (non-bot, non-scav) outside tutorial mode;
+   *  null otherwise. Visible to everyone with LOS. */
+  nameLabel: Phaser.GameObjects.Text | null;
+  /** Monotonic token incremented on every new hurt/death event so a stale
+   *  flicker timer from a previous hit can detect it's been superseded. */
+  flickerToken: number;
 }
 
 export class BombermanSpriteSystem {
@@ -209,7 +215,6 @@ export class BombermanSpriteSystem {
         }
       }
       entry.rushActive = b.rushActive ?? false;
-      this.drawHpPips(entry);
       if (b.playerId === myPlayerId && entry.aimShadow) {
         entry.aimShadow.setVisible(aimActive && b.alive);
       }
@@ -238,7 +243,6 @@ export class BombermanSpriteSystem {
       }
       entry.sprite.setVisible(visible);
       entry.sprite.setAlpha(dimmed ? CORPSE_SEEN_DIM_ALPHA : alpha);
-      entry.hpPips.setVisible(visible && !dimmed);
 
       // Stun icon: visible for any bomberman with an active stunned status
       // effect, as long as the sprite itself is visible to this client.
@@ -250,65 +254,59 @@ export class BombermanSpriteSystem {
       entry.stunIcon.setAlpha(dimmed ? CORPSE_SEEN_DIM_ALPHA : 1);
 
       // --- Melee Trap Mode handling ---
-      // Entry: swap to crouch anim, show sword icon with gentle bob.
-      // Exit: play a clearly-visible sword fade-out animation (scale up +
-      // drift up + fade) at the VERY START of the resolution phase — the
-      // spec wants this to read before the bomberman starts walking.
+      // Entry: swap to crouch anim, show ambush star at base scale.
+      // Exit: play a grow + fade animation at the VERY START of the
+      // resolution phase — the walk/throw events this turn are scheduled
+      // AFTER SWORD_FADE_MS in MatchScene so this animation reads before
+      // the bomberman starts moving.
       const wasTrap = entry.meleeTrapMode;
       const nowTrap = !!b.meleeTrapMode;
       entry.meleeTrapMode = nowTrap;
       const baseAlpha = BombermanSpriteSystem.SWORD_BASE_ALPHA;
-      const baseScale = this.swordBaseScale();
       if (nowTrap && !wasTrap) {
-        // Just entered — swap anim to crouch idle; sword icon appears.
+        // Just entered — swap anim to crouch idle; star appears at base scale.
         this.setAnim(entry, 'crouch');
-        entry.swordFading = false;
-        entry.swordIcon.setAlpha(baseAlpha);
-        entry.swordIcon.setScale(baseScale, baseScale);
+        entry.ambushFading = false;
+        entry.ambushStar.setAlpha(baseAlpha);
+        entry.ambushStar.setScale(1);
       } else if (!nowTrap && wasTrap) {
-        // Just exited — play fade-out: scale up + lift + fade over the
-        // full sword-fade duration. The walk/throw events for this turn
-        // are scheduled AFTER this duration in MatchScene so the player
-        // clearly sees the sword vanish before the bomberman moves.
+        // Just exited — grow + fade over the full ambush-fade duration.
         if (entry.animState === 'crouch') this.setAnim(entry, 'idle');
-        entry.swordFading = true;
-        entry.swordIcon.setScale(baseScale, baseScale);
-        entry.swordIcon.setAlpha(baseAlpha);
-        const baseY = entry.swordIcon.y;
+        entry.ambushFading = true;
+        entry.ambushStar.setScale(1);
+        entry.ambushStar.setAlpha(baseAlpha);
         this.scene.tweens.add({
-          targets: entry.swordIcon,
+          targets: entry.ambushStar,
           alpha: 0,
-          scale: baseScale * 1.7,
-          y: baseY - this.tileSize * 0.6,
+          scale: 1.8,
           duration: BombermanSpriteSystem.SWORD_FADE_MS,
           ease: 'Cubic.easeOut',
           onComplete: () => {
-            // Hide the icon AND reset its transform so the next trap-entry
-            // finds it at a clean baseline. Critical: `setVisible(false)`
-            // prevents the icon from popping back mid-walk at full alpha
-            // after the tween restores alpha — which is what happened
-            // before this fix.
-            entry.swordFading = false;
-            entry.swordIcon.setVisible(false);
-            entry.swordIcon.setAlpha(baseAlpha);
-            entry.swordIcon.setScale(baseScale, baseScale);
+            // Hide the star AND reset its transform so the next trap-entry
+            // finds it at a clean baseline.
+            entry.ambushFading = false;
+            entry.ambushStar.setVisible(false);
+            entry.ambushStar.setAlpha(baseAlpha);
+            entry.ambushStar.setScale(1);
           },
         });
       }
-      // Sword icon visibility. The icon visually sits ~1 tile ABOVE the
-      // bomberman's actual tile, so the pixel can land on a DIFFERENT
-      // (often fogged) tile from the bomberman's own. Since the sword
-      // renders above the fog layer, it'd otherwise "float through" fog.
-      // Gate it by the tile above being in current LOS (for enemies) —
-      // if that tile isn't lit, hide the sword even when the bomberman
-      // itself is visible from an adjacent clear angle.
-      const swordTileAboveVisible = b.playerId === myPlayerId
-        ? true
-        : isTileVisible(b.x, b.y - 1);
-      const swordShown = (nowTrap || entry.swordFading) && visible && !dimmed && swordTileAboveVisible;
-      entry.swordIcon.setVisible(swordShown);
-      if (!entry.swordFading) {
-        entry.swordIcon.setAlpha(dimmed ? CORPSE_SEEN_DIM_ALPHA * baseAlpha : baseAlpha);
+      // Star visibility — same tile as the bomberman, so re-use the
+      // bomberman's own LOS gate.
+      const starShown = (nowTrap || entry.ambushFading) && visible && !dimmed;
+      entry.ambushStar.setVisible(starShown);
+      if (!entry.ambushFading) {
+        entry.ambushStar.setAlpha(dimmed ? CORPSE_SEEN_DIM_ALPHA * baseAlpha : baseAlpha);
+      }
+
+      // Name label — real players only, never in tutorial, only when the
+      // sprite is itself visible to this client (LOS-gated for enemies).
+      if (entry.nameLabel) {
+        const labelShown = visible && !dimmed && !state.isTutorial && !b.isBot && !b.isScav;
+        entry.nameLabel.setVisible(labelShown);
+        if (labelShown && entry.nameLabel.text !== (b.name ?? '')) {
+          entry.nameLabel.setText(b.name ?? '');
+        }
       }
     }
     // Destroy entries for players no longer in state OR that escaped.
@@ -358,6 +356,11 @@ export class BombermanSpriteSystem {
   applyHurtEvent(playerId: string): void {
     const entry = this.entries.get(playerId);
     if (!entry || entry.animState === 'death') return;
+    // Red flicker mask runs in parallel with the hurt anim. setTintFill
+    // overrides the team-color multiply tint with a solid red mask for the
+    // duration of each red frame, then we restore entry.tint to resume the
+    // normal sprite + team color while the hurt anim continues.
+    this.playHurtFlicker(entry);
     // Remember what to resume after hurt finishes
     entry.resumeAfter = entry.animState === 'walk' || entry.animState === 'run' ? entry.animState : 'idle';
     this.setAnim(entry, 'hurt');
@@ -429,13 +432,12 @@ export class BombermanSpriteSystem {
     entry.lerpEndMs = 0; // cancel any active lerp
     this.applyVisualPosition(entry);
 
+    this.playHurtFlicker(entry);
     this.setAnim(entry, 'death');
     if (entry.aimShadow) entry.aimShadow.setVisible(false);
     // Move corpse sprite to the dedicated corpseLayer (spec: bombs render above corpses).
     this.layer.remove(entry.sprite);
-    this.layer.remove(entry.hpPips);
     this.corpseLayer.add(entry.sprite);
-    this.corpseLayer.add(entry.hpPips);
     return deathAnimationDurationMs();
   }
 
@@ -456,13 +458,19 @@ export class BombermanSpriteSystem {
         if (entry.animState === 'walk' || entry.animState === 'run') this.setAnim(entry, 'idle');
       }
       this.applyVisualPosition(entry);
-      // Delayed HP pip update: a damage this turn scheduled a deferred
-      // swap of displayedHp so the pip doesn't drop before the hurt/death
-      // animation finishes. Apply when the scheduled time arrives.
+      // Slowly rotate the ambush star while it's visible (entry, holding, or
+      // the brief grow+fade on exit). 6 RPM ≈ 36°/s, low-key like a slow
+      // spotlight. Skipped when invisible to save the rotation set on every
+      // hidden bomberman.
+      if (entry.ambushStar.visible) {
+        entry.ambushStar.rotation += 0.6 * (1 / 30); // ~radians/frame at 30fps
+      }
+      // Delayed HP value swap: a damage this turn scheduled a deferred
+      // swap of displayedHp so the HUD bar doesn't drop before the
+      // hurt/death animation finishes. Apply when the scheduled time arrives.
       if (entry.hpDisplayUpdateAt > 0 && nowMs >= entry.hpDisplayUpdateAt) {
         entry.displayedHp = entry.hp;
         entry.hpDisplayUpdateAt = 0;
-        this.drawHpPips(entry);
       }
       // Escape: once the walk lerp finishes (sprite has reached the hatch
       // tile), start a one-shot fade-out tween and let its onComplete remove
@@ -474,8 +482,9 @@ export class BombermanSpriteSystem {
         entry.escapeFadeStarted = true;
         entry.sprite.anims.stop();
         const fadeTargets: Phaser.GameObjects.GameObject[] = [
-          entry.sprite, entry.hpPips, entry.stunIcon, entry.swordIcon,
+          entry.sprite, entry.stunIcon, entry.ambushStar,
         ];
+        if (entry.nameLabel) fadeTargets.push(entry.nameLabel);
         if (entry.aimShadow) fadeTargets.push(entry.aimShadow);
         const pidForFade = playerId;
         this.scene.tweens.add({
@@ -530,16 +539,22 @@ export class BombermanSpriteSystem {
     const cy = b.y * ts + ts / 2;
 
     const character: CharacterVariant = b.character ?? 'char1';
+
+    // Ambush star — drawn FIRST so it sits below the sprite (z-order within
+    // this layer follows insertion order). Static polygon at origin (0,0);
+    // positioning + rotation are handled by applyVisualPosition / tick.
+    const ambushStar = this.scene.add.graphics();
+    drawAmbushStar(ambushStar, this.tileSize);
+    ambushStar.setPosition(cx, cy);
+    ambushStar.setVisible(false);
+    this.layer.add(ambushStar);
+
     const sprite = this.scene.add.sprite(cx, cy, `bomber_idle_${character}`);
     sprite.setOrigin(SPRITE_ORIGIN_X, SPRITE_ORIGIN_Y);
     sprite.setScale(SPRITE_SCALE);
     sprite.setTint(b.tint);
     sprite.play(`bomber_idle_${character}_down`);
     this.layer.add(sprite);
-
-    // HP pips above the sprite's head
-    const hpPips = this.scene.add.graphics();
-    this.layer.add(hpPips);
 
     // Self-only red aim-shadow ellipse REMOVED per user request — the
     // throw-target highlight in MatchScene is now the sole aiming indicator,
@@ -557,22 +572,32 @@ export class BombermanSpriteSystem {
     }
     this.layer.add(stunIcon);
 
-    // Sword icon — shown above the head while in Melee Trap Mode. All
-    // players can see it when they have LOS on the bomberman.
-    const swordIcon = this.scene.add.image(cx, cy, 'sword_icon');
-    swordIcon.setDisplaySize(this.tileSize * 0.55, this.tileSize * 0.55);
-    swordIcon.setVisible(false);
-    this.layer.add(swordIcon);
+    // Name label — only for real-player Bombermen (non-bot, non-scav) and
+    // never in tutorial. Decided by syncFromState; null here means "this
+    // bomberman never gets a name label". Re-evaluated on first sync if
+    // we need to upgrade it (e.g. tutorial flag changes mid-life — doesn't
+    // happen, but the null-check keeps that cheap).
+    let nameLabel: Phaser.GameObjects.Text | null = null;
+    const shouldLabel = !b.isBot && !b.isScav;
+    if (shouldLabel) {
+      nameLabel = this.scene.add.text(cx, cy, b.name ?? '', {
+        fontSize: '8px', color: '#ffffff', fontFamily: 'monospace',
+        stroke: '#000000', strokeThickness: 2,
+      }).setOrigin(0.5, 1).setAlpha(0.6).setVisible(false);
+      // Render the text at 2× resolution and downsample so 8 px monospace
+      // stays sharp instead of subpixel-blurry on high-DPI displays.
+      nameLabel.setResolution(2);
+      this.layer.add(nameLabel);
+    }
 
     const entry: BombermanSpriteEntry = {
       playerId: b.playerId,
       isMe,
       sprite,
-      hpPips,
       aimShadow,
       stunIcon,
-      swordIcon,
-      swordFading: false,
+      ambushStar,
+      ambushFading: false,
       meleeTrapMode: b.meleeTrapMode ?? false,
       facing: 'down',
       animState: 'idle',
@@ -595,8 +620,9 @@ export class BombermanSpriteSystem {
       escapeFadeStarted: false,
       rushActive: b.rushActive ?? false,
       character,
+      nameLabel,
+      flickerToken: 0,
     };
-    this.drawHpPips(entry);
     this.applyVisualPosition(entry);
     return entry;
   }
@@ -610,20 +636,35 @@ export class BombermanSpriteSystem {
    */
   static readonly SWORD_FADE_MS = 400;
   /**
-   * Base alpha for the in-world sword icon above a bomberman's head while
+   * Base alpha for the ambush star drawn under a bomberman's tile while
    * in Melee Trap Mode. Kept translucent so it reads as an overlay cue
-   * without dominating the sprite.
+   * without dominating the sprite. (Name kept for back-compat with the
+   * old sword-icon implementation that this replaced.)
    */
-  static readonly SWORD_BASE_ALPHA = 0.6;
+  static readonly SWORD_BASE_ALPHA = 0.7;
 
-  /** Base scale applied to the sword icon so its displaySize matches ~55% of a tile. */
-  private swordBaseScale(): number {
-    // Phaser's Image.setScale is absolute; we feed the tween a scale
-    // relative to this baseline so it multiplies on enter/exit animations.
-    // The actual displayed size is set via setDisplaySize on creation,
-    // which normalizes scale to whatever divisor matches the texture's
-    // native pixel size. Return 1 — setDisplaySize already did the work.
-    return 0.25;
+  /**
+   * Three-frame red flicker mask applied to the sprite at the start of a
+   * hurt or death animation. Uses `setTintFill` for the red frames (which
+   * overrides the team-color multiply tint) and `setTint(entry.tint)` to
+   * restore. A per-entry `flickerToken` guards against stale timers from
+   * an older hurt completing after a newer one has been scheduled — only
+   * the timer that matches the current token applies its tint change.
+   */
+  private playHurtFlicker(entry: BombermanSpriteEntry): void {
+    entry.flickerToken += 1;
+    const token = entry.flickerToken;
+    const RED = 0xff4444;
+    const FRAME_MS = 70;
+    const apply = (red: boolean) => {
+      if (entry.flickerToken !== token) return; // superseded
+      if (red) entry.sprite.setTintFill(RED);
+      else entry.sprite.setTint(entry.tint);
+    };
+    apply(true);
+    this.scene.time.delayedCall(FRAME_MS, () => apply(false));
+    this.scene.time.delayedCall(FRAME_MS * 2, () => apply(true));
+    this.scene.time.delayedCall(FRAME_MS * 3, () => apply(false));
   }
 
   /**
@@ -654,6 +695,7 @@ export class BombermanSpriteSystem {
     // the animation) so the hit reads as a contact, not a pose.
     const connectAtMs = Math.round(BombermanSpriteSystem.ATTACK3_DURATION_MS * 0.65);
     this.scene.time.delayedCall(connectAtMs, () => {
+      this.playHurtFlicker(victim);
       if (killed) {
         this.setAnim(victim, 'death');
         victim.resumeAfter = 'death';
@@ -663,14 +705,24 @@ export class BombermanSpriteSystem {
         // and floats above the looter.
         if (victim.aimShadow) victim.aimShadow.setVisible(false);
         this.layer.remove(victim.sprite);
-        this.layer.remove(victim.hpPips);
         this.corpseLayer.add(victim.sprite);
-        this.corpseLayer.add(victim.hpPips);
       } else {
         this.setAnim(victim, 'hurt');
         victim.resumeAfter = 'idle';
       }
     });
+    // Pulse the attacker's ambush star (they're still in trap mode at the
+    // moment of contact). Quick scale-up that returns to the rotating base.
+    if (attacker.meleeTrapMode) {
+      this.scene.tweens.killTweensOf(attacker.ambushStar);
+      this.scene.tweens.add({
+        targets: attacker.ambushStar,
+        scale: 1.4,
+        duration: 120,
+        yoyo: true,
+        ease: 'Sine.easeOut',
+      });
+    }
     return connectAtMs;
   }
 
@@ -688,10 +740,10 @@ export class BombermanSpriteSystem {
 
   private destroyEntry(entry: BombermanSpriteEntry): void {
     entry.sprite.destroy();
-    entry.hpPips.destroy();
     entry.aimShadow?.destroy();
     entry.stunIcon.destroy();
-    entry.swordIcon.destroy();
+    entry.ambushStar.destroy();
+    entry.nameLabel?.destroy();
   }
 
   /**
@@ -711,72 +763,24 @@ export class BombermanSpriteSystem {
   /** Write the current visualX/visualY to all overlay graphics and the sprite. */
   private applyVisualPosition(entry: BombermanSpriteEntry): void {
     const { visualX, visualY } = entry;
+    const ts = this.tileSize;
     // Sprite gets the tuned vertical push so the feet land on the tile floor.
-    // HP pips and aim shadow are positioned off the tile center, not the sprite, so they
-    // stay consistent regardless of sprite art.
     entry.sprite.setPosition(visualX, visualY + SPRITE_Y_OFFSET_PX);
 
-    // HP bar — only visible for the local player.
-    const ts = this.tileSize;
-    if (entry.isMe) {
-      this.drawHpPipsAt(entry, visualX, visualY - ts * 1.45);
-      entry.hpPips.setAlpha(0.55);
-      entry.hpPips.setVisible(true);
-    } else {
-      entry.hpPips.setVisible(false);
-    }
+    // Ambush star — sits ON the tile under the bomberman. We don't reset
+    // y between frames so the entry/exit/pulse tweens can own scale/alpha
+    // changes; rotation is driven by tick().
+    entry.ambushStar.x = visualX;
+    entry.ambushStar.y = visualY;
 
     // Stun icon floats slightly above the head, bobbing gently via time.
     const bob = Math.sin(this.scene.time.now / 220) * 2;
     entry.stunIcon.setPosition(visualX, visualY - ts * 1.75 + bob);
-    // Sword icon sits above the head with a smaller, slower bob so it
-    // reads as a distinct "holding position" signal rather than matching
-    // the stun indicator's rhythm. During fade-out the tween owns the
-    // icon's y-position (it lifts upward) — don't override it here.
-    const swordBob = Math.sin(this.scene.time.now / 420) * 1.5;
-    if (entry.swordFading) {
-      entry.swordIcon.x = visualX;
-    } else {
-      entry.swordIcon.setPosition(visualX, visualY - ts * 1.8 + swordBob);
-    }
 
-  }
-
-  private drawHpPips(entry: BombermanSpriteEntry): void {
-    if (!entry.isMe) return;
-    const ts = this.tileSize;
-    this.drawHpPipsAt(entry, entry.visualX, entry.visualY - ts * 1.45);
-  }
-
-  /**
-   * HP bar: dark background with red segments. Centered at (x, y).
-   * Wider and more bar-like than the old tiny pips.
-   *
-   * To tweak: change `barW` for width, `barH` for height, `padding` for
-   * inner spacing, colors for fill/empty/bg. Position offset is in
-   * `applyVisualPosition` above (`visualY - ts * 1.0`).
-   */
-  private drawHpPipsAt(entry: BombermanSpriteEntry, x: number, y: number): void {
-    const g = entry.hpPips;
-    g.clear();
-    const barW = 13;    // total bar width (65% of original 20)
-    const barH = 3;     // bar height (65% of original 4, rounded)
-    const padding = 1;  // inner padding
-    const segGap = 1;   // gap between HP segments
-    const startX = x - barW / 2;
-
-    // Dark background
-    g.fillStyle(0x111111, 0.85);
-    g.fillRoundedRect(startX - padding, y - padding, barW + padding * 2, barH + padding * 2, 2);
-
-    // HP segments
-    const segCount = entry.maxHp;
-    const totalGaps = (segCount - 1) * segGap;
-    const segW = (barW - totalGaps) / segCount;
-    for (let i = 0; i < segCount; i++) {
-      const sx = startX + i * (segW + segGap);
-      g.fillStyle(i < entry.displayedHp ? 0xdd3333 : 0x333333, 1);
-      g.fillRect(sx, y, segW, barH);
+    // Name label sits just above the head. Round to integer pixels so the
+    // text doesn't smear when the sprite is mid-lerp at a fractional pixel.
+    if (entry.nameLabel) {
+      entry.nameLabel.setPosition(Math.round(visualX), Math.round(visualY - ts * 1.2));
     }
   }
 }
@@ -785,6 +789,37 @@ export class BombermanSpriteSystem {
  * Compute 8-way facing from a movement delta. y+ is south (Phaser screen
  * convention). Returns `fallback` when dx=dy=0.
  */
+/**
+ * Draw a 12-point ambush star at the Graphics' local origin (0, 0). The
+ * caller positions the Graphics each frame; this only paints the polygon.
+ * Outer radius ≈ 0.45 tiles, inner ≈ 0.22 tiles — the star reads as a
+ * solid floor decal under the bomberman. Light-red single tone with a
+ * thin white core for the "white-red" identity the user asked for.
+ */
+function drawAmbushStar(g: Phaser.GameObjects.Graphics, tileSize: number): void {
+  const outerR = tileSize * 0.45;
+  const innerR = tileSize * 0.22;
+  const points: { x: number; y: number }[] = [];
+  const spikes = 12;
+  for (let i = 0; i < spikes * 2; i++) {
+    const r = i % 2 === 0 ? outerR : innerR;
+    // Start at -90° (top) so the rotation reads symmetrically.
+    const angle = -Math.PI / 2 + (i * Math.PI) / spikes;
+    points.push({ x: Math.cos(angle) * r, y: Math.sin(angle) * r });
+  }
+  g.clear();
+  g.fillStyle(0xff8888, 1);
+  g.beginPath();
+  g.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) g.lineTo(points[i].x, points[i].y);
+  g.closePath();
+  g.fillPath();
+  // Soft white core to brighten the center — gives the "light red / white"
+  // tonal blend without alternating spike colors.
+  g.fillStyle(0xffffff, 0.55);
+  g.fillCircle(0, 0, innerR * 0.6);
+}
+
 function directionFromDelta8(dx: number, dy: number, fallback: Facing): Facing {
   if (dx === 0 && dy === 0) return fallback;
   const sx = Math.sign(dx);

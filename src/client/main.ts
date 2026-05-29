@@ -6,6 +6,7 @@ import { BombermanShopScene } from './scenes/BombermanShopScene.ts';
 import { BombsShopScene } from './scenes/BombsShopScene.ts';
 import { MatchScene } from './scenes/MatchScene.ts';
 import { ResultsScene } from './scenes/ResultsScene.ts';
+import { TutorialEndScene } from './scenes/TutorialEndScene.ts';
 import { TutorialOverlayScene } from './scenes/TutorialOverlayScene.ts';
 import { TooltipScene } from './scenes/TooltipScene.ts';
 import { FactoryScene } from './scenes/FactoryScene.ts';
@@ -24,7 +25,7 @@ const config: Phaser.Types.Core.GameConfig = {
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
   fps: { target: 30, forceSetTimeOut: true },
-  scene: [BootScene, MainMenuScene, LobbyScene, BombermanShopScene, BombsShopScene, FactoryScene, MatchScene, ResultsScene, TutorialOverlayScene, TooltipScene, BombermanUpgradeScene],
+  scene: [BootScene, MainMenuScene, LobbyScene, BombermanShopScene, BombsShopScene, FactoryScene, MatchScene, ResultsScene, TutorialEndScene, TutorialOverlayScene, TooltipScene, BombermanUpgradeScene],
 };
 
 const game = new Phaser.Game(config);
