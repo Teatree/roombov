@@ -49,6 +49,10 @@ interface CardView {
 export class LobbyScene extends Phaser.Scene {
   private listings: MatchListing[] = [];
   private joinedMatchId: string | null = null;
+  /** Map id of the joined match. Captured at `joined_match` time because the
+   *  server removes a started match from the carousel before broadcasting
+   *  `match_start`, so the listing isn't around to look up later. */
+  private joinedMatchMapId: string | null = null;
   private cardViews: Map<string, CardView> = new Map();
   private statusText!: Phaser.GameObjects.Text;
   private warnText!: Phaser.GameObjects.Text;
@@ -133,11 +137,20 @@ export class LobbyScene extends Phaser.Scene {
 
     socket.on('joined_match', (msg) => {
       this.joinedMatchId = msg.matchId;
+      // Capture the joined match's mapId now — the listing will be gone
+      // from `this.listings` by the time `match_start` fires (the server
+      // pulls full matches out of the carousel before starting them).
+      const joinedListing = this.listings.find(l => l.config.id === msg.matchId);
+      this.joinedMatchMapId = joinedListing?.config.mapId ?? null;
       this.renderCards();
     });
 
     socket.on('match_start', () => {
-      this.scene.start('MatchScene', { matchId: this.joinedMatchId });
+      console.log(`[Lobby] match_start → matchId=${this.joinedMatchId} mapId=${this.joinedMatchMapId}`);
+      this.scene.start('MatchScene', {
+        matchId: this.joinedMatchId,
+        mapId: this.joinedMatchMapId,
+      });
     });
 
     // Warn if no Bomberman is equipped

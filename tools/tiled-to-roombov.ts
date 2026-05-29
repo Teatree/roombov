@@ -736,6 +736,7 @@ if (existsSync(join(publicMapsDir, '..'))) {
   }
 
   const copiedPngs = new Set<string>();
+  const copiedTsxs = new Set<string>();
   for (const tsEntry of patched.tilesets) {
     if (tsEntry.image) {
       const imgName = String(tsEntry.image).split(/[\\/]/).pop() ?? '';
@@ -752,6 +753,52 @@ if (existsSync(join(publicMapsDir, '..'))) {
         }
       }
       tsEntry.image = imgName;
+    } else if (tsEntry.source) {
+      // External .tsx tileset — copy both the .tsx and the PNG it references
+      // so the client's runtime preloader can fetch them from public/maps/.
+      // The runtime parser (MapRenderer.preloadTiledMap) reads `<image source>`
+      // from the .tsx, so the regex applied here must match that one.
+      const tsxSource = String(tsEntry.source);
+      const tsxName = tsxSource.split(/[\\/]/).pop() ?? '';
+      const srcTsx = join(dirname(inputPath), tsxSource);
+      const dstTsx = join(publicMapsDir, tsxName);
+      if (existsSync(srcTsx) && !copiedTsxs.has(tsxName)) {
+        try {
+          copyFileSync(srcTsx, dstTsx);
+          copiedTsxs.add(tsxName);
+          console.log(`  synced external tileset: ${tsxName}`);
+          // Also copy the referenced PNG to public/maps/. The .tsx writes
+          // the image path relative to its own directory.
+          const tsxText = readFileSync(srcTsx, 'utf-8');
+          const imgMatch = /<image[^>]*\bsource="([^"]+)"/.exec(tsxText);
+          if (imgMatch) {
+            const tsxImgRel = imgMatch[1];
+            const tsxImgName = tsxImgRel.split(/[\\/]/).pop() ?? '';
+            const srcTsxImg = join(dirname(srcTsx), tsxImgRel);
+            const dstTsxImg = join(publicMapsDir, tsxImgName);
+            if (existsSync(srcTsxImg) && !copiedPngs.has(tsxImgName)) {
+              try {
+                copyFileSync(srcTsxImg, dstTsxImg);
+                copiedPngs.add(tsxImgName);
+                console.log(`  synced tileset image: ${tsxImgName} (from ${tsxName})`);
+              } catch (err) {
+                console.warn(`  ⚠ failed to copy ${srcTsxImg} → ${dstTsxImg}:`, err);
+              }
+            } else if (!existsSync(srcTsxImg)) {
+              console.warn(`  ⚠ tsx image not found on disk: ${srcTsxImg}`);
+            }
+          } else {
+            console.warn(`  ⚠ tsx has no <image source>: ${srcTsx}`);
+          }
+        } catch (err) {
+          console.warn(`  ⚠ failed to publish external tileset ${srcTsx}:`, err);
+        }
+      } else if (!existsSync(srcTsx)) {
+        console.warn(`  ⚠ external tileset not found on disk: ${srcTsx}`);
+      }
+      // Flatten the source path so the patched .tmj references just the
+      // basename — matches the embedded-image branch above.
+      tsEntry.source = tsxName;
     }
   }
   const publicTmjPath = join(publicMapsDir, `${mapId}.tmj`);

@@ -391,7 +391,10 @@ export class MatchScene extends Phaser.Scene {
   }
 
   preload(): void {
-    const mapIdForPreload = this.mode === 'tutorial' ? 'tutorial_map' : 'main_map';
+    const mapIdForPreload = this.mode === 'tutorial'
+      ? 'tutorial_map'
+      : (this.visualMapId ?? 'main_map');
+    console.log(`[MatchScene] preload(): visualMapId=${this.visualMapId} mode=${this.mode} → loading tilemap '${mapIdForPreload}'`);
     this.tiledInfo = preloadTiledMap(this, mapIdForPreload);
     // Escape hatch: 288x32 sheet, 6 frames of 48x32
     this.load.spritesheet('escape_hatch', 'sprites/escape_hatch.png', {
@@ -443,10 +446,19 @@ export class MatchScene extends Phaser.Scene {
     preloadBombermanSpritesheets(this);
   }
 
-  init(data: { matchId?: string | null; mode?: 'network' | 'tutorial' } | undefined): void {
+  init(data: { matchId?: string | null; mode?: 'network' | 'tutorial'; mapId?: string | null } | undefined): void {
     this.myMatchId = data?.matchId ?? null;
     this.mode = data?.mode ?? 'network';
+    // Visual map id — supplied by LobbyScene from the joined match config.
+    // Used in preload() to fetch the correct .tmj. Tutorial overrides this
+    // with the hardcoded tutorial_map below.
+    this.visualMapId = data?.mapId ?? null;
   }
+
+  /** Map id used for the visual tilemap preload. Set in init() from the
+   *  scene-start data so the .tmj fetched matches the server's chosen map.
+   *  Falls back to 'main_map' if not provided (legacy callers, fail-safe). */
+  private visualMapId: string | null = null;
 
   create(): void {
     this.events.once('shutdown', this.shutdown, this);
@@ -4032,7 +4044,7 @@ export class MatchScene extends Phaser.Scene {
     const color = inDamage ? 0xff3333 : 0x66aaff;
     const w = this.scale.width;
     const h = this.scale.height;
-    const thickness = 10;
+    const thickness = 6;
     g.clear();
     g.lineStyle(thickness, color, 0.95);
     // Stroke is centered on the path — offset by half-thickness so the

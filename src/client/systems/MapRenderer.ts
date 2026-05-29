@@ -243,7 +243,8 @@ export class MapRenderer {
     // automatically, so we drive them from the scene update loop via tick().
     this.collectAnimatedTiles(tilemap);
 
-    console.log(`[MapRenderer] Tiled map rendered: ${this.tilemapLayers.length} visual layers, ${this.animatedTiles.length} animated tiles`);
+    const tsSummary = info.tilesets.map(t => `${t.name}(gid ${t.firstgid} → ${t.key})`).join(', ');
+    console.log(`[MapRenderer] Tiled map '${info.tilemapKey}' rendered: ${this.tilemapLayers.length} visual layers, ${this.animatedTiles.length} animated tiles, tilesets: ${tsSummary}`);
   }
 
   /**

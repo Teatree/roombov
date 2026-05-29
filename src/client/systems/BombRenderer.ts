@@ -35,6 +35,34 @@ const EXPLOSION_WAVE_MS_PER_STEP = 33;
  *  plasma/magenta variant the bomb used pre-sprite-sheet. */
 const DELAY_TRICKY_TINT = 0xcc66ff;
 
+/**
+ * Per-bomb-type breadcrumb trail color used by `spawnThrowArc`. Each bomb's
+ * thrown projectile leaves a short trail of fading dots in this color so
+ * the recipient can read "a bomb flew in from that direction" without
+ * leaking exactly where the thrower is standing (the trail is fog-gated
+ * per-tile the same way the projectile itself is).
+ *
+ * `fart_escape` is intentionally absent — that bomb is a self-stunt, not
+ * an incoming threat, so the user spec says no trail.
+ */
+const BOMB_TRAIL_COLOR: Partial<Record<BombType, number>> = {
+  rock:                  0xffffff, // white
+  bomb:                  0xff5588, // strawberry pink (delay big)
+  bomb_wide:             0x2244aa, // dark blue (wide delay)
+  delay_tricky:          0x9944cc, // purple
+  banana:                0xffee44, // yellow
+  flash:                 0xfff8aa, // light yellow
+  contact:               0xaa0000, // blood red
+  molotov:               0xff8822, // orange
+  ender_pearl:           0x1a7a3a, // dark green
+  motion_detector_flare: 0xcccccc, // light gray
+  flare:                 0xfff8aa, // light yellow
+  phosphorus:            0xffaa66, // light orange
+  cluster_bomb:          0x222222, // black (dark gray for visibility on the dark map)
+  big_huge:              0xcc6622, // orange-brown
+  shield:                0x44dddd, // cyan
+};
+
 /** BombTypes whose per-tile burst uses the shared explosion_sprite_anim. */
 const SPRITE_EXPLOSION_TYPES = new Set<BombType>([
   'bomb',
@@ -313,6 +341,44 @@ export class BombRenderer {
     // Perform"). The bomb lands exactly when beat 2 ("Action Result") begins,
     // which is when its explosion/smoke/teleport visual kicks in.
     const duration = (BALANCE.match.transitionPhaseSeconds * 1000) / 3;
+
+    // Breadcrumb trail. A handful of small colored dots dropped along the
+    // flight path that fade out together ~500ms after the bomb lands. Each
+    // dot is fog-gated at spawn time — a dot whose tile is outside LOS at
+    // the moment it would appear simply spawns invisible, matching the
+    // bomb sprite's own LOS gating. Skipped entirely for bombs without a
+    // listed trail color (e.g. fart_escape, per spec).
+    const trailColor = BOMB_TRAIL_COLOR[type];
+    const TRAIL_LINGER_MS = 500;
+    if (trailColor !== undefined) {
+      const DOT_COUNT = 7;
+      const dotRadius = ts * 0.09;
+      for (let i = 1; i <= DOT_COUNT; i++) {
+        const tFrac = i / (DOT_COUNT + 1);
+        const dotX = sx + (ex - sx) * tFrac;
+        const dotY = sy + (ey - sy) * tFrac;
+        const spawnDelay = Math.round(duration * tFrac);
+        this.scene.time.delayedCall(spawnDelay, () => {
+          const dot = this.scene.add.circle(dotX, dotY, dotRadius, trailColor, 0.85);
+          this.layer.add(dot);
+          if (isVisible) {
+            const dtx = Math.floor(dotX / ts);
+            const dty = Math.floor(dotY / ts);
+            if (!isVisible(dtx, dty)) dot.setVisible(false);
+          }
+          // Every dot finishes fading at (duration + TRAIL_LINGER_MS) since
+          // throw start — so dots spawned later have shorter fade durations.
+          const fadeMs = Math.max(80, duration - spawnDelay + TRAIL_LINGER_MS);
+          this.scene.tweens.add({
+            targets: dot,
+            alpha: 0,
+            duration: fadeMs,
+            ease: 'Quad.easeOut',
+            onComplete: () => dot.destroy(),
+          });
+        });
+      }
+    }
 
     this.scene.tweens.add({
       targets: img,
