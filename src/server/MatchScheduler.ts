@@ -32,8 +32,18 @@ const MIN_STAGGER_MS = 10000;
 let nextId = 0;
 function genMatchId(): string { return `match_${Date.now()}_${nextId++}`; }
 
+/**
+ * Round-robin index into `MAP_MANIFEST`. Bumps every time a new MatchConfig
+ * is generated, so the lobby carousel cycles Main → Desert → Main → Desert
+ * instead of picking randomly. Process-lifetime state — restarts of the
+ * server resume from index 0 (acceptable: every restart-batch starts on
+ * Main Map).
+ */
+let nextMapIndex = 0;
+
 function generateMatchConfig(): MatchConfig {
-  const mapEntry = MAP_MANIFEST[Math.floor(Math.random() * MAP_MANIFEST.length)];
+  const mapEntry = MAP_MANIFEST[nextMapIndex % MAP_MANIFEST.length];
+  nextMapIndex += 1;
   return {
     id: genMatchId(),
     mapId: mapEntry.id,

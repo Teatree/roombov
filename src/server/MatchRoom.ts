@@ -74,6 +74,15 @@ export class MatchRoom {
    *  earned-this-match snapshot. For dead players we record the pre-death
    *  value (no banking happened) — see the `died` handler below. */
   private lifetimeSpSnapshots = new Map<string, number>();
+  /** playerIds that have already had MatchResults + ProfileSnapshot rows
+   *  emitted. Set at the moment of escape/death so the analytics POST fires
+   *  while the user's session is still warm — critical on render's free
+   *  tier which suspends the instance after ~15 min of inactivity. If we
+   *  waited for finalize() (which only runs when the whole match ends, often
+   *  long after a solo player escapes/dies), the suspended instance would
+   *  lose the in-memory state and the row would never fire. finalize() still
+   *  processes anyone NOT in this set (turn_limit survivors etc). */
+  private analyticsEmitted = new Set<string>();
   /** Per-real-player analytics counters, accumulated across every turn.
    *  `bombsUsed` is a sparse `{ [bombType]: count }` reflecting bombs PLACED
    *  (throw or contact-detonate from the resolver's `throw` event), not bombs
@@ -694,6 +703,11 @@ export class MatchRoom {
       const bm = this.state.bombermen.find(b => b.playerId === diedPlayerId);
       if (!bm) continue;
       const idx = profile.ownedBombermen.findIndex(ob => ob.id === bm.bombermanId);
+      // Capture name + tier BEFORE stripping the OwnedBomberman from the
+      // profile — used in the analytics row. b.name carries the display
+      // name independently, but tier only lives on OwnedBomberman.
+      const bombermanName = bm.name ?? (idx >= 0 ? profile.ownedBombermen[idx].name : '');
+      const bombermanTier = idx >= 0 ? profile.ownedBombermen[idx].tier : 'free';
       // Snapshot lifetime SP BEFORE removing the OwnedBomberman so the
       // Results screen can show what this Bomberman accumulated across its
       // life. On death no banking happened, so we just record the current
@@ -711,12 +725,20 @@ export class MatchRoom {
       if (profile.equippedBombermanId === bm.bombermanId) {
         profile.equippedBombermanId = profile.ownedBombermen.length > 0 ? profile.ownedBombermen[0].id : null;
       }
+      // Bump match count + fire analytics BEFORE the user's session can
+      // close — on render free tier, waiting for finalize() means the row
+      // may never fire if the instance suspends mid-bot-match. The row goes
+      // out now with the final counter values; finalize() will skip this
+      // participant via `analyticsEmitted`.
+      profile.totalMatchesPlayed = (profile.totalMatchesPlayed ?? 0) + 1;
       this.playerStore.save(profile).catch(() => {});
       // Push updated profile to the client so ProfileStore reflects the death
       if (participant.socketId) {
         const sock = this.io.sockets.sockets.get(participant.socketId);
         if (sock) sock.emit('profile', { profile });
       }
+      this.emitMatchAnalytics(participant, bm, 'killed', bombermanName, bombermanTier);
+      this.analyticsEmitted.add(diedPlayerId);
     }
 
     // Immediately persist escaped players' match-end state to their profile.
@@ -762,11 +784,20 @@ export class MatchRoom {
         // doesn't match any owned bomberman (e.g. legacy 'none' fallback).
         console.warn(`[SP-BANK] no ownedBomberman for player=${escapedPlayerId} (bm.bombermanId=${bm.bombermanId}); SP earned=${bm.sp} is lost`);
       }
+      // Bump match count + fire analytics BEFORE the user's session can
+      // close. See the death-settlement comment for the render-suspend
+      // rationale. The row uses the up-to-date counters and snapshots set
+      // earlier in this loop.
+      profile.totalMatchesPlayed = (profile.totalMatchesPlayed ?? 0) + 1;
       this.playerStore.save(profile).catch(() => {});
       if (participant.socketId) {
         const sock = this.io.sockets.sockets.get(participant.socketId);
         if (sock) sock.emit('profile', { profile });
       }
+      const tier = ownedBomberman?.tier ?? 'free';
+      const name = bm.name ?? ownedBomberman?.name ?? '';
+      this.emitMatchAnalytics(participant, bm, 'escaped', name, tier);
+      this.analyticsEmitted.add(escapedPlayerId);
     }
 
     // Order matters: clients scan `turn_result` events (e.g. to mark bombs
@@ -847,6 +878,12 @@ export class MatchRoom {
 
     for (const participant of this.participants) {
       if (!participant.socketId) continue; // skip bots — no profile to save
+      // Skip players whose row already fired in the per-turn settlement.
+      // Death/escape settlements emit analytics immediately so the row
+      // arrives before render's free tier can suspend the instance.
+      // finalize() handles only turn_limit survivors that never escaped /
+      // never died (rare edge case: defensively re-handles too).
+      if (this.analyticsEmitted.has(participant.playerId)) continue;
       const b = this.state.bombermen.find(bb => bb.playerId === participant.playerId);
       if (!b) continue;
       const profile = participant.profile;
