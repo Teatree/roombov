@@ -4,11 +4,18 @@
  * Each unique IP is looked up exactly once across the server's lifetime —
  * subsequent hits read from memory, and from disk after a restart.
  *
- * Provider: ipapi.co. Endpoint `https://ipapi.co/<ip>/country/` returns the
- * 2-letter ISO country code as plain text. Free tier is 1000 req/day, no
- * API key. If we ever hit the cap, swap to ip-api.com (also free, no key,
- * 45 req/minute) by editing API_URL — the response shape (plain country
- * code) is identical via their `?fields=countryCode` query.
+ * Provider: **ip-api.com**. Endpoint `http://ip-api.com/line/<ip>?fields=countryCode`
+ * returns the 2-letter ISO country code as a single plain-text line. Free
+ * tier is 45 req/min from any single egress IP, no API key, no daily cap.
+ *
+ * Why not ipapi.co (initial choice in the spec): ipapi.co aggressively
+ * rate-limits data-center egress IPs (Render, AWS, etc.) and returns a
+ * "Sorry, you have been rate limited" plain-text body instead of a 4xx
+ * status — silent failure. ip-api.com is designed for server-side use and
+ * doesn't blanket-block hosting providers.
+ *
+ * Free tier of ip-api.com is HTTP-only (HTTPS requires paid). That's fine
+ * for backend → backend; render egress isn't user-observable.
  *
  * Lookups are fire-and-forget. Callers DO NOT await; they kick off a lookup
  * at socket connect time so by the player's first analytics event the cache
@@ -30,7 +37,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, '../../production');
 const CACHE_PATH = join(DATA_DIR, 'ip-country-cache.json');
 
-const API_URL = (ip: string): string => `https://ipapi.co/${encodeURIComponent(ip)}/country/`;
+const API_URL = (ip: string): string =>
+  `http://ip-api.com/line/${encodeURIComponent(ip)}?fields=countryCode`;
 const LOOKUP_TIMEOUT_MS = 2000;
 
 export class IpCountryCache {
