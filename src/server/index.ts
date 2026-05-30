@@ -1,3 +1,6 @@
+// MUST be the first import. Loads .env before any module reads process.env
+// (Analytics.ts in particular captures ANALYTICS_WEBHOOK_URL at eval time).
+import './env.ts';
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -5,6 +8,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { GameServer } from './GameServer.ts';
 import { PlayerStore } from './PlayerStore.ts';
+import { IpCountryCache } from './IpCountryCache.ts';
 import type { ClientToServerEvents, ServerToClientEvents } from '../shared/types/messages.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -22,7 +26,9 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
 // Bootstrap async before accepting connections
 const playerStore = new PlayerStore();
 await playerStore.init();
-const gameServer = new GameServer(io, playerStore);
+const ipCountryCache = new IpCountryCache();
+await ipCountryCache.init();
+const gameServer = new GameServer(io, playerStore, ipCountryCache);
 
 app.use(express.static(path.join(__dirname, '../../dist')));
 app.get('/{*path}', (_req, res) => {

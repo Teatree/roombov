@@ -87,9 +87,9 @@ export class MatchRoom {
     turnsAlive: number;
   }>();
   private onEnd: () => void;
-  /** GameServer-provided lookup for per-socket IP + sessionId, used at
-   *  settlement time. Null for bots or disconnected players. */
-  private lookupAnalyticsContext: (playerId: string) => { sessionId: string; ip: string } | null;
+  /** GameServer-provided lookup for per-socket IP + country + sessionId,
+   *  used at settlement time. Null for bots or disconnected players. */
+  private lookupAnalyticsContext: (playerId: string) => { sessionId: string; ip: string; country: string } | null;
 
   constructor(
     config: MatchConfig,
@@ -98,7 +98,7 @@ export class MatchRoom {
     io: TypedServer,
     playerStore: PlayerStore,
     onEnd: () => void,
-    lookupAnalyticsContext: (playerId: string) => { sessionId: string; ip: string } | null = () => null,
+    lookupAnalyticsContext: (playerId: string) => { sessionId: string; ip: string; country: string } | null = () => null,
   ) {
     this.config = config;
     this.map = map;
@@ -900,7 +900,7 @@ export class MatchRoom {
     // sessionId. Bots have already been filtered out (socketId === null) by
     // the surrounding loop.
     const ctx = this.lookupAnalyticsContext(participant.playerId)
-      ?? { ip: '', sessionId: '' };
+      ?? { ip: '', sessionId: '', country: '' };
     const counters = this.analyticsCounters.get(participant.playerId) ?? {
       chestsOpened: 0, kills: 0, bombsUsed: {}, turnsAlive: 0,
     };
@@ -916,6 +916,7 @@ export class MatchRoom {
 
     logMatchResult({
       ip: ctx.ip,
+      country: ctx.country,
       sessionId: ctx.sessionId,
       matchId: this.config.id,
       profileId: participant.playerId,
@@ -934,6 +935,7 @@ export class MatchRoom {
     });
     logProfileSnapshot({
       ip: ctx.ip,
+      country: ctx.country,
       sessionId: ctx.sessionId,
       profileId: participant.playerId,
       coins: profile.coins,

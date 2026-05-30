@@ -7,6 +7,7 @@ import type {
 } from '../shared/types/messages.ts';
 import type { MatchConfig } from '../shared/types/match.ts';
 import { PlayerStore } from './PlayerStore.ts';
+import { IpCountryCache } from './IpCountryCache.ts';
 import { BombermanShopService } from './BombermanShopService.ts';
 import { BombsShopService } from './BombsShopService.ts';
 import { BombermanUpgradeService } from './BombermanUpgradeService.ts';
@@ -65,6 +66,7 @@ function extractIp(socket: TypedSocket): string {
 export class GameServer {
   private io: TypedServer;
   private playerStore: PlayerStore;
+  private ipCountryCache: IpCountryCache;
   private bombermanShop: BombermanShopService;
   private bombsShop: BombsShopService;
   private upgradeService: BombermanUpgradeService;
@@ -77,9 +79,10 @@ export class GameServer {
   private sessions = new Map<string, PlayerSession>();
   private tickInterval: ReturnType<typeof setInterval> | null = null;
 
-  constructor(io: TypedServer, playerStore: PlayerStore) {
+  constructor(io: TypedServer, playerStore: PlayerStore, ipCountryCache: IpCountryCache) {
     this.io = io;
     this.playerStore = playerStore;
+    this.ipCountryCache = ipCountryCache;
     // Per-player shop state — no global broadcast. Each socket gets its own
     // cycle when it requests via `bomberman_shop_request`, and pushes its
     // own update on purchase.
@@ -98,6 +101,11 @@ export class GameServer {
       // re-parsing handshake headers (and so it survives the auth flow).
       const ip = extractIp(socket);
       (socket.data as { ip?: string }).ip = ip;
+      // Fire-and-forget country lookup. By the time the player's first
+      // tracked analytics event fires the cache is usually populated; if
+      // not, early rows go out with country='' and later events from the
+      // same IP carry the resolved code.
+      this.ipCountryCache.lookup(ip);
 
       socket.on('auth', (msg) => this.onAuth(socket, msg));
       socket.on('debug_reset', () => this.onDebugReset(socket));
@@ -455,13 +463,17 @@ export class GameServer {
 
   /**
    * Look up the per-socket session for a given player id. MatchRoom uses
-   * this at settlement time to read IP + sessionId for analytics rows.
-   * Returns null for bots/scavs (no socket) or disconnected players.
+   * this at settlement time to read IP + country + sessionId for analytics
+   * rows. Returns null for bots/scavs (no socket) or disconnected players.
    */
-  getAnalyticsContextForPlayer(playerId: string): { sessionId: string; ip: string } | null {
+  getAnalyticsContextForPlayer(playerId: string): { sessionId: string; ip: string; country: string } | null {
     for (const [socketId, session] of this.sessions) {
       if (session.playerId === playerId) {
-        return { sessionId: socketId, ip: session.ip };
+        return {
+          sessionId: socketId,
+          ip: session.ip,
+          country: this.ipCountryCache.get(session.ip),
+        };
       }
     }
     return null;
@@ -484,6 +496,7 @@ export class GameServer {
       if (session.currentScreen && session.currentVisitId) {
         logScreenEvent({
           ip: session.ip,
+          country: this.ipCountryCache.get(session.ip),
           sessionId: socket.id,
           visitId: session.currentVisitId,
           profileId: session.playerId,
@@ -502,6 +515,7 @@ export class GameServer {
       session.screenEnteredAt = now;
       logScreenEvent({
         ip: session.ip,
+        country: this.ipCountryCache.get(session.ip),
         sessionId: socket.id,
         visitId,
         profileId: session.playerId,
@@ -518,6 +532,7 @@ export class GameServer {
       if (session.currentScreen !== msg.screen || !session.currentVisitId) return;
       logScreenEvent({
         ip: session.ip,
+        country: this.ipCountryCache.get(session.ip),
         sessionId: socket.id,
         visitId: session.currentVisitId,
         profileId: session.playerId,
@@ -549,6 +564,7 @@ export class GameServer {
       session.tutorialEnteredAt = Date.now();
       logTutorialEvent({
         ip: session.ip,
+        country: this.ipCountryCache.get(session.ip),
         sessionId: socket.id,
         tutorialRunId: session.tutorialRunId,
         profileId: session.playerId,
@@ -572,6 +588,7 @@ export class GameServer {
     const profile = this.playerStore.get(session.playerId);
     logTutorialEvent({
       ip: session.ip,
+      country: this.ipCountryCache.get(session.ip),
       sessionId: this.sessionIdForPlayer(session.playerId) ?? '',
       tutorialRunId: session.tutorialRunId,
       profileId: session.playerId,

@@ -25,6 +25,15 @@ const SECRET = process.env.ANALYTICS_SECRET ?? '';
 
 const ENABLED = WEBHOOK_URL.length > 0;
 
+// One-shot status line so it's obvious from the server log whether
+// analytics will fire. Logs at module-eval time (right after env.ts has
+// already populated process.env from `.env`). Don't log the URL or secret —
+// just whether they're present.
+console.log(
+  `[Analytics] ${ENABLED ? 'enabled' : 'DISABLED (ANALYTICS_WEBHOOK_URL unset)'}`
+  + (ENABLED && !SECRET ? ' — warning: ANALYTICS_SECRET is empty' : ''),
+);
+
 type Sheet = 'MatchResults' | 'ProfileSnapshots' | 'ScreenEvents' | 'TutorialEvents';
 type Cell = string | number | boolean;
 
@@ -46,6 +55,9 @@ export type MatchOutcome = 'escaped' | 'killed' | 'timeout';
 
 export interface MatchResultRow {
   ip: string;
+  /** ISO 3166-1 alpha-2 country code (e.g. "FI"). Empty when uncached or
+   *  unresolvable (local IPs, lookup failure, lookup still in flight). */
+  country: string;
   sessionId: string;
   matchId: string;
   profileId: string;
@@ -68,6 +80,7 @@ export interface MatchResultRow {
 export function logMatchResult(r: MatchResultRow): void {
   post('MatchResults', [
     r.ip,
+    r.country,
     r.sessionId,
     r.matchId,
     r.profileId,
@@ -88,6 +101,7 @@ export function logMatchResult(r: MatchResultRow): void {
 
 export interface ProfileSnapshotRow {
   ip: string;
+  country: string;
   sessionId: string;
   profileId: string;
   coins: number;
@@ -100,6 +114,7 @@ export interface ProfileSnapshotRow {
 export function logProfileSnapshot(r: ProfileSnapshotRow): void {
   post('ProfileSnapshots', [
     r.ip,
+    r.country,
     r.sessionId,
     r.profileId,
     r.coins,
@@ -114,6 +129,7 @@ export type ScreenEventType = 'enter' | 'exit';
 
 export interface ScreenEventRow {
   ip: string;
+  country: string;
   sessionId: string;
   visitId: string;
   profileId: string;
@@ -130,6 +146,7 @@ export interface ScreenEventRow {
 export function logScreenEvent(r: ScreenEventRow): void {
   post('ScreenEvents', [
     r.ip,
+    r.country,
     r.sessionId,
     r.visitId,
     r.profileId,
@@ -146,6 +163,7 @@ export type TutorialExitReason = 'completed' | 'skipped' | 'abandoned';
 
 export interface TutorialEventRow {
   ip: string;
+  country: string;
   sessionId: string;
   tutorialRunId: string;
   profileId: string;
@@ -162,6 +180,7 @@ export interface TutorialEventRow {
 export function logTutorialEvent(r: TutorialEventRow): void {
   post('TutorialEvents', [
     r.ip,
+    r.country,
     r.sessionId,
     r.tutorialRunId,
     r.profileId,
