@@ -42,14 +42,42 @@ function post(sheet: Sheet, row: Cell[]): void {
   const body = JSON.stringify({ secret: SECRET, sheet, row });
   // Use the built-in fetch and intentionally do NOT await — caller is
   // running in a gameplay or transition hot path. Swallow all errors.
+  //
+  // Google Apps Script web apps redirect to a script.googleusercontent.com
+  // origin to actually run; that redirect must be followed. The default
+  // fetch behavior follows redirects, so leave that untouched.
+  //
+  // Response logging: log status + a body snippet on the first POST after
+  // boot and on any non-2xx. Helps diagnose Apps Script deployment-access
+  // issues (302 → login, 401, etc.) without spamming render logs.
   fetch(WEBHOOK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body,
-  }).catch((err: unknown) => {
-    console.warn(`[Analytics] ${sheet} POST failed:`, err);
-  });
+  })
+    .then(async (res) => {
+      if (res.ok) {
+        if (!firstSuccessLogged) {
+          firstSuccessLogged = true;
+          console.log(`[Analytics] First POST to ${sheet} OK (${res.status})`);
+        }
+        return;
+      }
+      // Non-2xx — surface so it's obvious in render logs. Include a body
+      // snippet because Apps Script returns useful diagnostics there.
+      let snippet = '';
+      try { snippet = (await res.text()).slice(0, 200); } catch { /* ignore */ }
+      console.warn(`[Analytics] ${sheet} POST → HTTP ${res.status} ${res.statusText} | ${snippet}`);
+    })
+    .catch((err: unknown) => {
+      console.warn(`[Analytics] ${sheet} POST network error:`, err);
+    });
 }
+
+/** Tracks whether at least one POST has succeeded since boot. Drives a
+ *  one-shot success log so the render log shows "analytics working" without
+ *  spamming on every subsequent event. */
+let firstSuccessLogged = false;
 
 export type MatchOutcome = 'escaped' | 'killed' | 'timeout';
 
@@ -64,6 +92,10 @@ export interface MatchResultRow {
   profileName: string;
   bombermanName: string;
   bombermanTier: string;
+  /** Stable map identifier the match was played on (e.g. "main_map",
+   *  "desert_map", "tutorial_map"). Sheet column: `map_name`, positioned
+   *  between `bombermanTier` and `outcome`. */
+  mapName: string;
   outcome: MatchOutcome;
   turnsAlive: number;
   kills: number;
@@ -87,6 +119,7 @@ export function logMatchResult(r: MatchResultRow): void {
     r.profileName,
     r.bombermanName,
     r.bombermanTier,
+    r.mapName,
     r.outcome,
     r.turnsAlive,
     r.kills,

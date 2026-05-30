@@ -69,8 +69,14 @@ export class IpCountryCache {
    * Fire-and-forget lookup. No-op when:
    *   - ip is empty
    *   - ip is local / private (loopback, RFC1918, link-local, ULA)
-   *   - ip is already cached
+   *   - ip is already cached (under either the raw OR normalized form)
    *   - a lookup is already in flight for this ip
+   *
+   * Cache lookups use the raw IP for both reads and writes so callers
+   * (server session) can do a simple `cache.get(session.ip)` without
+   * having to normalize first. We also store under the normalized form
+   * so a second connection from the same address-in-a-different-shape
+   * gets a cache hit.
    *
    * On API failure / timeout the ip is simply not cached; the next session
    * for the same address will try again. No retry inside this call.
@@ -84,8 +90,13 @@ export class IpCountryCache {
   }
 
   private async fetchAndStore(ip: string): Promise<void> {
+    // Normalize IPv4-mapped IPv6 (`::ffff:1.2.3.4`) to plain IPv4 — ipapi.co
+    // doesn't recognize the v6-wrapped form and returns "Undefined". Render
+    // / Cloudflare-style proxies sometimes pass this form in x-forwarded-for.
+    const apiIp = normalizeForApi(ip);
     try {
-      const res = await fetch(API_URL(ip), { signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS) });
+      console.log(`[IpCountryCache] looking up ${ip}${apiIp !== ip ? ` (as ${apiIp})` : ''}`);
+      const res = await fetch(API_URL(apiIp), { signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS) });
       if (!res.ok) {
         console.warn(`[IpCountryCache] ${ip} → HTTP ${res.status}`);
         return;
@@ -95,11 +106,16 @@ export class IpCountryCache {
       // via status. Filter strictly to 2-letter ISO codes so a "Undefined"
       // or "rate-limited" payload doesn't poison the cache.
       if (!/^[A-Z]{2}$/.test(body)) {
-        console.warn(`[IpCountryCache] ${ip} → unexpected body: ${body.slice(0, 32)}`);
+        console.warn(`[IpCountryCache] ${ip} → unexpected body: ${body.slice(0, 64)}`);
         return;
       }
+      // Store under BOTH the raw form (so callers can `cache.get(session.ip)`
+      // with whatever shape extractIp returned) AND the normalized form
+      // (so a different connection that gets the bare IPv4 also hits cache).
       this.cache.set(ip, body);
+      if (apiIp !== ip) this.cache.set(apiIp, body);
       await this.persist();
+      console.log(`[IpCountryCache] ${ip} → ${body} (cached)`);
     } catch (err) {
       console.warn(`[IpCountryCache] lookup failed for ${ip}:`, err);
     } finally {
@@ -118,6 +134,12 @@ export class IpCountryCache {
       console.warn('[IpCountryCache] persist failed:', err);
     }
   }
+}
+
+/** ipapi.co accepts plain IPv4 / plain IPv6 but NOT IPv4-mapped IPv6
+ *  (`::ffff:1.2.3.4` returns "Undefined"). Strip the prefix when present. */
+function normalizeForApi(ip: string): string {
+  return ip.startsWith('::ffff:') ? ip.slice(7) : ip;
 }
 
 function isLocalIp(ip: string): boolean {

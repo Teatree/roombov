@@ -923,6 +923,7 @@ export class MatchRoom {
       profileName: profile.name ?? '',
       bombermanName,
       bombermanTier,
+      mapName: this.config.mapId,
       outcome,
       turnsAlive: counters.turnsAlive,
       kills: counters.kills,

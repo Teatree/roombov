@@ -109,7 +109,7 @@ export const BALANCE = {
     /** Number of keys placed in chests at the start of each match. Post
      *  NEW_META (2026-05-16) these are distributed across spawned chests
      *  by tier weight rather than on the map floor — see docs/NEW_META.md §4. */
-    totalOnMap: 15,
+    totalOnMap: 12,
     /** Keys needed to use an escape hatch. Also the per-bomberman carry cap. */
     requiredPerHatch: 3,
     /** Tutorial-only override: hatch unlock requirement AND carry cap.
