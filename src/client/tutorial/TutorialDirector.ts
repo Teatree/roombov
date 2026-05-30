@@ -199,6 +199,17 @@ export class TutorialDirector {
     return this.finished;
   }
 
+  /**
+   * Tag for the furthest tutorial beat the player has reached, suitable for
+   * analytics drop-off analysis. Format: `step_<index>_<kind>`. Used only by
+   * the TutorialEvents analytics row.
+   */
+  getFurthestStepId(): string {
+    const idx = Math.min(this.cursor, Math.max(0, this.script.length - 1));
+    const step = this.script[idx];
+    return `step_${idx}_${step?.kind ?? 'end'}`;
+  }
+
   /** Backend asks: is idle muted for the player? */
   get isIdleMuted(): boolean {
     return this.idleMuted;

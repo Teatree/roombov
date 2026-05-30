@@ -12,6 +12,7 @@ import { defaultStatsForTier } from '@shared/config/bomberman-tiers.ts';
 // they'll actually see in their first real matches.
 const TUTORIAL_TIER_STATS = defaultStatsForTier('free');
 import type { LootBombMsg, MatchEndMsg } from '@shared/types/messages.ts';
+import { NetworkManager } from '../NetworkManager.ts';
 import { TutorialDirector } from '../tutorial/TutorialDirector.ts';
 import { TUTORIAL_SCRIPT } from '../tutorial/tutorial-script.ts';
 import type { TutorialHost, HighlightTarget } from '../tutorial/types.ts';
@@ -55,6 +56,10 @@ export class TutorialMatchBackend implements MatchBackend {
   start(): void {
     if (this.started) return;
     this.started = true;
+    // Tutorial lifecycle analytics — fired once per tutorial run. See
+    // docs/ANALYTICS-SPEC.md TutorialEvents sheet. Server pairs enter/exit
+    // via tutorialRunId.
+    NetworkManager.tutorialEvent('enter');
     void this.bootstrap();
   }
 
@@ -177,6 +182,15 @@ export class TutorialMatchBackend implements MatchBackend {
   }
 
   destroy(): void {
+    // Fire tutorial exit before tearing down. Reached end → completed; else
+    // the user navigated away mid-tutorial → abandoned. The Skip-tutorial
+    // exit reason isn't used today (no skip affordance), so we never emit it.
+    if (this.started) {
+      NetworkManager.tutorialEvent('exit', {
+        exitReason: this.director.isFinished() ? 'completed' : 'abandoned',
+        furthestStepReached: this.director.getFurthestStepId(),
+      });
+    }
     this.stateCb = null;
     this.turnCb = null;
     this.endCb = null;

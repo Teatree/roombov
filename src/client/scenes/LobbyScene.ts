@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { NetworkManager } from '../NetworkManager.ts';
+import { trackScreen } from './sceneAnalytics.ts';
 import { ProfileStore } from '../ClientState.ts';
 import { ActivityIndicator } from '../systems/ActivityIndicator.ts';
 import { BombermanSelector } from '../systems/BombermanSelector.ts';
@@ -72,6 +73,7 @@ export class LobbyScene extends Phaser.Scene {
   }
 
   create(): void {
+    trackScreen(this, 'Lobby');
     ensureBombermanAnims(this);
     this.events.once('shutdown', this.shutdown, this);
     this.joinedMatchId = null;

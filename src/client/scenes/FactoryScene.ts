@@ -22,6 +22,7 @@
 
 import Phaser from 'phaser';
 import { NetworkManager } from '../NetworkManager.ts';
+import { trackScreen } from './sceneAnalytics.ts';
 import { ProfileStore } from '../ClientState.ts';
 import { ActivityIndicator } from '../systems/ActivityIndicator.ts';
 import { TreasureListWidget } from '../systems/TreasureListWidget.ts';
@@ -293,6 +294,7 @@ export class FactoryScene extends Phaser.Scene {
   }
 
   create(): void {
+    trackScreen(this, 'Factory');
     this.events.once('shutdown', this.shutdown, this);
     this.cameras.main.setBackgroundColor('#0c0c14');
 

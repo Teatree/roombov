@@ -108,4 +108,34 @@ export const NetworkManager = {
     socket = null;
     wiredStoreBridge = false;
   },
+
+  /**
+   * Fire-and-forget analytics. Notifies the server that a tracked menu scene
+   * has been entered or exited. The server pairs enter/exit via session
+   * state — `docs/ANALYTICS-SPEC.md` ScreenEvents sheet.
+   *
+   * Safe to call from any scene's `create()` / `shutdown()` — silently
+   * drops when the socket isn't connected yet (BootScene phase).
+   */
+  screenEvent(screen: string, eventType: 'enter' | 'exit'): void {
+    if (!socket?.connected) return;
+    socket.emit('analytics_screen_event', { screen, eventType });
+  },
+
+  /**
+   * Fire-and-forget analytics for the tutorial lifecycle. Only the tutorial
+   * backend / director should call this. `furthestStepReached` is required
+   * on exit; ignored on enter.
+   */
+  tutorialEvent(
+    eventType: 'enter' | 'exit',
+    opts?: { exitReason?: 'completed' | 'skipped' | 'abandoned'; furthestStepReached?: string },
+  ): void {
+    if (!socket?.connected) return;
+    socket.emit('analytics_tutorial_event', {
+      eventType,
+      exitReason: opts?.exitReason,
+      furthestStepReached: opts?.furthestStepReached,
+    });
+  },
 };

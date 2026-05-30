@@ -225,6 +225,34 @@ export interface GamblerStreetBetResultMsg {
   reason?: string;
 }
 
+// --- Analytics (client → server only; fire-and-forget) ---
+
+/**
+ * Client → server: screen lifecycle event for the menu screens listed in
+ * `docs/ANALYTICS-SPEC.md` (MainMenu, Lobby, BombermanShop, BombsShop,
+ * Factory, BombermanUpgrade, Results). The server resolves visit pairing
+ * and durationMs from its own session state — clients just notify on
+ * enter/exit. Untracked screens (Boot, Match, Tooltip, TutorialOverlay)
+ * MUST NOT emit this event.
+ */
+export interface AnalyticsScreenEventMsg {
+  screen: string;
+  eventType: 'enter' | 'exit';
+}
+
+/**
+ * Client → server: tutorial lifecycle event. Emitted from the tutorial
+ * backend / director, not from the overlay scene. The server tracks
+ * tutorialRunId pairing and durationMs from its own session state.
+ *
+ * `exitReason` and `furthestStepReached` are required on `exit`.
+ */
+export interface AnalyticsTutorialEventMsg {
+  eventType: 'enter' | 'exit';
+  exitReason?: 'completed' | 'skipped' | 'abandoned';
+  furthestStepReached?: string;
+}
+
 // --- Server → client event map ---
 
 /** Server → client: one of your placed mines just tripped. */
@@ -274,4 +302,6 @@ export interface ClientToServerEvents {
   factory_request: (msg: FactoryRequestMsg) => void;
   factory_start: (msg: FactoryStartMsg) => void;
   factory_claim: (msg: FactoryClaimMsg) => void;
+  analytics_screen_event: (msg: AnalyticsScreenEventMsg) => void;
+  analytics_tutorial_event: (msg: AnalyticsTutorialEventMsg) => void;
 }

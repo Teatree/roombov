@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { NetworkManager } from '../NetworkManager.ts';
+import { trackScreen } from './sceneAnalytics.ts';
 import { type TreasureBundle, hasAnyTreasure } from '@shared/config/treasures.ts';
 import { TreasureListWidget } from '../systems/TreasureListWidget.ts';
 import { createBombIcon } from '../systems/BombIcons.ts';
@@ -84,6 +85,7 @@ export class ResultsScene extends Phaser.Scene {
   }
 
   create(): void {
+    trackScreen(this, 'Results');
     ensureBombermanAnims(this);
     this.events.once('shutdown', () => {
       this.profileUnsub?.();

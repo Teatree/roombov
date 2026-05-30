@@ -15,6 +15,12 @@ import { createEmptyFactories } from './factory.ts';
 
 export interface PlayerProfile {
   id: string;
+  /**
+   * Optional display name. Not yet exposed to the UI — present so analytics
+   * rows have a stable slot for "who is this player" beyond the opaque
+   * profile id. Empty / undefined means "no display name set".
+   */
+  name?: string;
   /** Unix ms when this profile was first created. */
   createdAt: number;
   /** Unix ms of last write. */
@@ -57,6 +63,10 @@ export interface PlayerProfile {
    * FactoryService.resolveAll.
    */
   factories: FactoryStates;
+  /** Lifetime count of matches the player has finished (any outcome). Bumped
+   *  in MatchRoom.finalize() per participating real player. Used only by
+   *  analytics (`docs/ANALYTICS-SPEC.md` ProfileSnapshots sheet). */
+  totalMatchesPlayed: number;
 }
 
 export function createEmptyProfile(id: string): PlayerProfile {
@@ -73,5 +83,6 @@ export function createEmptyProfile(id: string): PlayerProfile {
     gamblerStreet: createEmptyGamblerStreet(now, GAMBLER_STREET_GLOBAL.slotCount),
     bombermanShop: null,
     factories: createEmptyFactories(),
+    totalMatchesPlayed: 0,
   };
 }

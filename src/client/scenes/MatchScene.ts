@@ -466,6 +466,7 @@ export class MatchScene extends Phaser.Scene {
       // Tutorial is single-player with a fabricated player id — skip the
       // profile lookup and the post-match UI-anim-lock clear.
       this.myPlayerId = TUTORIAL_PLAYER_ID;
+      NetworkManager.connect().emit('analytics_tutorial_event', { eventType: 'enter' });
       console.log(`[MatchScene] create(): tutorial mode, myPlayerId = ${this.myPlayerId}`);
     } else {
       const profile = ProfileStore.get();
@@ -771,8 +772,13 @@ export class MatchScene extends Phaser.Scene {
     this.backend?.destroy();
     this.backend = null;
     // Stop the parallel tutorial overlay scene, if it was launched.
-    if (this.mode === 'tutorial' && this.scene.isActive('TutorialOverlayScene')) {
-      this.scene.stop('TutorialOverlayScene');
+    if (this.mode === 'tutorial') {
+      if (!this.tutorialExitEmitted) {
+        NetworkManager.connect().emit('analytics_tutorial_event', { eventType: 'exit', exitReason: 'abandoned' });
+      }
+      if (this.scene.isActive('TutorialOverlayScene')) {
+        this.scene.stop('TutorialOverlayScene');
+      }
     }
     if (this.scene.isActive('TooltipScene')) this.scene.stop('TooltipScene');
     this.mapRenderer?.destroy();
@@ -1243,6 +1249,8 @@ export class MatchScene extends Phaser.Scene {
     // Tutorial intentionally rewards nothing — skip ResultsScene (and all
     // its SP / treasure / kill readout) for a dedicated "you're done" card.
     if (this.state?.isTutorial === true) {
+      this.tutorialExitEmitted = true;
+      NetworkManager.connect().emit('analytics_tutorial_event', { eventType: 'exit', exitReason: 'completed' });
       this.scene.start('TutorialEndScene');
       return;
     }

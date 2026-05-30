@@ -1,5 +1,6 @@
 import type { Server, Socket } from 'socket.io';
 import type {
+  AnalyticsScreenEventMsg, AnalyticsTutorialEventMsg,
   AuthMsg, BuyBombermanMsg, BuyBombMsg, ClientToServerEvents, EquipBombermanMsg,
   EquipBombMsg, FactoryClaimMsg, FactoryStartMsg, GamblerStreetBetMsg, JoinMatchMsg,
   LootBombMsg, PlayerActionMsg, ServerToClientEvents, UnequipBombMsg, UpgradeBombermanMsg,
@@ -13,14 +14,52 @@ import { GamblerStreetService } from './GamblerStreetService.ts';
 import { FactoryService } from './FactoryService.ts';
 import { MatchScheduler } from './MatchScheduler.ts';
 import { MatchRoom, loadMapForMatch, type MatchRoomParticipant } from './MatchRoom.ts';
+import {
+  logScreenEvent, logTutorialEvent, newAnalyticsId,
+  type TutorialExitReason,
+} from './Analytics.ts';
 
 type TypedSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 type TypedServer = Server<ClientToServerEvents, ServerToClientEvents>;
 
-/** Tracks which match (if any) a socket has joined in the lobby or in play. */
+/** Tracks which match (if any) a socket has joined in the lobby or in play.
+ *  Also holds in-memory analytics state — IP, current screen visit, current
+ *  tutorial run. NOT persisted to the profile JSON. */
 interface PlayerSession {
   playerId: string;
   joinedMatchId: string | null;
+  /** Best-effort client IP. Empty string when unknown. */
+  ip: string;
+  /** Most recently exited screen, used for `previousScreen` on the next enter.
+   *  Starts as `Boot` so the first navigation reports `Boot` as the source. */
+  lastScreen: string;
+  /** Currently-open screen visit; null when no tracked screen is active. */
+  currentScreen: string | null;
+  currentVisitId: string | null;
+  /** Unix ms the current screen was entered. */
+  screenEnteredAt: number;
+  /** Currently-open tutorial run; null when not in tutorial. */
+  tutorialRunId: string | null;
+  tutorialEnteredAt: number;
+}
+
+/** Tracked menu screens — matches the spec exactly. Boot / Match / Tooltip /
+ *  TutorialOverlay are intentionally excluded. */
+const TRACKED_SCREENS = new Set<string>([
+  'MainMenu', 'Lobby', 'BombermanShop', 'BombsShop',
+  'Factory', 'BombermanUpgrade', 'Results',
+]);
+
+function extractIp(socket: TypedSocket): string {
+  const xff = socket.handshake.headers['x-forwarded-for'];
+  if (typeof xff === 'string' && xff.length > 0) {
+    const first = xff.split(',')[0]?.trim();
+    if (first) return first;
+  } else if (Array.isArray(xff) && xff.length > 0) {
+    const first = xff[0]?.split(',')[0]?.trim();
+    if (first) return first;
+  }
+  return socket.handshake.address ?? '';
 }
 
 export class GameServer {
@@ -55,6 +94,10 @@ export class GameServer {
 
     io.on('connection', (socket) => {
       console.log(`[Server] Socket connected: ${socket.id}`);
+      // Stash IP on socket.data so we can read it again after auth without
+      // re-parsing handshake headers (and so it survives the auth flow).
+      const ip = extractIp(socket);
+      (socket.data as { ip?: string }).ip = ip;
 
       socket.on('auth', (msg) => this.onAuth(socket, msg));
       socket.on('debug_reset', () => this.onDebugReset(socket));
@@ -76,12 +119,22 @@ export class GameServer {
       socket.on('factory_request', () => this.onFactoryRequest(socket));
       socket.on('factory_start', (msg) => this.onFactoryStart(socket, msg));
       socket.on('factory_claim', (msg) => this.onFactoryClaim(socket, msg));
+      socket.on('analytics_screen_event', (msg) => this.onAnalyticsScreenEvent(socket, msg));
+      socket.on('analytics_tutorial_event', (msg) => this.onAnalyticsTutorialEvent(socket, msg));
 
       socket.on('disconnect', () => {
         const session = this.sessions.get(socket.id);
         console.log(`[Server] Socket disconnected: ${socket.id} (player ${session?.playerId ?? 'unknown'})`);
         if (session?.joinedMatchId) {
           this.matchScheduler.leaveMatch(session.joinedMatchId);
+        }
+        // Tutorial sessions still in progress at disconnect count as abandoned.
+        // Per spec: "Crashed/closed sessions leave a dangling enter with no
+        // matching exit" is fine for screens (orphans surface drop-offs), but
+        // we DO emit a synthetic abandoned exit for tutorial because that's
+        // the only signal the analyst has for "started but never finished".
+        if (session && session.tutorialRunId) {
+          this.emitTutorialExit(session, 'abandoned', '');
         }
         this.sessions.delete(socket.id);
       });
@@ -125,7 +178,7 @@ export class GameServer {
         const sock = this.io.sockets.sockets.get(p.socketId);
         if (sock) sock.leave(config.id);
       }
-    });
+    }, this.getAnalyticsContextForPlayer.bind(this));
     this.matchRooms.set(config.id, room);
 
     // Move everyone into the socket.io room and notify
@@ -157,7 +210,22 @@ export class GameServer {
 
   private async onAuth(socket: TypedSocket, msg: AuthMsg): Promise<void> {
     const profile = await this.playerStore.loadOrCreate(msg.playerId);
-    this.sessions.set(socket.id, { playerId: profile.id, joinedMatchId: null });
+    const ip = (socket.data as { ip?: string }).ip ?? '';
+    // Preserve in-flight analytics state on re-auth (same socket, repeat auth)
+    // — otherwise a reconnection in the middle of a tutorial would lose its
+    // run id. New socket → new session.
+    const existing = this.sessions.get(socket.id);
+    this.sessions.set(socket.id, {
+      playerId: profile.id,
+      joinedMatchId: existing?.joinedMatchId ?? null,
+      ip,
+      lastScreen: existing?.lastScreen ?? 'Boot',
+      currentScreen: existing?.currentScreen ?? null,
+      currentVisitId: existing?.currentVisitId ?? null,
+      screenEnteredAt: existing?.screenEnteredAt ?? 0,
+      tutorialRunId: existing?.tutorialRunId ?? null,
+      tutorialEnteredAt: existing?.tutorialEnteredAt ?? 0,
+    });
     socket.emit('profile', { profile });
     socket.emit('match_listings', { listings: this.matchScheduler.getListings() });
     console.log(`[Server] Auth: socket ${socket.id} → player ${profile.id} (coins=${profile.coins})`);
@@ -383,6 +451,144 @@ export class GameServer {
       reason: result.ok ? undefined : result.reason,
     });
     if (result.ok) socket.emit('profile', { profile });
+  }
+
+  /**
+   * Look up the per-socket session for a given player id. MatchRoom uses
+   * this at settlement time to read IP + sessionId for analytics rows.
+   * Returns null for bots/scavs (no socket) or disconnected players.
+   */
+  getAnalyticsContextForPlayer(playerId: string): { sessionId: string; ip: string } | null {
+    for (const [socketId, session] of this.sessions) {
+      if (session.playerId === playerId) {
+        return { sessionId: socketId, ip: session.ip };
+      }
+    }
+    return null;
+  }
+
+  private onAnalyticsScreenEvent(socket: TypedSocket, msg: AnalyticsScreenEventMsg): void {
+    const session = this.getSession(socket);
+    if (!session) return;
+    if (!TRACKED_SCREENS.has(msg.screen)) return;
+    const profile = this.playerStore.get(session.playerId);
+    const profileName = profile?.name ?? '';
+    const coinsAtEvent = profile?.coins ?? 0;
+    const now = Date.now();
+
+    if (msg.eventType === 'enter') {
+      // Close any orphaned visit first — if the client never sent the matching
+      // exit (e.g. crashed scene transition), drop a synthetic exit so the row
+      // pairing still works. The dangling-enter pattern from the spec only
+      // applies to disconnected sessions, not normal scene churn.
+      if (session.currentScreen && session.currentVisitId) {
+        logScreenEvent({
+          ip: session.ip,
+          sessionId: socket.id,
+          visitId: session.currentVisitId,
+          profileId: session.playerId,
+          profileName,
+          screen: session.currentScreen,
+          eventType: 'exit',
+          previousScreen: '',
+          durationMs: Math.max(0, now - session.screenEnteredAt),
+          coinsAtEvent,
+        });
+        session.lastScreen = session.currentScreen;
+      }
+      const visitId = newAnalyticsId();
+      session.currentScreen = msg.screen;
+      session.currentVisitId = visitId;
+      session.screenEnteredAt = now;
+      logScreenEvent({
+        ip: session.ip,
+        sessionId: socket.id,
+        visitId,
+        profileId: session.playerId,
+        profileName,
+        screen: msg.screen,
+        eventType: 'enter',
+        previousScreen: session.lastScreen,
+        durationMs: '',
+        coinsAtEvent,
+      });
+    } else {
+      // Only emit if the exit matches the open visit. Stray exits (mismatched
+      // scene name) are silently ignored.
+      if (session.currentScreen !== msg.screen || !session.currentVisitId) return;
+      logScreenEvent({
+        ip: session.ip,
+        sessionId: socket.id,
+        visitId: session.currentVisitId,
+        profileId: session.playerId,
+        profileName,
+        screen: msg.screen,
+        eventType: 'exit',
+        previousScreen: '',
+        durationMs: Math.max(0, now - session.screenEnteredAt),
+        coinsAtEvent,
+      });
+      session.lastScreen = msg.screen;
+      session.currentScreen = null;
+      session.currentVisitId = null;
+    }
+  }
+
+  private onAnalyticsTutorialEvent(socket: TypedSocket, msg: AnalyticsTutorialEventMsg): void {
+    const session = this.getSession(socket);
+    if (!session) return;
+    const profile = this.playerStore.get(session.playerId);
+    const profileName = profile?.name ?? '';
+
+    if (msg.eventType === 'enter') {
+      // Close any in-flight tutorial first (rapid re-enter or missed exit).
+      if (session.tutorialRunId) {
+        this.emitTutorialExit(session, 'abandoned', '');
+      }
+      session.tutorialRunId = newAnalyticsId();
+      session.tutorialEnteredAt = Date.now();
+      logTutorialEvent({
+        ip: session.ip,
+        sessionId: socket.id,
+        tutorialRunId: session.tutorialRunId,
+        profileId: session.playerId,
+        profileName,
+        eventType: 'enter',
+        exitReason: '',
+        furthestStepReached: '',
+        durationMs: '',
+      });
+    } else {
+      const reason: TutorialExitReason = msg.exitReason ?? 'abandoned';
+      const step = msg.furthestStepReached ?? '';
+      this.emitTutorialExit(session, reason, step);
+    }
+  }
+
+  /** Emit a tutorial exit row using the open run id, then clear it. No-op if
+   *  no tutorial run is open on this session. */
+  private emitTutorialExit(session: PlayerSession, reason: TutorialExitReason, step: string): void {
+    if (!session.tutorialRunId) return;
+    const profile = this.playerStore.get(session.playerId);
+    logTutorialEvent({
+      ip: session.ip,
+      sessionId: this.sessionIdForPlayer(session.playerId) ?? '',
+      tutorialRunId: session.tutorialRunId,
+      profileId: session.playerId,
+      profileName: profile?.name ?? '',
+      eventType: 'exit',
+      exitReason: reason,
+      furthestStepReached: step,
+      durationMs: Math.max(0, Date.now() - session.tutorialEnteredAt),
+    });
+    session.tutorialRunId = null;
+  }
+
+  private sessionIdForPlayer(playerId: string): string | null {
+    for (const [socketId, session] of this.sessions) {
+      if (session.playerId === playerId) return socketId;
+    }
+    return null;
   }
 
   async destroy(): Promise<void> {

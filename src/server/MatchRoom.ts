@@ -37,6 +37,7 @@ import { createEmptyFactories } from '../shared/types/factory.ts';
 import { GAMBLER_STREET_GLOBAL } from '../shared/config/gambler-street.ts';
 import { loadMapById } from '../shared/maps/map-loader.ts';
 import type { PlayerStore } from './PlayerStore.ts';
+import { logMatchResult, logProfileSnapshot, type MatchOutcome } from './Analytics.ts';
 
 type TypedServer = Server<ClientToServerEvents, ServerToClientEvents>;
 
@@ -73,7 +74,22 @@ export class MatchRoom {
    *  earned-this-match snapshot. For dead players we record the pre-death
    *  value (no banking happened) — see the `died` handler below. */
   private lifetimeSpSnapshots = new Map<string, number>();
+  /** Per-real-player analytics counters, accumulated across every turn.
+   *  `bombsUsed` is a sparse `{ [bombType]: count }` reflecting bombs PLACED
+   *  (throw or contact-detonate from the resolver's `throw` event), not bombs
+   *  bought or held in inventory. `turnsAlive` snapshots `state.turnNumber`
+   *  on death; for survivors it advances each turn so escape/timeout reads
+   *  the final value. */
+  private analyticsCounters = new Map<string, {
+    chestsOpened: number;
+    kills: number;
+    bombsUsed: Partial<Record<BombType, number>>;
+    turnsAlive: number;
+  }>();
   private onEnd: () => void;
+  /** GameServer-provided lookup for per-socket IP + sessionId, used at
+   *  settlement time. Null for bots or disconnected players. */
+  private lookupAnalyticsContext: (playerId: string) => { sessionId: string; ip: string } | null;
 
   constructor(
     config: MatchConfig,
@@ -82,6 +98,7 @@ export class MatchRoom {
     io: TypedServer,
     playerStore: PlayerStore,
     onEnd: () => void,
+    lookupAnalyticsContext: (playerId: string) => { sessionId: string; ip: string } | null = () => null,
   ) {
     this.config = config;
     this.map = map;
@@ -89,6 +106,20 @@ export class MatchRoom {
     this.io = io;
     this.playerStore = playerStore;
     this.onEnd = onEnd;
+    this.lookupAnalyticsContext = lookupAnalyticsContext;
+
+    // Seed analytics counters for real players. Bots and Scavs are tracked
+    // implicitly (we just never call log* for them) but seeding the map keeps
+    // the per-turn increment paths branchless.
+    for (const p of participants) {
+      if (!p.socketId) continue;
+      this.analyticsCounters.set(p.playerId, {
+        chestsOpened: 0,
+        kills: 0,
+        bombsUsed: {},
+        turnsAlive: 0,
+      });
+    }
 
     // Fill empty slots with bots
     this.createBots();
@@ -204,6 +235,7 @@ export class MatchRoom {
           gamblerStreet: createEmptyGamblerStreet(Date.now(), GAMBLER_STREET_GLOBAL.slotCount),
           bombermanShop: null,
           factories: createEmptyFactories(),
+          totalMatchesPlayed: 0,
         },
       });
     }
@@ -523,6 +555,53 @@ export class MatchRoom {
 
     this.state = nextState;
 
+    // Per-match analytics counter updates from this turn's events. We derive
+    // chestsOpened, kills, and bombsUsed from events emitted by TurnResolver
+    // so the resolver itself (and BombermanState) stays untouched.
+    for (const ev of events) {
+      const e = ev as { kind: string; playerId?: string; killerId?: string | null; source?: string; type?: BombType };
+      switch (e.kind) {
+        case 'coins_picked_up': {
+          // Every chest has coinRange > 0 in every tier (CHEST_CONFIG),
+          // so a chest-sourced coin pickup is a 1:1 proxy for "chest opened".
+          if (e.source !== 'chest' || !e.playerId) break;
+          const c = this.analyticsCounters.get(e.playerId);
+          if (c) c.chestsOpened += 1;
+          break;
+        }
+        case 'throw': {
+          if (!e.playerId || !e.type) break;
+          const c = this.analyticsCounters.get(e.playerId);
+          if (!c) break;
+          c.bombsUsed[e.type] = (c.bombsUsed[e.type] ?? 0) + 1;
+          break;
+        }
+        case 'died': {
+          // Credit the killer (last hitter). `killerId` can be null for
+          // suicide / no-attributable-source deaths — those don't credit
+          // anyone.
+          if (e.killerId) {
+            const c = this.analyticsCounters.get(e.killerId);
+            if (c) c.kills += 1;
+          }
+          // Snapshot turnsAlive for the victim — they won't be ticked again.
+          if (e.playerId) {
+            const c = this.analyticsCounters.get(e.playerId);
+            if (c) c.turnsAlive = this.state.turnNumber;
+          }
+          break;
+        }
+      }
+    }
+    // Tick turnsAlive forward for everyone still alive (and not escaped).
+    // Survivors read the final value at settlement; escapees see this turn
+    // number on the escape event row.
+    for (const bm of this.state.bombermen) {
+      const c = this.analyticsCounters.get(bm.playerId);
+      if (!c) continue;
+      if (bm.alive && !bm.escaped) c.turnsAlive = this.state.turnNumber;
+    }
+
     // Reconcile Scavenger controllers. TurnResolver step 5d pushed new
     // `isScav: true` bombermen into state this turn; create a `ScavPlayer`
     // AI for each one we haven't seen yet so the next input phase ticks
@@ -547,6 +626,7 @@ export class MatchRoom {
           gamblerStreet: createEmptyGamblerStreet(Date.now(), GAMBLER_STREET_GLOBAL.slotCount),
           bombermanShop: null,
           factories: createEmptyFactories(),
+          totalMatchesPlayed: 0,
         },
       });
     }
@@ -720,6 +800,15 @@ export class MatchRoom {
       const profile = participant.profile;
       const ownedBomberman = profile.ownedBombermen.find(ob => ob.id === b.bombermanId);
 
+      // Capture name+tier BEFORE the dead branch strips the OwnedBomberman.
+      // BombermanState carries `name` already (copied at match start) but
+      // tier only lives on the OwnedBomberman; fall back if it's gone.
+      const bombermanName = b.name ?? ownedBomberman?.name ?? '';
+      const bombermanTier = ownedBomberman?.tier ?? 'free';
+      const outcome: MatchOutcome = b.escaped
+        ? 'escaped'
+        : (this.state.endReason === 'turn_limit' ? 'timeout' : 'killed');
+
       if (b.escaped) {
         // Escaped: keep treasures earned during the match
         mergeTreasures(profile.treasures, b.treasures);
@@ -746,11 +835,20 @@ export class MatchRoom {
         }
       }
 
+      // Bump lifetime match count — any outcome counts. Drives the
+      // `totalMatchesPlayed` column on ProfileSnapshots.
+      profile.totalMatchesPlayed = (profile.totalMatchesPlayed ?? 0) + 1;
+
       await this.playerStore.save(profile);
       if (participant.socketId) {
         const sock = this.io.sockets.sockets.get(participant.socketId);
         if (sock) sock.emit('profile', { profile });
       }
+
+      // Emit analytics rows for this player — one MatchResults followed by
+      // one ProfileSnapshot. Reads the POST-settlement profile so coin /
+      // treasure / stockpile / match-count snapshots are the final values.
+      this.emitMatchAnalytics(participant, b, outcome, bombermanName, bombermanTier);
     }
 
     // Per-player treasures: prefer the pre-drain snapshot for escapees (live
@@ -784,6 +882,66 @@ export class MatchRoom {
     });
 
     this.onEnd();
+  }
+
+
+  /** Fire-and-forget — one analytics row pair (MatchResults + ProfileSnapshot)
+   *  per real player at match-end settlement. The PlayerStore snapshot read
+   *  here reflects post-banking state (coins / treasures / stockpile /
+   *  totalMatchesPlayed already mutated). */
+  private emitMatchAnalytics(
+    participant: MatchRoomParticipant,
+    _b: BombermanState,
+    outcome: MatchOutcome,
+    bombermanName: string,
+    bombermanTier: string,
+  ): void {
+    // Disconnected real players still get a row — we just lose their IP and
+    // sessionId. Bots have already been filtered out (socketId === null) by
+    // the surrounding loop.
+    const ctx = this.lookupAnalyticsContext(participant.playerId)
+      ?? { ip: '', sessionId: '' };
+    const counters = this.analyticsCounters.get(participant.playerId) ?? {
+      chestsOpened: 0, kills: 0, bombsUsed: {}, turnsAlive: 0,
+    };
+    const profile = participant.profile;
+    // Treasures earned this match: snapshot is only populated on escape.
+    // Death and timeout both drop the carry, so report empty {}.
+    const treasuresGained = outcome === 'escaped'
+      ? (this.escapedTreasureSnapshots.get(participant.playerId) ?? {})
+      : {};
+    const stashTotal = Object.values(profile.treasures).reduce<number>((s, v) => s + (v ?? 0), 0);
+    const bombStockpileTotal = Object.values(profile.bombStockpile ?? {})
+      .reduce<number>((s, v) => s + (v ?? 0), 0);
+
+    logMatchResult({
+      ip: ctx.ip,
+      sessionId: ctx.sessionId,
+      matchId: this.config.id,
+      profileId: participant.playerId,
+      profileName: profile.name ?? '',
+      bombermanName,
+      bombermanTier,
+      outcome,
+      turnsAlive: counters.turnsAlive,
+      kills: counters.kills,
+      chestsOpened: counters.chestsOpened,
+      spEarned: this.spEarnedSnapshots.get(participant.playerId) ?? 0,
+      treasuresGainedJson: JSON.stringify(treasuresGained),
+      bombsUsedJson: JSON.stringify(counters.bombsUsed),
+      coinsAfter: profile.coins,
+      stashTotalAfter: stashTotal,
+    });
+    logProfileSnapshot({
+      ip: ctx.ip,
+      sessionId: ctx.sessionId,
+      profileId: participant.playerId,
+      coins: profile.coins,
+      treasuresJson: JSON.stringify(profile.treasures),
+      bombStockpileTotal,
+      ownedBombermenCount: profile.ownedBombermen.length,
+      totalMatchesPlayed: profile.totalMatchesPlayed ?? 0,
+    });
   }
 
   destroy(): void {

@@ -311,6 +311,7 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
 
   return {
     id: raw.id ?? generatePlayerId(),
+    name: typeof raw.name === 'string' ? raw.name : undefined,
     createdAt: raw.createdAt ?? now,
     updatedAt: raw.updatedAt ?? now,
     coins: raw.coins ?? 500,
@@ -324,6 +325,9 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
     // on partial-shape entries so older saves still work.
     bombermanShop: migrateBombermanShop(raw.bombermanShop),
     factories: migrateFactories(raw.factories),
+    totalMatchesPlayed: typeof raw.totalMatchesPlayed === 'number' && raw.totalMatchesPlayed >= 0
+      ? Math.floor(raw.totalMatchesPlayed)
+      : 0,
   };
 }
 
