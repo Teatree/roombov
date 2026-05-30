@@ -245,7 +245,19 @@ export type TurnEvent =
   | { kind: 'idle'; playerId: string; x: number; y: number }
   | { kind: 'throw'; playerId: string; bombId: string; type: BombType; fromX: number; fromY: number; x: number; y: number }
   | { kind: 'bomb_triggered'; bombId: string; type: BombType; x: number; y: number; tiles: Tile[] }
-  | { kind: 'damaged'; playerId: string; hpRemaining: number }
+  | {
+      kind: 'damaged';
+      playerId: string;
+      hpRemaining: number;
+      /** Who caused this damage. Set to the bomb/mine/fire `ownerId`. Null
+       *  when attribution isn't available (rare — bleed ticks would qualify
+       *  if added later). Used by MatchRoom analytics to credit `damage_dealt`. */
+      attackerId: string | null;
+      /** Hit points removed by this event. Currently always 1 — every damage
+       *  path does `hp -= 1`. Kept as a separate field so future bigger-bombs
+       *  or status ticks don't need a new event kind. */
+      amount: number;
+    }
   | { kind: 'died'; playerId: string; x: number; y: number; killerId: string | null }
   | { kind: 'escaped'; playerId: string; treasures: TreasureBundle; hatchX: number; hatchY: number }
   | { kind: 'key_pickup'; playerId: string; x: number; y: number; source: 'floor' | 'body' | 'chest'; newCount: number }
@@ -1272,7 +1284,7 @@ export function resolveTurn(
         b.hp -= 1;
         b.bleedingTurns = BALANCE.match.bleedingDurationTurns;
         lastDamagedBy.set(b.playerId, bomb.ownerId);
-        events.push({ kind: 'damaged', playerId: b.playerId, hpRemaining: b.hp });
+        events.push({ kind: 'damaged', playerId: b.playerId, hpRemaining: b.hp, attackerId: bomb.ownerId, amount: 1 });
       }
     }
 
@@ -1382,7 +1394,7 @@ export function resolveTurn(
               b.hp -= 1;
               b.bleedingTurns = BALANCE.match.bleedingDurationTurns;
               lastDamagedBy.set(b.playerId, bomb.ownerId);
-              events.push({ kind: 'damaged', playerId: b.playerId, hpRemaining: b.hp });
+              events.push({ kind: 'damaged', playerId: b.playerId, hpRemaining: b.hp, attackerId: bomb.ownerId, amount: 1 });
             }
           }
           continue;
@@ -1561,7 +1573,7 @@ export function resolveTurn(
           b.hp -= 1;
           b.bleedingTurns = BALANCE.match.bleedingDurationTurns;
           lastDamagedBy.set(b.playerId, mine.ownerId);
-          events.push({ kind: 'damaged', playerId: b.playerId, hpRemaining: b.hp });
+          events.push({ kind: 'damaged', playerId: b.playerId, hpRemaining: b.hp, attackerId: mine.ownerId, amount: 1 });
         }
         // Prime any adjacent cluster mine (direct hit on its tile) — don't
         // trigger this turn; let it shake for a turn then chain.
@@ -1728,7 +1740,7 @@ export function resolveTurn(
       b.hp -= 1;
       b.bleedingTurns = BALANCE.match.bleedingDurationTurns;
       lastDamagedBy.set(b.playerId, fire.ownerId);
-      events.push({ kind: 'damaged', playerId: b.playerId, hpRemaining: b.hp });
+      events.push({ kind: 'damaged', playerId: b.playerId, hpRemaining: b.hp, attackerId: fire.ownerId, amount: 1 });
     }
   }
 

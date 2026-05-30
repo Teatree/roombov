@@ -99,7 +99,18 @@ export interface MatchResultRow {
   outcome: MatchOutcome;
   turnsAlive: number;
   kills: number;
+  /** Total HP this player removed from other Bombermen / Scavs this match.
+   *  Sums bomb / mine / fire `damaged` events and `melee_attack` strikes.
+   *  Sheet column: `damage_dealt`, between `kills` and `chestsOpened`. */
+  damageDealt: number;
   chestsOpened: number;
+  /** Number of turns this player ended on a chest tile — regardless of
+   *  whether the chest still had loot. Superset of `chestsOpened`.
+   *  Sheet column: `chestsLooted`, between `chestsOpened` and `bodiesLooted`. */
+  chestsLooted: number;
+  /** Same convention as `chestsLooted` but for dropped bodies.
+   *  Sheet column: `bodiesLooted`, between `chestsLooted` and `spEarned`. */
+  bodiesLooted: number;
   spEarned: number;
   /** Stringified `Partial<Record<TreasureType, number>>`, empty `{}` if killed. */
   treasuresGainedJson: string;
@@ -123,7 +134,10 @@ export function logMatchResult(r: MatchResultRow): void {
     r.outcome,
     r.turnsAlive,
     r.kills,
+    r.damageDealt,
     r.chestsOpened,
+    r.chestsLooted,
+    r.bodiesLooted,
     r.spEarned,
     r.treasuresGainedJson,
     r.bombsUsedJson,

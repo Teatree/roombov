@@ -82,7 +82,17 @@ export class MatchRoom {
    *  the final value. */
   private analyticsCounters = new Map<string, {
     chestsOpened: number;
+    /** Counted every turn the bomberman ends ON a chest tile, regardless of
+     *  whether the chest still has loot. Superset of chestsOpened (every
+     *  open is also a loot, but every loot is not an open since chests
+     *  can be re-visited after they're empty). */
+    chestsLooted: number;
+    /** Same convention as chestsLooted but for dropped bodies. */
+    bodiesLooted: number;
     kills: number;
+    /** Sum of `amount` across every `damaged` event credited to this player
+     *  + 1 per `melee_attack` event with this player as attackerId. */
+    damageDealt: number;
     bombsUsed: Partial<Record<BombType, number>>;
     turnsAlive: number;
   }>();
@@ -115,7 +125,10 @@ export class MatchRoom {
       if (!p.socketId) continue;
       this.analyticsCounters.set(p.playerId, {
         chestsOpened: 0,
+        chestsLooted: 0,
+        bodiesLooted: 0,
         kills: 0,
+        damageDealt: 0,
         bombsUsed: {},
         turnsAlive: 0,
       });
@@ -559,7 +572,16 @@ export class MatchRoom {
     // chestsOpened, kills, and bombsUsed from events emitted by TurnResolver
     // so the resolver itself (and BombermanState) stays untouched.
     for (const ev of events) {
-      const e = ev as { kind: string; playerId?: string; killerId?: string | null; source?: string; type?: BombType };
+      const e = ev as {
+        kind: string;
+        playerId?: string;
+        killerId?: string | null;
+        attackerId?: string | null;
+        victimId?: string;
+        source?: string;
+        type?: BombType;
+        amount?: number;
+      };
       switch (e.kind) {
         case 'coins_picked_up': {
           // Every chest has coinRange > 0 in every tier (CHEST_CONFIG),
@@ -591,7 +613,37 @@ export class MatchRoom {
           }
           break;
         }
+        case 'damaged': {
+          // Bomb / mine / fire damage. attackerId is the bomb owner; amount
+          // is always 1 today but treated as variable for forward compat.
+          if (!e.attackerId) break;
+          const c = this.analyticsCounters.get(e.attackerId);
+          if (c) c.damageDealt += e.amount ?? 1;
+          break;
+        }
+        case 'melee_attack': {
+          // Melee strike — 1 HP per strike (resolver invariant). Count both
+          // forward strikes (trap → walker) and counter-attacks (walker
+          // hit by a trapped defender); both paths emit this event with
+          // attackerId set to the one dealing the damage.
+          if (!e.attackerId) break;
+          const c = this.analyticsCounters.get(e.attackerId);
+          if (c) c.damageDealt += 1;
+          break;
+        }
       }
+    }
+    // chestsLooted / bodiesLooted: any bomberman ending this turn on a tile
+    // that contains a chest or a body counts +1. Per the spec these trigger
+    // on presence — chest doesn't need to still have loot. chestsLooted is
+    // a superset of chestsOpened (every open is also a loot; revisits to
+    // emptied chests count as loots without opens).
+    for (const bm of this.state.bombermen) {
+      const c = this.analyticsCounters.get(bm.playerId);
+      if (!c) continue;
+      if (!bm.alive || bm.escaped) continue;
+      if (this.state.chests.some(ch => ch.x === bm.x && ch.y === bm.y)) c.chestsLooted += 1;
+      if (this.state.bodies.some(b => b.x === bm.x && b.y === bm.y)) c.bodiesLooted += 1;
     }
     // Tick turnsAlive forward for everyone still alive (and not escaped).
     // Survivors read the final value at settlement; escapees see this turn
@@ -902,7 +954,8 @@ export class MatchRoom {
     const ctx = this.lookupAnalyticsContext(participant.playerId)
       ?? { ip: '', sessionId: '', country: '' };
     const counters = this.analyticsCounters.get(participant.playerId) ?? {
-      chestsOpened: 0, kills: 0, bombsUsed: {}, turnsAlive: 0,
+      chestsOpened: 0, chestsLooted: 0, bodiesLooted: 0,
+      kills: 0, damageDealt: 0, bombsUsed: {}, turnsAlive: 0,
     };
     const profile = participant.profile;
     // Treasures earned this match: snapshot is only populated on escape.
@@ -927,7 +980,10 @@ export class MatchRoom {
       outcome,
       turnsAlive: counters.turnsAlive,
       kills: counters.kills,
+      damageDealt: counters.damageDealt,
       chestsOpened: counters.chestsOpened,
+      chestsLooted: counters.chestsLooted,
+      bodiesLooted: counters.bodiesLooted,
       spEarned: this.spEarnedSnapshots.get(participant.playerId) ?? 0,
       treasuresGainedJson: JSON.stringify(treasuresGained),
       bombsUsedJson: JSON.stringify(counters.bombsUsed),
