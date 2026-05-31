@@ -62,9 +62,14 @@ Socket event map lives on `GameServer` (`auth`, `join_match`, `player_action`, `
 
 **Factory** is the active post-NEW_META crafting/production meta system. `src/shared/config/factories.ts` defines 4 named machines with escalating costs and cycle times; machine 4 (`DETONATORIUM`) produces super bombs. `src/client/scenes/FactoryScene.ts` is the 4-machine crafting room. A claimable-bomb badge surfaces on the Factory button in both `MainMenuScene` and `ResultsScene`.
 
+**Analytics** is a server-side, fire-and-forget telemetry pipe to a Google Apps Script web app that appends rows to a Google Sheet — spec in `docs/ANALYTICS-SPEC.md`. `src/server/Analytics.ts` owns four sheets (`MatchResults`, `ProfileSnapshots`, `ScreenEvents`, `TutorialEvents`); column order in each `log*` function must match the spec table, and Apps Script prepends its own timestamp. **No retries/queues/batching, no `await` in hot paths; no-ops silently when `ANALYTICS_WEBHOOK_URL` is unset.** Match rows are emitted per-turn at `match_end` (not at finalize) to survive Render free-tier suspension during long bot matches. `src/server/IpCountryCache.ts` resolves player country once per unique IP via **ip-api.com** (not ipapi.co — it rate-limits datacenter IPs with a 200-status plain-text body); the cache is file-backed and normalizes IPv4-mapped IPv6 first. On the client, `src/client/scenes/sceneAnalytics.ts` exports `trackScreen(scene, name)` — call once in a tracked scene's `create()`; it emits `enter` immediately and auto-queues `exit` on `SHUTDOWN`. Untracked screens (Boot, Match, Tooltip, TutorialOverlay) must not call it.
+
 ### Client flow
 
-`src/client/main.ts` registers Phaser scenes (order is significant): `BootScene → MainMenuScene → LobbyScene → BombermanShopScene → BombsShopScene → FactoryScene → MatchScene → ResultsScene → TutorialOverlayScene → TooltipScene`. (`GamblerStreetScene` is intentionally unregistered post-NEW_META §8; see Gambler Street note below.)
+`src/client/main.ts` registers Phaser scenes (order is significant): `BootScene → MainMenuScene → LobbyScene → BombermanShopScene → BombsShopScene → FactoryScene → MatchScene → ResultsScene → TutorialEndScene → TutorialOverlayScene → TooltipScene → BombermanUpgradeScene`. (`GamblerStreetScene` is intentionally unregistered post-NEW_META §8; see Gambler Street note below.)
+
+- `TutorialEndScene` replaces `ResultsScene` when a match ended via `TutorialMatchBackend` (tutorial awards nothing, so it's a "what to do next" card whose CTA routes to the Bomberman Shop or Lobby depending on whether the player owns any Bomberman).
+- `BombermanUpgradeScene` is a modal popup launched with `scene.launch('BombermanUpgradeScene', { ownedId })` from any roster screen. It spends **per-Bomberman SP** (`owned.sp`, not `profile.sp`) on CAP/STACK/HP tracks; every UPGRADE click fires the server-authoritative `upgrade_bomberman` event and re-renders on the returned `profile` snapshot.
 
 Rendering is split into systems under `src/client/systems/` (`MapRenderer`, `BombRenderer`, `FogRenderer`, `BombermanSpriteSystem`, `BombermanAnimations`, `ActivityIndicator`, etc.). Reusable UI widgets also live there (`TreasureListWidget`, `BombShopTooltip`, `TierInfoBadge`, `NotificationBadge`, `BombermanSelector`, `BombIcons`, `TreasureIcons`). `MatchScene` wires the rendering systems to state updates.
 
@@ -110,8 +115,9 @@ The following files are auto-included by Claude Code and contain standards, coor
 **Project documentation** — the following live in `docs/` and are useful cross-tool references:
 - `docs/PROJECT-SUMMARY.md` — full context handoff with economy subsystems, character tiers, all meta-progression systems, and per-screen UI inventory
 - `docs/NEW_META.md` — locked spec for the May 16-17 meta reset (stack +2, coins in chests, treasure trim, keys in chests, bot rework, all-paid pricing, tutorial updates, Factory). Authoritative when this file or memory drifts.
-- `docs/keys-system.md` — keys/escape-hatch design (15 keys per floor, 3 keys per player to escape)
+- `docs/keys-system.md` — keys/escape-hatch design (12 keys per match distributed across chests by tier weight, 3 keys per player to escape; see `BALANCE.keys` in `src/shared/config/balance.ts`)
 - `docs/escape-hatch-rework.md` — current hatch behavior and UX (lock badge, ready-to-escape indicator)
 - `docs/bot-behavior.md` — AI behavior tree and decision-making for `BotPlayer.ts`
 - `docs/BOMB_SHOP_CHANGE.md` — Bombs Shop three-panel redesign spec (implemented; kept for reference on tooltip / category / panel intent)
 - `docs/sprite-animation-guide.md` — sprite-sheet authoring + `BombermanAnimations` conventions
+- `docs/ANALYTICS-SPEC.md` — analytics event schema: the four Google-Sheet tabs and exact per-row column order (see Analytics under Server flow)

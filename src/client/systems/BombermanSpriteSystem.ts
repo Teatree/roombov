@@ -581,12 +581,12 @@ export class BombermanSpriteSystem {
     const shouldLabel = !b.isBot && !b.isScav;
     if (shouldLabel) {
       nameLabel = this.scene.add.text(cx, cy, b.name ?? '', {
-        fontSize: '8px', color: '#ffffff', fontFamily: 'monospace',
+        fontSize: '6px', color: '#ffffff', fontFamily: 'monospace',
         stroke: '#000000', strokeThickness: 2,
       }).setOrigin(0.5, 1).setAlpha(0.6).setVisible(false);
-      // Render the text at 2× resolution and downsample so 8 px monospace
-      // stays sharp instead of subpixel-blurry on high-DPI displays.
-      nameLabel.setResolution(2);
+      // Render the text at 3× resolution and downsample so the 6 px monospace
+      // label stays sharp instead of subpixel-blurry on high-DPI displays.
+      nameLabel.setResolution(3);
       this.layer.add(nameLabel);
     }
 

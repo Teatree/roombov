@@ -165,7 +165,10 @@ export class MatchScene extends Phaser.Scene {
   //   0   map (tilemap layers and tileset graphics)
   //   10  doors + escape hatch sprites
   //   15  chests
-  //   20  scorchDecalLayer (explosion/burn scorch marks)
+  //   20  scorchDecalLayer (explosion/burn scorch marks) — ground level, under
+  //       bombs/corpses/objects/chests/doors/hatches. Dimmed by the lesser-fog
+  //       overlay like the map itself; drawn opaque enough that the scars stay
+  //       clearly visible (not faded to nothing) once a tile drops to seen-dim.
   //   22  pearlDecalLayer (ender pearl teleport decals)
   //   25  bloodDecalLayer (blood splatter)
   //   28  corpseLayer (dead Bomberman sprites)
@@ -598,6 +601,10 @@ export class MatchScene extends Phaser.Scene {
 
     // Explicit depth stack — see class-level comment for the full spec.
     // Decals are split into 3 containers so blood > pearl > scorch ordering is enforced.
+    // Scorch stays at ground level (under bombs/corpses/objects/chests/doors);
+    // it's dimmed by the lesser-fog overlay like the map, but drawn opaque
+    // enough to remain visible there. Visibility is gated to discovered tiles
+    // by updateDecalVisibility so it never shows over unexplored (black) fog.
     this.scorchDecalLayer = this.add.container(0, 0).setDepth(20);
     this.pearlDecalLayer = this.add.container(0, 0).setDepth(22);
     // Shield Wall shards: persistent floor decals from shattered Shield Bombs.
@@ -1712,13 +1719,14 @@ export class MatchScene extends Phaser.Scene {
             ds.sprite.play(`door_${prefix}_open`);
           });
         } else {
-          // Not in LoS at event time: snap straight to open silently so the
-          // animation doesn't leak through seen-dim fog and reveal that an
-          // enemy opened it. Next LoS regain shows an already-open door.
-          ds.state = 'open';
+          // Not in LoS at event time: keep the CLOSED visual frozen. Playing
+          // the open frame here makes the door visibly pop open in seen-dim
+          // fog (the regression). Record `opened` in data and drop the latch,
+          // but leave the sprite on its closed frame and ds.state as 'closed'
+          // — updateDoors snaps it to the open frame only once the player
+          // regains LoS on it, so they just see an already-open door.
           ds.opened = true;
           ds.openingPending = false;
-          ds.sprite.play(`door_${prefix}_open`);
         }
       });
     }
@@ -2128,6 +2136,11 @@ export class MatchScene extends Phaser.Scene {
     }
     const progress = Math.max(0, Math.min(1, elapsed / totalMs));
     const g = this.escapeRing!;
+    // Re-show every time we reach the draw path. The ring is created visible,
+    // but setEscapeIndicatorVisible(false) hides it when the player steps off
+    // the hatch; without this, stepping back onto a hatch would draw the arc
+    // onto a still-hidden Graphics and nothing would appear.
+    g.setVisible(true);
     g.clear();
     const radius = ts * 0.55;
     // Faint backing ring so the partially-filled arc still reads as a circle.
@@ -2334,14 +2347,15 @@ export class MatchScene extends Phaser.Scene {
       g.setVisible(this.fogRenderer?.isVisible(bx, by) ?? true);
     }
 
-    // Explosion decals: only visible if tile is currently in LOS (RTS fog)
+    // Explosion decals: scorch marks persist through lesser fog. Visible
+    // whenever the tile has been discovered (LOS now OR seen-dim), hidden only
+    // under unexplored (greater) fog — which is opaque black anyway. This
+    // stops the blast's decals from being clipped at the lesser-fog boundary
+    // when an explosion reaches tiles that are discovered but out of LOS.
     this.bombRenderer?.updateDecalVisibility((x, y) => {
       const key = `decal_${x},${y}`;
-      if (this.fogRenderer?.isVisible(x, y)) {
-        this.knownEntities.add(key);
-        return true;
-      }
-      return this.knownEntities.has(key) && (this.fogRenderer?.isDiscovered(x, y) ?? false);
+      if (this.fogRenderer?.isVisible(x, y)) this.knownEntities.add(key);
+      return this.fogRenderer?.isDiscovered(x, y) ?? true;
     });
 
     // Pearl decals: stricter rule than scorch — visible only while currently

@@ -8,6 +8,7 @@ import { createEmptyProfile } from '../shared/types/player-profile.ts';
 import { CHARACTER_VARIANTS } from '../shared/types/bomberman.ts';
 import type { BombermanTier } from '../shared/types/bomberman.ts';
 import { defaultStatsForTier } from '../shared/config/bomberman-tiers.ts';
+import { effectiveMaxCustomSlots } from '../shared/utils/bomberman-stats.ts';
 import type { BombType } from '../shared/types/bombs.ts';
 import { createEmptyGamblerStreet, type GamblerStreetState } from '../shared/types/gambler-street.ts';
 import { GAMBLER_STREET_GLOBAL } from '../shared/config/gambler-street.ts';
@@ -144,11 +145,23 @@ export class PlayerStore {
     // CAP-unlocked slot.
     for (const b of profile.ownedBombermen) {
       if (!b.inventory || !Array.isArray(b.inventory.slots)) continue;
-      const targetLen = (b.maxCustomSlots ?? 0) + (b.upgrades?.cap ?? 0);
+      // Authoritative effective slot count (base + CAP tiers, clamped) — the
+      // same helper the equip path and the client renderer use, so the
+      // persisted array never diverges from what's equippable/visible.
+      const targetLen = effectiveMaxCustomSlots(b);
       if (targetLen <= 0) continue;
+      // Grow so CAP-unlocked slots exist.
       while (b.inventory.slots.length < targetLen) b.inventory.slots.push(null);
-      if (b.inventory.slots.length > targetLen) {
-        b.inventory.slots = b.inventory.slots.slice(0, targetLen);
+      // Trim ONLY trailing EMPTY slots beyond the target. NEVER slice through a
+      // non-empty slot — doing so silently destroys a bomb the player equipped
+      // into a CAP-unlocked slot if `cap` happens to be momentarily stale on
+      // this particular save (e.g. a profile snapshot persisted out of order).
+      // Preserving occupied slots keeps the cached profile correct, so no later
+      // `profile` broadcast can revert the equip or waste the bomb.
+      let end = b.inventory.slots.length;
+      while (end > targetLen && b.inventory.slots[end - 1] == null) end--;
+      if (end < b.inventory.slots.length) {
+        b.inventory.slots = b.inventory.slots.slice(0, end);
       }
     }
     this.cache.set(profile.id, profile);

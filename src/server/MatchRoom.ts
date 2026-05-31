@@ -561,6 +561,13 @@ export class MatchRoom {
   }
 
   private endInputPhase(): void {
+    // The whole turn-resolution body is guarded: a throw in resolveTurn, the
+    // analytics/death/escape settlement, or any emit must never prevent the
+    // phase cadence from being re-armed below. A single bad turn degrades to a
+    // skipped turn instead of permanently freezing the match — the failure
+    // mode that surfaced as a Bomberman that stops responding to all input.
+    // The thrown error is logged so the specific trigger stays findable.
+    try {
     // Enter transition phase
     this.state.phase = 'transition';
     this.state.phaseEndsAt = Date.now() + BALANCE.match.transitionPhaseSeconds * 1000;
@@ -826,12 +833,19 @@ export class MatchRoom {
       });
     }
 
+    } catch (err) {
+      console.error(`[MatchRoom ${this.id}] endInputPhase threw during turn resolution; recovering the phase cadence so the match doesn't freeze`, err);
+      // Best-effort: make sure clients still receive whatever state we have.
+      try { this.broadcastState(); } catch { /* ignore secondary failure */ }
+    }
+
     if (this.state.phase === 'ended') {
       this.finalize();
       return;
     }
 
-    // After the transition window, re-enter input phase
+    // After the transition window, re-enter input phase. Always re-armed even
+    // if the body above threw — see the guard at the top of this method.
     if (this.phaseTimer) clearTimeout(this.phaseTimer);
     this.phaseTimer = setTimeout(() => this.beginNextInputPhase(), BALANCE.match.transitionPhaseSeconds * 1000);
   }
@@ -839,8 +853,15 @@ export class MatchRoom {
   private beginNextInputPhase(): void {
     this.state.phase = 'input';
     this.state.phaseEndsAt = Date.now() + BALANCE.match.inputPhaseSeconds * 1000;
-    this.broadcastState();
-    this.tickBots();
+    try {
+      this.broadcastState();
+      this.tickBots();
+    } catch (err) {
+      console.error(`[MatchRoom ${this.id}] beginNextInputPhase threw; continuing so the input window still opens`, err);
+    }
+    // Always schedule the end of the input window — a thrown bot tick or a
+    // failed broadcast must not strand the match in the input phase forever
+    // (which presents to the player as a Bomberman that ignores all input).
     this.scheduleInputPhaseEnd();
   }
 
@@ -849,22 +870,35 @@ export class MatchRoom {
    *  ScavPlayer gates loot to "all custom slots empty" so the callback is
    *  rarely fired. */
   private tickBots(): void {
+    // Each AI tick is isolated: a throw in one bot's decision logic defaults
+    // that actor to idle and is logged, rather than aborting tickBots() (which
+    // would skip scheduleInputPhaseEnd() in the caller and freeze the match).
     for (const bot of this.bots) {
-      const action = bot.tick(
-        this.state,
-        this.map,
-        (msg) => this.handleLoot(bot.playerId, msg),
-      );
+      let action: PlayerAction = { kind: 'idle' };
+      try {
+        action = bot.tick(
+          this.state,
+          this.map,
+          (msg) => this.handleLoot(bot.playerId, msg),
+        );
+      } catch (err) {
+        console.error(`[MatchRoom ${this.id}] bot ${bot.playerId} tick threw; defaulting to idle`, err);
+      }
       this.submitAction(bot.playerId, action);
     }
     for (const scav of this.scavs) {
       const bm = this.state.bombermen.find(b => b.playerId === scav.playerId);
       if (!bm || !bm.alive || bm.escaped) continue;
-      const action = scav.tick(
-        this.state,
-        this.map,
-        (msg) => this.handleLoot(scav.playerId, msg),
-      );
+      let action: PlayerAction = { kind: 'idle' };
+      try {
+        action = scav.tick(
+          this.state,
+          this.map,
+          (msg) => this.handleLoot(scav.playerId, msg),
+        );
+      } catch (err) {
+        console.error(`[MatchRoom ${this.id}] scav ${scav.playerId} tick threw; defaulting to idle`, err);
+      }
       this.submitAction(scav.playerId, action);
     }
   }

@@ -557,7 +557,11 @@ export class BombRenderer {
     // Tag for decal decay — applyDecalDecay multiplies baseAlpha by the age
     // curve every turn. See BALANCE.decalDecay in balance.ts.
     g.setData('spawnTurn', spawnTurn);
-    g.setData('baseAlpha', 0.8);
+    // Rest at full object-alpha (the per-fill alphas below define the look).
+    // The lesser-fog overlay darkens scorch tiles like the rest of the map, so
+    // a washed-out decal would lose all contrast and read as "gone" in seen-dim
+    // fog. Full opacity keeps the scar perceptible as a dark mark once dimmed.
+    g.setData('baseAlpha', 1.0);
     this.scorchDecalLayer.add(g);
 
     switch (type) {
@@ -585,10 +589,10 @@ export class BombRenderer {
         break;
     }
 
-    // Fade in gradually, 20% transparent at rest. 150% of the original speed
-    // so the decal is fully visible before the turn boundary / fog drop.
+    // Fade in gradually to full opacity. 150% of the original speed so the
+    // decal is fully visible before the turn boundary / fog drop.
     g.setAlpha(0);
-    this.scene.tweens.add({ targets: g, alpha: 0.8, duration: 533, ease: 'Sine.easeIn' });
+    this.scene.tweens.add({ targets: g, alpha: 1.0, duration: 533, ease: 'Sine.easeIn' });
 
     this.decals.set(key, g);
     this.scorchKeys.add(key);
