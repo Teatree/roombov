@@ -149,6 +149,90 @@ export function shapeTiles(
 }
 
 /**
+ * Preview helper: the full set of tiles a bomb of `type` detonating at (cx, cy)
+ * would visually affect. Used by the client's explosion-ghost overlay (both the
+ * "aiming" outline and the "landed" filled zone) — NOT used to resolve damage
+ * (the turn resolver computes that authoritatively). Pure and deterministic.
+ *
+ * Mirrors the per-behavior tile math the resolver uses, reusing `shapeTiles`.
+ * For Banana (scatter) it unions the blast zones of each deterministic child
+ * landing (offsets are fixed, not RNG), so the preview shows the real coverage.
+ * Cluster mines scatter via RNG at trigger time, so we can only preview the
+ * candidate area (the w×h box of floor tiles).
+ */
+export function bombAffectedTiles(
+  type: BombType, cx: number, cy: number, map: MapData,
+  closedDoorTiles: Set<string> = new Set(),
+  shieldWallTiles: Set<string> = new Set(),
+): Tile[] {
+  const def = BOMB_CATALOG[type];
+  const b = def.behavior;
+  switch (b.kind) {
+    case 'explode':
+    case 'fire':
+    case 'light':
+    case 'stun_explode':
+    case 'shield_wall':
+      return shapeTiles(b.shape, cx, cy, map, closedDoorTiles, shieldWallTiles);
+
+    case 'phosphorus_seed':
+      return shapeTiles(b.revealShape, cx, cy, map, closedDoorTiles, shieldWallTiles);
+
+    case 'smoke':
+      // Approximate: the smoke footprint at the target. Fart Escape actually
+      // pathfinds the thrower a couple tiles first; not previewed precisely.
+      return shapeTiles(b.shape, cx, cy, map, closedDoorTiles, shieldWallTiles);
+
+    case 'scatter': {
+      // Union of each deterministic child's blast zone (offsets are fixed).
+      const seen = new Set<string>();
+      const out: Tile[] = [];
+      const addAll = (tiles: Tile[]): void => {
+        for (const t of tiles) {
+          const key = `${t.x},${t.y}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(t);
+        }
+      };
+      for (const off of b.offsets) {
+        const childX = cx + off.dx;
+        const childY = cy + off.dy;
+        if (!isFloor(map, childX, childY)) continue;
+        if (shieldWallTiles.has(`${childX},${childY}`)) continue;
+        addAll(bombAffectedTiles(b.childType, childX, childY, map, closedDoorTiles, shieldWallTiles));
+      }
+      return out;
+    }
+
+    case 'cluster_seed': {
+      // Candidate scatter region: floor tiles inside the w×h box around origin.
+      const out: Tile[] = [];
+      const halfW = Math.floor(b.area.w / 2);
+      const halfH = Math.floor(b.area.h / 2);
+      for (let dy = -halfH; dy <= halfH; dy++) {
+        for (let dx = -halfW; dx <= halfW; dx++) {
+          const nx = cx + dx;
+          const ny = cy + dy;
+          if (!isFloor(map, nx, ny)) continue;
+          if (shieldWallTiles.has(`${nx},${ny}`)) continue;
+          out.push({ x: nx, y: ny });
+        }
+      }
+      return out;
+    }
+
+    case 'place_mine':
+      // Detection radius footprint (floor tiles reachable within the radius).
+      return shapeTiles({ kind: 'circle', radius: b.detectionRadius }, cx, cy, map, closedDoorTiles, shieldWallTiles);
+
+    case 'teleport':
+      // No area effect — just the destination tile.
+      return [{ x: cx, y: cy }];
+  }
+}
+
+/**
  * Resolved effect of triggering a bomb of `type` at (cx, cy).
  *
  * Triggering is the moment the fuse runs out (or impact for fuse 0). The

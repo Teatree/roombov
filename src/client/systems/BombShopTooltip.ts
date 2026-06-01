@@ -1,7 +1,30 @@
 import Phaser from 'phaser';
-import type { BombsCatalogEntry } from '@shared/types/messages.ts';
-import type { BombCategory } from '@shared/types/bombs.ts';
+import type { BombCategory, BombType } from '@shared/types/bombs.ts';
+import { BOMB_CATALOG } from '@shared/config/bombs.ts';
 import { bombIconFrame } from './BombIcons.ts';
+
+/**
+ * Minimal info this tooltip renders. The Bombs Shop passes a full
+ * `BombsCatalogEntry` (which structurally satisfies this); in-match callers can
+ * pass a slimmer object built from `BOMB_CATALOG`. Only these four fields are read.
+ */
+export type BombTooltipInfo = {
+  type: BombType;
+  name: string;
+  description: string;
+  category: BombCategory;
+};
+
+/**
+ * Canonical builder for in-match tooltip content, sourced from `BOMB_CATALOG`.
+ * The Bombs Shop catalog (server-side) copies the same `name`/`description`/
+ * `category` out of `BOMB_CATALOG`, so editing a bomb's text there updates both
+ * the shop tooltip and the in-game tooltip.
+ */
+export function bombTooltipInfoFor(type: BombType): BombTooltipInfo {
+  const def = BOMB_CATALOG[type];
+  return { type, name: def.name, description: def.description, category: def.category };
+}
 
 /**
  * Cursor-anchored hover tooltip for the Bombs Shop redesign.
@@ -62,6 +85,10 @@ export class BombShopTooltip {
   private fadeTween: Phaser.Tweens.Tween | null = null;
   /** Deferred-hide timer — cancelled when show() arrives within the grace window. */
   private hideTimer: Phaser.Time.TimerEvent | null = null;
+  /** True from the moment a hide is initiated until it completes (or is cancelled
+   *  by show). Guards against callers that invoke hide() every frame — without
+   *  it, each call would reset the deferred-hide timer and it would never fire. */
+  private hiding = false;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -94,9 +121,10 @@ export class BombShopTooltip {
    * passing the same bomb type re-uses the existing layout. Cancels any
    * pending hide so transitions between hover zone and buttons don't flicker.
    */
-  show(entry: BombsCatalogEntry): void {
+  show(entry: BombTooltipInfo): void {
     this.hideTimer?.remove();
     this.hideTimer = null;
+    this.hiding = false;
 
     const color = CATEGORY_COLORS[entry.category];
     const label = CATEGORY_LABELS[entry.category];
@@ -145,7 +173,12 @@ export class BombShopTooltip {
    * buttons inside the same tile.
    */
   hide(): void {
-    if (!this.container.visible) return;
+    // Already hidden, or a hide is already in flight → do nothing. The second
+    // guard is essential: in-match this is called every frame while the cursor
+    // is off any bomb, and without it the 60ms timer below would be cancelled
+    // and rescheduled each frame (~16ms) and never fire.
+    if (!this.container.visible || this.hiding) return;
+    this.hiding = true;
     this.hideTimer?.remove();
     this.hideTimer = this.scene.time.delayedCall(60, () => {
       this.hideTimer = null;
@@ -155,9 +188,19 @@ export class BombShopTooltip {
         alpha: 0,
         duration: FADE_MS,
         ease: 'Quad.easeIn',
-        onComplete: () => this.container.setVisible(false),
+        onComplete: () => { this.container.setVisible(false); this.hiding = false; },
       });
     });
+  }
+
+  /**
+   * Make `camera` skip this tooltip. In MatchScene the tooltip is positioned in
+   * screen space (cursor coords) and should render only through the HUD camera;
+   * without this the zoomed/scrolled world camera draws a second, mis-placed
+   * copy. No-op in single-camera scenes (the Bombs Shop) that never call it.
+   */
+  ignoreFrom(camera: Phaser.Cameras.Scene2D.Camera): void {
+    camera.ignore(this.container);
   }
 
   destroy(): void {

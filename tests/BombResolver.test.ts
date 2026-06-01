@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveBombTrigger, shapeTiles } from '../src/shared/systems/BombResolver.ts';
+import { resolveBombTrigger, shapeTiles, bombAffectedTiles } from '../src/shared/systems/BombResolver.ts';
 import type { Tile } from '../src/shared/systems/BombResolver.ts';
 import { TileType, type MapData } from '../src/shared/types/map.ts';
 
@@ -370,5 +370,35 @@ describe('resolveBombTrigger', () => {
       expect(r.smokeSpawn).toBeDefined();
       expect(r.smokeSpawn?.tiles.length).toBeGreaterThan(0);
     });
+  });
+});
+
+describe('bombAffectedTiles (ghost-zone preview)', () => {
+  const open = openMap();
+
+  it('test_bombAffectedTiles_standard_bomb_matches_shapeTiles', () => {
+    // Arrange / Act: a standard 'bomb' is plus radius 4 — the preview must
+    // equal the resolver's own shape math.
+    const preview = norm(bombAffectedTiles('bomb', 10, 10, open));
+    const shape = norm(shapeTiles({ kind: 'plus', radius: 4 }, 10, 10, open));
+    // Assert
+    expect(preview).toEqual(shape);
+  });
+
+  it('test_bombAffectedTiles_banana_unions_four_child_blasts', () => {
+    // Arrange / Act: banana scatters 4 banana_child (plus r1) at ±1,±1.
+    const tiles = norm(bombAffectedTiles('banana', 10, 10, open));
+    // Assert: 4 children × 5 tiles − 4 shared cardinal tiles = 16 unique.
+    expect(tiles.length).toBe(16);
+    // The parent's own tile is NOT hit (no child sits on it).
+    expect(tiles).not.toContain('10,10');
+    // A child center and one of its arms are present.
+    expect(tiles).toContain('9,9');
+    expect(tiles).toContain('10,9'); // shared between the two top children
+  });
+
+  it('test_bombAffectedTiles_teleport_is_single_tile', () => {
+    // Arrange / Act / Assert: ender pearl has no area effect.
+    expect(norm(bombAffectedTiles('ender_pearl', 7, 7, open))).toEqual(tileSet([7, 7]));
   });
 });

@@ -16,8 +16,8 @@ import { BALANCE } from '@shared/config/balance.ts';
  *  - Track facing direction (last move wins, default 'down')
  *  - Lerp sprite position from old tile to new tile over the transition
  *    phase duration (driven by `moved` turn events)
- *  - Render attached HP pips, self-ring (local player), and aim shadow
- *    (local player in aim mode) at the sprite's lerped visual position
+ *  - Render the over-head HP bar (local player only) at the sprite's lerped
+ *    visual position
  *  - Apply per-Bomberman tint via Sprite.setTint
  *
  * MatchScene drives this by calling:
@@ -53,6 +53,27 @@ const SPRITE_SCALE = 0.5;
  * stay clearly readable even when the area is dimmed.
  */
 const CORPSE_SEEN_DIM_ALPHA = 0.75;
+
+/**
+ * Over-head HP bar (drawn for the LOCAL player only — you can't see other
+ * Bombermen's HP). One segment per `maxHp`, filled red up to `displayedHp`,
+ * on a dark background with a really-dark-gray outline. Thinner than the
+ * previous build (height 2 vs 3). All values are tweakable here.
+ */
+const HP_BAR_WIDTH = 13;
+const HP_BAR_HEIGHT = 2;          // thinner than the old 3px bar
+const HP_BAR_PAD = 1;             // inner padding between segments and the bg edge
+const HP_BAR_SEG_GAP = 1;         // gap between HP segments
+const HP_BAR_Y_OFFSET_TILES = 1.45; // tiles above the visual position
+const HP_BAR_FILL = 0xdd3333;     // filled segment (matches HUD bar red)
+const HP_BAR_EMPTY = 0x333333;    // depleted segment
+const HP_BAR_BG = 0x111111;       // backing panel
+const HP_BAR_BG_ALPHA = 0.85;
+const HP_BAR_OUTLINE = 0x222222;  // really dark gray border
+/** Damage cue: the lost segment(s) spawn a red ghost that falls + fades,
+ *  mirroring the top-left HUD's hurt animation. */
+const HP_GHOST_FALL_MULT = 4;     // ghost travels this many × its own height
+const HP_GHOST_MS = 600;
 
 export function deathAnimationDurationMs(): number {
   return Math.round((DEATH_FRAMES / DEATH_FPS) * 1000);
@@ -118,6 +139,11 @@ interface BombermanSpriteEntry {
   /** Monotonic token incremented on every new hurt/death event so a stale
    *  flicker timer from a previous hit can detect it's been superseded. */
   flickerToken: number;
+  /** Over-head HP bar graphic — only populated/shown for the local player. */
+  hpBar: Phaser.GameObjects.Graphics;
+  /** `displayedHp` at the last bar redraw. A drop fires the falling-segment
+   *  damage ghost (the same cue the top-left HUD bar plays). */
+  hpBarDrawnHp: number;
 }
 
 export class BombermanSpriteSystem {
@@ -244,6 +270,11 @@ export class BombermanSpriteSystem {
       entry.sprite.setVisible(visible);
       entry.sprite.setAlpha(dimmed ? CORPSE_SEEN_DIM_ALPHA : alpha);
 
+      // Over-head HP bar — local player only, hidden once dead (the corpse
+      // shouldn't carry an empty bar). The bar itself is drawn every frame in
+      // applyVisualPosition so it tracks the lerping sprite.
+      entry.hpBar.setVisible(isMe && b.alive);
+
       // Stun icon: visible for any bomberman with an active stunned status
       // effect, as long as the sprite itself is visible to this client.
       // Animates as a gentle bob so it reads as a distinct overlay.
@@ -302,7 +333,7 @@ export class BombermanSpriteSystem {
       // Name label — real players only, never in tutorial, only when the
       // sprite is itself visible to this client (LOS-gated for enemies).
       if (entry.nameLabel) {
-        const labelShown = visible && !dimmed && !state.isTutorial && !b.isBot && !b.isScav;
+        const labelShown = visible && !dimmed && !state.isTutorial && !isMe && !b.isBot && !b.isScav;
         entry.nameLabel.setVisible(labelShown);
         if (labelShown && entry.nameLabel.text !== (b.name ?? '')) {
           entry.nameLabel.setText(b.name ?? '');
@@ -482,7 +513,7 @@ export class BombermanSpriteSystem {
         entry.escapeFadeStarted = true;
         entry.sprite.anims.stop();
         const fadeTargets: Phaser.GameObjects.GameObject[] = [
-          entry.sprite, entry.stunIcon, entry.ambushStar,
+          entry.sprite, entry.stunIcon, entry.ambushStar, entry.hpBar,
         ];
         if (entry.nameLabel) fadeTargets.push(entry.nameLabel);
         if (entry.aimShadow) fadeTargets.push(entry.aimShadow);
@@ -572,13 +603,22 @@ export class BombermanSpriteSystem {
     }
     this.layer.add(stunIcon);
 
+    // Over-head HP bar — drawn each frame in applyVisualPosition, but only ever
+    // made visible for the local player (you can't see other Bombermen's HP).
+    const hpBar = this.scene.add.graphics();
+    hpBar.setVisible(false);
+    this.layer.add(hpBar);
+
     // Name label — only for real-player Bombermen (non-bot, non-scav) and
     // never in tutorial. Decided by syncFromState; null here means "this
     // bomberman never gets a name label". Re-evaluated on first sync if
     // we need to upgrade it (e.g. tutorial flag changes mid-life — doesn't
     // happen, but the null-check keeps that cheap).
     let nameLabel: Phaser.GameObjects.Text | null = null;
-    const shouldLabel = !b.isBot && !b.isScav;
+    // Name labels: shown over OTHER real-player Bombermen (LOS-gated), never
+    // over your own — your Bomberman is identified by the over-head HP bar, so
+    // a self-name there is just clutter.
+    const shouldLabel = !isMe && !b.isBot && !b.isScav;
     if (shouldLabel) {
       nameLabel = this.scene.add.text(cx, cy, b.name ?? '', {
         fontSize: '6px', color: '#ffffff', fontFamily: 'monospace',
@@ -622,6 +662,8 @@ export class BombermanSpriteSystem {
       character,
       nameLabel,
       flickerToken: 0,
+      hpBar,
+      hpBarDrawnHp: b.hp,
     };
     this.applyVisualPosition(entry);
     return entry;
@@ -744,6 +786,7 @@ export class BombermanSpriteSystem {
     entry.stunIcon.destroy();
     entry.ambushStar.destroy();
     entry.nameLabel?.destroy();
+    entry.hpBar.destroy();
   }
 
   /**
@@ -781,6 +824,82 @@ export class BombermanSpriteSystem {
     // text doesn't smear when the sprite is mid-lerp at a fractional pixel.
     if (entry.nameLabel) {
       entry.nameLabel.setPosition(Math.round(visualX), Math.round(visualY - ts * 1.2));
+    }
+
+    // Over-head HP bar (local player only). Redrawn every frame so it follows
+    // the lerping sprite. A drop in displayedHp since the last frame fires the
+    // falling-segment ghost — the same damage cue as the top-left HUD bar.
+    if (entry.isMe) {
+      const barX = Math.round(visualX);
+      const barY = Math.round(visualY - ts * HP_BAR_Y_OFFSET_TILES);
+      if (entry.displayedHp < entry.hpBarDrawnHp) {
+        this.spawnHpDamageGhost(entry, barX, barY);
+      }
+      entry.hpBarDrawnHp = entry.displayedHp;
+      this.drawHpBar(entry, barX, barY);
+    }
+  }
+
+  /**
+   * Draw the over-head HP bar centered at (x, y): dark backing panel with a
+   * really-dark-gray outline, then one segment per `maxHp` filled red up to
+   * `displayedHp`. Thin by design (see HP_BAR_HEIGHT). Local player only —
+   * callers gate on `entry.isMe`.
+   */
+  private drawHpBar(entry: BombermanSpriteEntry, x: number, y: number): void {
+    const g = entry.hpBar;
+    g.clear();
+    const barW = HP_BAR_WIDTH;
+    const barH = HP_BAR_HEIGHT;
+    const pad = HP_BAR_PAD;
+    const segGap = HP_BAR_SEG_GAP;
+    const startX = x - barW / 2;
+
+    // Backing panel + dark-gray outline.
+    g.fillStyle(HP_BAR_BG, HP_BAR_BG_ALPHA);
+    g.fillRoundedRect(startX - pad, y - pad, barW + pad * 2, barH + pad * 2, 2);
+    g.lineStyle(1, HP_BAR_OUTLINE, 1);
+    g.strokeRoundedRect(startX - pad, y - pad, barW + pad * 2, barH + pad * 2, 2);
+
+    // Segments.
+    const segCount = Math.max(1, entry.maxHp);
+    const totalGaps = (segCount - 1) * segGap;
+    const segW = (barW - totalGaps) / segCount;
+    for (let i = 0; i < segCount; i++) {
+      const sx = startX + i * (segW + segGap);
+      g.fillStyle(i < entry.displayedHp ? HP_BAR_FILL : HP_BAR_EMPTY, 1);
+      g.fillRect(sx, y, segW, barH);
+    }
+  }
+
+  /**
+   * Spawn a red ghost rect at each segment lost since the last redraw (handles
+   * multi-damage in one turn). The ghost falls straight down + fades, matching
+   * the top-left HUD's hurt cue. Lives on the world layer so it tracks the
+   * bomberman's position rather than the screen.
+   */
+  private spawnHpDamageGhost(entry: BombermanSpriteEntry, x: number, y: number): void {
+    const barW = HP_BAR_WIDTH;
+    const barH = HP_BAR_HEIGHT;
+    const segGap = HP_BAR_SEG_GAP;
+    const segCount = Math.max(1, entry.maxHp);
+    const segW = (barW - (segCount - 1) * segGap) / segCount;
+    const startX = x - barW / 2;
+
+    for (let lost = entry.displayedHp; lost < entry.hpBarDrawnHp; lost++) {
+      const sx = startX + lost * (segW + segGap);
+      const ghost = this.scene.add.graphics();
+      ghost.fillStyle(HP_BAR_FILL, 1);
+      ghost.fillRect(sx, y, segW, barH);
+      this.layer.add(ghost);
+      this.scene.tweens.add({
+        targets: ghost,
+        y: barH * HP_GHOST_FALL_MULT, // relative pixel offset (graphics starts at y=0)
+        alpha: 0,
+        duration: HP_GHOST_MS,
+        ease: 'Quad.easeIn',
+        onComplete: () => ghost.destroy(),
+      });
     }
   }
 }

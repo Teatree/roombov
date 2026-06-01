@@ -23,6 +23,17 @@ const TILE_COLORS: Record<TileType, number> = {
   [TileType.FURNITURE]: 0x5a4a3e,
 };
 
+/**
+ * Absolute depth for the optional `Contour` tile layer — a boundary outline
+ * authored in Tiled that must stay visible at all times. Sits above the fog
+ * of war (50) and every world gameplay layer (bombermen 100, explosions 120,
+ * highlights 150) but below the HUD (1000+), so players can always see where
+ * the playable edges are and don't waste bombs throwing into the void.
+ * Absolute (not baseDepth-relative) to match the fog/gameplay depths it must
+ * clear, which are themselves absolute in MatchScene.
+ */
+const CONTOUR_DEPTH = 200;
+
 /** Tileset metadata needed to add tilesets to the Phaser tilemap. */
 interface TilesetInfo {
   name: string;
@@ -231,9 +242,14 @@ export class MapRenderer {
       const ln = layerData.name.toLowerCase();
       if (ln === 'collision' || ln === 'doors') continue;
       const layer = tilemap.createLayer(layerData.name, phaserTilesets);
-      if (layer) {
+      if (!layer) continue;
+      this.tilemapLayers.push(layer);
+      if (ln === 'contour') {
+        // Always-on-top boundary outline — fixed high depth, doesn't consume
+        // a normal layer slot. See CONTOUR_DEPTH.
+        layer.setDepth(CONTOUR_DEPTH);
+      } else {
         layer.setDepth(layerDepth);
-        this.tilemapLayers.push(layer);
         layerDepth++;
       }
     }

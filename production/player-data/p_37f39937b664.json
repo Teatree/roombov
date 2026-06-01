@@ -1,0 +1,236 @@
+{
+  "id": "p_37f39937b664",
+  "createdAt": 1779713126047,
+  "updatedAt": 1779713533758,
+  "coins": 1530,
+  "treasures": {},
+  "ownedBombermen": [],
+  "equippedBombermanId": null,
+  "bombStockpile": {},
+  "gamblerStreet": {
+    "gamblers": [],
+    "pendingArrivals": [
+      1779713126047,
+      1779713126047,
+      1779713126047,
+      1779713126047,
+      1779713126047
+    ],
+    "lastTickedAt": 1779713126047,
+    "nextGamblerSerial": 1
+  },
+  "bombermanShop": {
+    "cycleId": "cycle_p_37f39937b664_mpl78uck",
+    "startedAt": 1779713128100,
+    "endsAt": 1779713248100,
+    "bombermen": [
+      {
+        "id": "cycle_p_37f39937b664_mpl78uck_0_free",
+        "name": "Doyle",
+        "tier": "free",
+        "price": 470,
+        "colors": {
+          "shirt": 4350423,
+          "pants": 9054294,
+          "hair": 11678895
+        },
+        "tint": 8754407,
+        "character": "char7",
+        "maxCustomSlots": 4,
+        "stackSize": 7,
+        "inventory": {
+          "slots": [
+            {
+              "type": "flare",
+              "count": 4
+            },
+            {
+              "type": "shield",
+              "count": 3
+            },
+            {
+              "type": "delay_tricky",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_37f39937b664_mpl78uck_1_free",
+        "name": "Moriarty",
+        "tier": "free",
+        "price": 590,
+        "colors": {
+          "shirt": 7684823,
+          "pants": 9054321,
+          "hair": 5518514
+        },
+        "tint": 9210333,
+        "character": "char2",
+        "maxCustomSlots": 4,
+        "stackSize": 6,
+        "inventory": {
+          "slots": [
+            {
+              "type": "flare",
+              "count": 4
+            },
+            {
+              "type": "shield",
+              "count": 4
+            },
+            {
+              "type": "flash",
+              "count": 2
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_37f39937b664_mpl78uck_2_paid",
+        "name": "Bandit",
+        "tier": "paid",
+        "price": 1480,
+        "colors": {
+          "shirt": 4379607,
+          "pants": 2644106,
+          "hair": 3432114
+        },
+        "tint": 14254190,
+        "character": "char1",
+        "maxCustomSlots": 5,
+        "stackSize": 9,
+        "inventory": {
+          "slots": [
+            {
+              "type": "bomb_wide",
+              "count": 4
+            },
+            {
+              "type": "delay_tricky",
+              "count": 4
+            },
+            {
+              "type": "ender_pearl",
+              "count": 4
+            },
+            {
+              "type": "flash",
+              "count": 2
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_37f39937b664_mpl78uck_3_paid",
+        "name": "Maverick",
+        "tier": "paid",
+        "price": 1290,
+        "colors": {
+          "shirt": 14107285,
+          "pants": 2656884,
+          "hair": 3435954
+        },
+        "tint": 7726196,
+        "character": "char2",
+        "maxCustomSlots": 5,
+        "stackSize": 9,
+        "inventory": {
+          "slots": [
+            {
+              "type": "delay_tricky",
+              "count": 4
+            },
+            {
+              "type": "ender_pearl",
+              "count": 4
+            },
+            {
+              "type": "bomb_wide",
+              "count": 3
+            },
+            {
+              "type": "bomb",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_37f39937b664_mpl78uck_4_paid_expensive",
+        "name": "Helios",
+        "tier": "paid_expensive",
+        "price": 1280,
+        "colors": {
+          "shirt": 12337879,
+          "pants": 9055528,
+          "hair": 11678856
+        },
+        "tint": 10937325,
+        "character": "char7",
+        "maxCustomSlots": 6,
+        "stackSize": 12,
+        "inventory": {
+          "slots": [
+            {
+              "type": "motion_detector_flare",
+              "count": 5
+            },
+            {
+              "type": "banana",
+              "count": 5
+            },
+            {
+              "type": "shield",
+              "count": 5
+            },
+            {
+              "type": "cluster_bomb",
+              "count": 1
+            },
+            null,
+            null
+          ]
+        }
+      }
+    ],
+    "boughtTemplateIds": [
+      "cycle_p_37f39937b664_mpl78uck_0_free"
+    ]
+  },
+  "factories": {
+    "1": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "2": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "3": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "4": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    }
+  },
+  "totalMatchesPlayed": 0
+}

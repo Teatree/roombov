@@ -714,25 +714,43 @@ if (existsSync(join(publicMapsDir, '..'))) {
       }
     };
     walkForMin(patched.layers as TiledLayer[]);
-    if (Number.isFinite(minChunkX) && Number.isFinite(minChunkY) && (minChunkX !== 0 || minChunkY !== 0)) {
-      const shiftLayers = (layers: Array<Record<string, unknown>>): void => {
-        for (const l of layers) {
-          if (l.type === 'tilelayer' && Array.isArray(l.chunks)) {
+    const shiftX = Number.isFinite(minChunkX) ? minChunkX : 0;
+    const shiftY = Number.isFinite(minChunkY) ? minChunkY : 0;
+    // Zero-shift every chunk, then pin EVERY tile layer to a common origin
+    // (startx/starty = 0) and the full map size. Tiled writes each layer's
+    // startx/starty as that layer's OWN minimum chunk, and Phaser renders an
+    // infinite layer's chunks relative to its own startx. When layers cover
+    // different regions — e.g. the ground layer was extended into negative
+    // coords for a border but the collision/decoration layers weren't — they
+    // end up with different startx and render offset from each other by the
+    // difference. Forcing a shared origin puts every chunk in the same
+    // coordinate space as the JSON game-logic grid, so visuals line up with
+    // collision/spawns regardless of per-layer painted extent.
+    const normalizeLayers = (layers: Array<Record<string, unknown>>): void => {
+      for (const l of layers) {
+        if (l.type === 'tilelayer') {
+          if (Array.isArray(l.chunks)) {
             for (const c of l.chunks as Array<{ x: number; y: number }>) {
-              c.x -= minChunkX;
-              c.y -= minChunkY;
+              c.x -= shiftX;
+              c.y -= shiftY;
             }
           }
-          if (typeof l.startx === 'number') l.startx = (l.startx as number) - minChunkX;
-          if (typeof l.starty === 'number') l.starty = (l.starty as number) - minChunkY;
-          if (l.type === 'group' && Array.isArray(l.layers)) {
-            shiftLayers(l.layers as Array<Record<string, unknown>>);
-          }
+          l.startx = 0;
+          l.starty = 0;
+          l.width = finalW;
+          l.height = finalH;
         }
-      };
-      shiftLayers(patched.layers as Array<Record<string, unknown>>);
-      console.log(`  zero-shifted chunks by (-${minChunkX}, -${minChunkY}) tiles`);
-    }
+        if (l.type === 'group' && Array.isArray(l.layers)) {
+          normalizeLayers(l.layers as Array<Record<string, unknown>>);
+        }
+      }
+    };
+    normalizeLayers(patched.layers as Array<Record<string, unknown>>);
+    // The header copied from the source .tmj still carries the old/viewport
+    // dimensions; correct it so Phaser sizes the map to the true extent.
+    (patched as { width: number; height: number }).width = finalW;
+    (patched as { width: number; height: number }).height = finalH;
+    console.log(`  normalized visual layers to origin (0,0), ${finalW}x${finalH} (chunk shift -${shiftX},-${shiftY})`);
   }
 
   const copiedPngs = new Set<string>();

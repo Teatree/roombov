@@ -1,0 +1,98 @@
+{
+  "id": "p_5ddddd91004a",
+  "createdAt": 1776594955372,
+  "updatedAt": 1776595399415,
+  "coins": 512,
+  "treasures": {},
+  "ownedBombermen": [
+    {
+      "id": "owned_p_5ddddd91004a_1776594958250_nyp7",
+      "name": "Connolly",
+      "tier": "free",
+      "colors": {
+        "shirt": 14131778,
+        "pants": 5409320,
+        "hair": 11678792
+      },
+      "tint": 10653416,
+      "character": "char7",
+      "inventory": {
+        "slots": [
+          {
+            "type": "flare",
+            "count": 5
+          },
+          {
+            "type": "bomb",
+            "count": 3
+          },
+          {
+            "type": "delay_tricky",
+            "count": 2
+          },
+          {
+            "type": "motion_detector_flare",
+            "count": 2
+          }
+        ]
+      },
+      "purchasedAt": 1776594958250,
+      "sourceTemplateId": "cycle_1776594940811_1_free",
+      "maxCustomSlots": 4,
+      "stackSize": 5,
+      "sp": 0,
+      "upgrades": {
+        "cap": 0,
+        "stack": 0,
+        "hp": 0
+      },
+      "lifetimeSp": 0
+    }
+  ],
+  "equippedBombermanId": "owned_p_5ddddd91004a_1776594958250_nyp7",
+  "bombStockpile": {},
+  "gamblerStreet": {
+    "gamblers": [],
+    "pendingArrivals": [
+      1777330178905,
+      1777330178905,
+      1777330178905,
+      1777330178905,
+      1777330178905
+    ],
+    "lastTickedAt": 1777330178905,
+    "nextGamblerSerial": 1
+  },
+  "bombermanShop": null,
+  "factories": {
+    "1": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "2": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "3": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "4": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    }
+  },
+  "totalMatchesPlayed": 0
+}

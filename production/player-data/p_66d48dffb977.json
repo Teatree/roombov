@@ -1,0 +1,292 @@
+{
+  "id": "p_66d48dffb977",
+  "createdAt": 1777246461874,
+  "updatedAt": 1780345362430,
+  "coins": 135,
+  "treasures": {
+    "coffee": 55,
+    "grapes": 50,
+    "lanterns": 40
+  },
+  "ownedBombermen": [
+    {
+      "id": "owned_p_66d48dffb977_1778775223464_x2l2",
+      "name": "El Diablo",
+      "tier": "paid",
+      "colors": {
+        "shirt": 14107231,
+        "pants": 2644106,
+        "hair": 3453505
+      },
+      "tint": 15752890,
+      "character": "char2",
+      "maxCustomSlots": 5,
+      "stackSize": 7,
+      "inventory": {
+        "slots": [
+          {
+            "type": "flare",
+            "count": 5
+          },
+          {
+            "type": "bomb",
+            "count": 7
+          },
+          {
+            "type": "shield",
+            "count": 5
+          },
+          {
+            "type": "ender_pearl",
+            "count": 1
+          },
+          null
+        ]
+      },
+      "purchasedAt": 1778775223464,
+      "sourceTemplateId": "cycle_p_66d48dffb977_mp5ou9p7_2_paid",
+      "sp": 0,
+      "upgrades": {
+        "cap": 0,
+        "stack": 0,
+        "hp": 0
+      },
+      "lifetimeSp": 0
+    }
+  ],
+  "equippedBombermanId": "owned_p_66d48dffb977_1778775223464_x2l2",
+  "bombStockpile": {
+    "delay_tricky": 1,
+    "bomb_wide": 4,
+    "flash": 1,
+    "molotov": 1,
+    "motion_detector_flare": 1,
+    "flare": 2,
+    "bomb": 1,
+    "fart_escape": 1
+  },
+  "gamblerStreet": {
+    "gamblers": [],
+    "pendingArrivals": [
+      1777330178906,
+      1777330178906,
+      1777330178906,
+      1777330178906,
+      1777330178906
+    ],
+    "lastTickedAt": 1777330178906,
+    "nextGamblerSerial": 1
+  },
+  "bombermanShop": {
+    "cycleId": "cycle_p_66d48dffb977_mpvnntha",
+    "startedAt": 1780345362430,
+    "endsAt": 1780345482430,
+    "bombermen": [
+      {
+        "id": "cycle_p_66d48dffb977_mpvnntha_0_free",
+        "name": "O'Brien",
+        "tier": "free",
+        "price": 750,
+        "colors": {
+          "shirt": 14107216,
+          "pants": 2656873,
+          "hair": 11686964
+        },
+        "tint": 15102120,
+        "character": "char4",
+        "maxCustomSlots": 4,
+        "stackSize": 6,
+        "inventory": {
+          "slots": [
+            {
+              "type": "ender_pearl",
+              "count": 4
+            },
+            {
+              "type": "bomb",
+              "count": 3
+            },
+            {
+              "type": "delay_tricky",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_66d48dffb977_mpvnntha_1_free",
+        "name": "Gallagher",
+        "tier": "free",
+        "price": 670,
+        "colors": {
+          "shirt": 12075735,
+          "pants": 9079080,
+          "hair": 6926900
+        },
+        "tint": 10178032,
+        "character": "char2",
+        "maxCustomSlots": 4,
+        "stackSize": 6,
+        "inventory": {
+          "slots": [
+            {
+              "type": "delay_tricky",
+              "count": 4
+            },
+            {
+              "type": "bomb_wide",
+              "count": 3
+            },
+            {
+              "type": "banana",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_66d48dffb977_mpvnntha_2_paid",
+        "name": "Ringo",
+        "tier": "paid",
+        "price": 1130,
+        "colors": {
+          "shirt": 4380536,
+          "pants": 2656857,
+          "hair": 3453540
+        },
+        "tint": 15588717,
+        "character": "char7",
+        "maxCustomSlots": 5,
+        "stackSize": 8,
+        "inventory": {
+          "slots": [
+            {
+              "type": "bomb_wide",
+              "count": 4
+            },
+            {
+              "type": "bomb",
+              "count": 4
+            },
+            {
+              "type": "shield",
+              "count": 3
+            },
+            {
+              "type": "banana",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_66d48dffb977_mpvnntha_3_paid",
+        "name": "Maverick",
+        "tier": "paid",
+        "price": 1400,
+        "colors": {
+          "shirt": 14107222,
+          "pants": 9078824,
+          "hair": 11700788
+        },
+        "tint": 15710878,
+        "character": "char2",
+        "maxCustomSlots": 5,
+        "stackSize": 9,
+        "inventory": {
+          "slots": [
+            {
+              "type": "shield",
+              "count": 4
+            },
+            {
+              "type": "ender_pearl",
+              "count": 4
+            },
+            {
+              "type": "bomb",
+              "count": 4
+            },
+            {
+              "type": "flash",
+              "count": 2
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_66d48dffb977_mpvnntha_4_paid_expensive",
+        "name": "Midas",
+        "tier": "paid_expensive",
+        "price": 1130,
+        "colors": {
+          "shirt": 5194455,
+          "pants": 9078568,
+          "hair": 3453518
+        },
+        "tint": 11970030,
+        "character": "char1",
+        "maxCustomSlots": 6,
+        "stackSize": 12,
+        "inventory": {
+          "slots": [
+            {
+              "type": "fart_escape",
+              "count": 5
+            },
+            {
+              "type": "banana",
+              "count": 5
+            },
+            {
+              "type": "flare",
+              "count": 5
+            },
+            {
+              "type": "phosphorus",
+              "count": 1
+            },
+            null,
+            null
+          ]
+        }
+      }
+    ],
+    "boughtTemplateIds": []
+  },
+  "factories": {
+    "1": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "2": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "3": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 1,
+      "sessionTotal": 1
+    },
+    "4": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    }
+  },
+  "totalMatchesPlayed": 0
+}

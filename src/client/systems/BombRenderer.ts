@@ -351,7 +351,15 @@ export class BombRenderer {
     const trailColor = BOMB_TRAIL_COLOR[type];
     const TRAIL_LINGER_MS = 500;
     if (trailColor !== undefined) {
-      const DOT_COUNT = 7;
+      // Dot count scales with throw distance so the gap between dots stays
+      // roughly constant instead of stretching thin (and barely perceptible)
+      // on long throws. Target ~0.45 tiles of spacing, clamped so short throws
+      // still read as a trail and long throws don't spawn an absurd count.
+      // Speed is still communicated by the bomb sprite itself: flight time is
+      // fixed, so a longer throw simply travels faster.
+      const distTiles = Math.hypot(toX - fromX, toY - fromY);
+      const TRAIL_DOT_SPACING_TILES = 0.45;
+      const DOT_COUNT = Math.max(5, Math.min(16, Math.round(distTiles / TRAIL_DOT_SPACING_TILES)));
       const dotRadius = ts * 0.09;
       for (let i = 1; i <= DOT_COUNT; i++) {
         const tFrac = i / (DOT_COUNT + 1);

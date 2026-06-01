@@ -14,7 +14,7 @@ const SWORD_FADE_MS = BombermanSpriteSystem.SWORD_FADE_MS;
 import { ensureBombermanAnims, preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
 import { loadMapById } from '@shared/maps/map-loader.ts';
 import { findPath, type PathTile } from '@shared/systems/Pathfinding.ts';
-import { resolveBombTrigger } from '@shared/systems/BombResolver.ts';
+import { resolveBombTrigger, bombAffectedTiles } from '@shared/systems/BombResolver.ts';
 import type { MapData } from '@shared/types/map.ts';
 import type { MatchState } from '@shared/types/match.ts';
 import type { BombermanState } from '@shared/types/bomberman.ts';
@@ -23,6 +23,7 @@ import type { BombType } from '@shared/types/bombs.ts';
 import { BOMB_CATALOG } from '@shared/config/bombs.ts';
 import { BALANCE } from '@shared/config/balance.ts';
 import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
+import { BombShopTooltip, bombTooltipInfoFor, type BombTooltipInfo } from '../systems/BombShopTooltip.ts';
 import { preloadTreasureIcons, TREASURE_TEXTURE_KEY, treasureIconFrame } from '../systems/TreasureIcons.ts';
 import { TreasureListWidget } from '../systems/TreasureListWidget.ts';
 import { ShieldRenderer } from '../systems/ShieldRenderer.ts';
@@ -49,6 +50,18 @@ type InputMode =
 
 const SLOT_SIZE = 64;
 const SLOT_GAP = 8;
+
+/** Bombs that may be thrown onto ANY tile (incl. walls) — their throw target
+ *  snaps to whatever tile is under the cursor. Every other bomb is "restricted"
+ *  and snaps to the nearest floor tile (see snapThrowTarget). */
+const THROW_ANYWHERE_BOMBS = new Set<BombType>(['flare', 'phosphorus', 'fart_escape']);
+
+/** Landed bombs of these types do NOT show the filled "danger" ghost zone:
+ *  they detonate on impact / are non-damaging, so there's no delayed threat to
+ *  telegraph. (The aiming-preview outline still shows for all bombs.) */
+const LANDED_GHOST_EXCLUDED = new Set<BombType>([
+  'phosphorus', 'flare', 'contact', 'molotov', 'fart_escape', 'ender_pearl', 'cluster_bomb',
+]);
 // Slot count is per-Bomberman now (tier-driven). Use `localTotalSlotCount`
 // in instance methods. The `_LOCAL_FALLBACK_*` constants below are used
 // before the local Bomberman is known (e.g., scene init, before first state).
@@ -191,6 +204,15 @@ export class MatchScene extends Phaser.Scene {
   private effectsLayer!: Phaser.GameObjects.Container;
   private highlightGraphics!: Phaser.GameObjects.Graphics;
   private pathGraphics!: Phaser.GameObjects.Graphics;
+  /** Explosion-ghost overlay. Depth 0.5 → just above the map "Tiles" layer but
+   *  below decoration layers, decals, bombs, corpses, and Bombermen. Fog
+   *  (depth 50) occludes it, so ghosts never show through black fog. Holds both
+   *  the "landed bomb" filled zones (everyone) and the local "aiming" outline. */
+  private ghostGraphics!: Phaser.GameObjects.Graphics;
+  /** Dotted throw-trajectory arc (fillCircle dots only). Kept on its own
+   *  Graphics so its fills never interleave with highlightGraphics' arc/path
+   *  strokes — mixing fillCircle with beginPath on one Graphics breaks rendering. */
+  private trajectoryGraphics!: Phaser.GameObjects.Graphics;
   private bombermanSpriteSystem: BombermanSpriteSystem | null = null;
 
   // HUD — each element is created as a scene root object with
@@ -372,6 +394,30 @@ export class MatchScene extends Phaser.Scene {
   // Blood trail decals (persistent, one per tile, tracked separately from
   // explosion decals). Map so we can iterate for the per-turn decal-decay pass.
   private bloodDecals = new Map<string, Phaser.GameObjects.Graphics>();
+
+  /**
+   * Rich cursor-following tooltip (same widget as the Bombs Shop). Shown only
+   * for bomb hovers — HUD loadout slots (incl. the Rock) and loot-panel items
+   * (across all stacked loot rows). Tiles/HP/turns/targeting are NOT covered;
+   * those keep using the bottom-right TooltipScene. While a bomb tooltip is
+   * pending or showing, the bottom-right panel is suppressed so the same bomb
+   * isn't described twice.
+   *
+   * In-match only, the tooltip arms a 1s hover delay: it appears only after the
+   * cursor has rested on the SAME bomb for `BOMB_TOOLTIP_HOVER_MS`. Moving to a
+   * different bomb (different slot / loot index) restarts the timer; mouse
+   * motion within the same bomb does not. The Bombs Shop keeps using the same
+   * widget with no delay — the delay lives entirely here in the caller.
+   */
+  private bombTooltip: BombShopTooltip | null = null;
+  private static readonly BOMB_TOOLTIP_HOVER_MS = 1000;
+  /** Identity of the bomb currently under the cursor (`hud:<n>` / `loot:<n>`), or null. */
+  private bombTooltipHoverId: string | null = null;
+  /** `time.now` at which the hovered bomb's tooltip becomes eligible to show. */
+  private bombTooltipShowAt = 0;
+  /** False while the cursor is outside the game canvas — gates the per-frame
+   *  tooltip refresh so a stale pointer position can't keep a tooltip alive. */
+  private pointerInsideGame = true;
 
   /**
    * Tile under the cursor in world tile coords, updated by the pointermove
@@ -627,6 +673,11 @@ export class MatchScene extends Phaser.Scene {
     // sprites that overlap the target tile. Just above pathGraphics for layering.
     this.highlightGraphics = this.add.graphics().setDepth(65);
     this.pathGraphics = this.add.graphics().setDepth(60);
+    // Explosion-ghost overlay — see field doc. 0.5 sits between the "Tiles"
+    // ground layer (depth 0) and the first decoration layer (depth 1).
+    this.ghostGraphics = this.add.graphics().setDepth(0.5);
+    // Throw-trajectory dots sit just below the reticle/hourglass (depth 65).
+    this.trajectoryGraphics = this.add.graphics().setDepth(64);
 
     // HUD uses a second camera that never zooms/scrolls. It ignores all world
     // containers so it only draws HUD objects. The main camera ignores HUD objects
@@ -638,7 +689,8 @@ export class MatchScene extends Phaser.Scene {
       this.bombLayer, this.scorchDecalLayer, this.pearlDecalLayer, this.bloodDecalLayer,
       this.corpseLayer, this.explosionLayer, this.entitiesLayer, this.bombermanLayer,
       this.effectsLayer, this.highlightGraphics, this.pathGraphics,
-      this.shieldLayer, this.shieldShardLayer,
+      this.shieldLayer, this.shieldShardLayer, this.ghostGraphics,
+      this.trajectoryGraphics,
     ]);
 
     this.buildHud();
@@ -689,6 +741,17 @@ export class MatchScene extends Phaser.Scene {
     // Hover tooltip overlay — runs in both network and tutorial mode.
     if (!this.scene.isActive('TooltipScene')) this.scene.launch('TooltipScene');
 
+    // Rich cursor tooltip for bomb hovers (lives inside this scene, depth 5000).
+    // Reset dwell state too — Phaser reuses the scene instance across matches.
+    this.bombTooltip = new BombShopTooltip(this);
+    // The tooltip is positioned in screen space, so only the HUD camera should
+    // draw it — make the zoomed/scrolled world camera ignore it (otherwise a
+    // second, mis-scaled copy appears over the map).
+    this.bombTooltip.ignoreFrom(this.cameras.main);
+    this.bombTooltipHoverId = null;
+    this.bombTooltipShowAt = 0;
+    this.pointerInsideGame = true;
+
     // Left-click = game actions. Middle/right = manual camera pan: first
     // press also flips `cameraManualOverride` on, which disables the
     // per-frame auto-centering in update() for the rest of the match.
@@ -717,6 +780,7 @@ export class MatchScene extends Phaser.Scene {
     });
 
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      this.pointerInsideGame = true;
       // Track hovered tile for the red throw-target reticle. Runs on every
       // pointermove regardless of drag state so the reticle keeps tracking
       // while the player moves the mouse.
@@ -743,7 +807,13 @@ export class MatchScene extends Phaser.Scene {
     });
 
     this.input.on('pointerup', () => { this.cameraDragging = false; });
-    this.input.on('gameout', () => this.getTooltipScene()?.setKey(null));
+    this.input.on('gameover', () => { this.pointerInsideGame = true; });
+    this.input.on('gameout', () => {
+      this.pointerInsideGame = false;
+      this.getTooltipScene()?.setKey(null);
+      this.bombTooltip?.hide();
+      this.bombTooltipHoverId = null; // re-arm the dwell delay on re-entry
+    });
 
     // Suppress the browser context menu so right-drag works cleanly.
     this.game.canvas.addEventListener('contextmenu', this.preventContext);
@@ -782,6 +852,8 @@ export class MatchScene extends Phaser.Scene {
       this.scene.stop('TutorialOverlayScene');
     }
     if (this.scene.isActive('TooltipScene')) this.scene.stop('TooltipScene');
+    this.bombTooltip?.destroy();
+    this.bombTooltip = null;
     this.mapRenderer?.destroy();
     this.mapRenderer = null;
     this.fogRenderer?.destroy();
@@ -854,6 +926,14 @@ export class MatchScene extends Phaser.Scene {
 
     if (!this.state) return;
 
+    // Re-evaluate the hover tooltip every frame from the live pointer position.
+    // pointermove alone can't reveal the bomb tooltip after its 1s dwell when
+    // the cursor has come to rest, so we re-check here while it's over the canvas.
+    if (this.pointerInsideGame) {
+      const p = this.input.activePointer;
+      this.refreshTooltip(p.x, p.y);
+    }
+
     // Update ready-to-escape feedback (banner above head + progress ring)
     this.updateEscapeReadyIndicator();
 
@@ -863,6 +943,14 @@ export class MatchScene extends Phaser.Scene {
     if (this.inputMode.kind === 'pathing') {
       this.drawPath();
     }
+
+    // Explosion ghosts every frame: landed-bomb danger zones flash via Date.now(),
+    // and the aiming preview tracks the live (possibly motionless) cursor.
+    this.drawGhostZones();
+    // Throw reticle (arc + cross + red hourglass) — redraw every frame so the
+    // hourglass drains smoothly (like the movement path) and clears the instant
+    // aiming ends (drawHighlights() early-returns with both graphics cleared).
+    this.drawHighlights();
 
     // Camera follow: snap to the local player's tile center every frame.
     // Skips if the player has escaped (sprite is gone) so the last framing
@@ -2950,37 +3038,258 @@ export class MatchScene extends Phaser.Scene {
     });
   }
 
+  /**
+   * Throw reticle: a dotted parabolic trajectory arc from the local Bomberman
+   * to the (snapped) target, a simple red X cross on the target, and a red
+   * countdown hourglass over it. Replaces the old filled-square + cross.
+   * The arc dots live on `trajectoryGraphics`; the cross + hourglass on
+   * `highlightGraphics` (see the trajectoryGraphics field doc for why).
+   */
   private drawHighlights(): void {
     this.highlightGraphics.clear();
+    this.trajectoryGraphics.clear();
     if (!this.mapData) return;
     const ts = this.mapData.tileSize;
+    const me = this.myBomberman();
+    const bombType = this.selectedThrowBombType();
 
-    // Pick the attack-target tile (committed aim > armed-hover preview).
-    let tx: number | null = null;
-    let ty: number | null = null;
+    // Raw target: committed aim target > armed-hover preview.
+    let rawTx: number | null = null;
+    let rawTy: number | null = null;
     if (this.inputMode.kind === 'aim'
         && this.inputMode.targetX !== null && this.inputMode.targetY !== null) {
-      tx = this.inputMode.targetX;
-      ty = this.inputMode.targetY;
+      rawTx = this.inputMode.targetX;
+      rawTy = this.inputMode.targetY;
     } else if (this.selectedSlot !== null
         && this.hoveredTileX !== null && this.hoveredTileY !== null) {
-      tx = this.hoveredTileX;
-      ty = this.hoveredTileY;
+      rawTx = this.hoveredTileX;
+      rawTy = this.hoveredTileY;
     }
-    if (tx === null || ty === null) return;
+    if (rawTx === null || rawTy === null || !me || !bombType) return;
 
-    // 15% red filled square — exactly tile-sized.
-    this.highlightGraphics.fillStyle(0xff4444, 0.15);
-    this.highlightGraphics.fillRect(tx * ts, ty * ts, ts, ts);
+    // Snap to a valid target. The committed aim target is already snapped at
+    // click time, so re-snapping it is a no-op.
+    const snapped = this.snapThrowTarget(rawTx, rawTy, bombType);
+    const cx = snapped.x * ts + ts / 2;
+    const cy = snapped.y * ts + ts / 2;
 
-    // 80% red X cross — ~70% of tile, centered. Thin stroke so the cross
-    // reads as a delicate reticle rather than a heavy bar.
-    const cx = tx * ts + ts / 2;
-    const cy = ty * ts + ts / 2;
+    // Dotted parabolic arc from the Bomberman's tile center to the target.
+    this.drawTrajectoryArc(me.x * ts + ts / 2, me.y * ts + ts / 2, cx, cy, ts);
+
+    // Simple red X cross on the target tile.
     const half = ts * 0.35;
-    this.highlightGraphics.lineStyle(1, 0xff4444, 0.8);
+    this.highlightGraphics.lineStyle(1.5, 0xff4444, 0.85);
     this.highlightGraphics.lineBetween(cx - half, cy - half, cx + half, cy + half);
     this.highlightGraphics.lineBetween(cx - half, cy + half, cx + half, cy - half);
+
+    // Red countdown hourglass over the cross.
+    this.drawTargetHourglass(cx, cy, ts);
+  }
+
+  /** Bomb type currently armed for throwing (committed aim or hover slot), or null. */
+  private selectedThrowBombType(): BombType | null {
+    const me = this.myBomberman();
+    if (!me) return null;
+    let slotIdx: number | null = null;
+    if (this.inputMode.kind === 'aim') slotIdx = this.inputMode.slotIndex;
+    else if (this.selectedSlot !== null) slotIdx = this.selectedSlot;
+    if (slotIdx === null) return null;
+    if (slotIdx === 0) return 'rock';
+    return me.inventory.slots[slotIdx - 1]?.type ?? null;
+  }
+
+  /**
+   * Snap a raw cursor tile to a throw target:
+   *  - Greater (black) fog → any tile (you can't see whether it's a wall).
+   *  - Flare/Phosphorus/Fart Escape → any tile.
+   *  - Otherwise (restricted bomb in discovered space) → the tile if it's floor,
+   *    else the nearest floor tile. No range limit.
+   */
+  private snapThrowTarget(rawTx: number, rawTy: number, bombType: BombType): { x: number; y: number } {
+    if (!this.mapData) return { x: rawTx, y: rawTy };
+    if (this.fogRenderer?.isUnseen(rawTx, rawTy)) return { x: rawTx, y: rawTy };
+    if (THROW_ANYWHERE_BOMBS.has(bombType)) return { x: rawTx, y: rawTy };
+    if (this.isFloorTile(rawTx, rawTy)) return { x: rawTx, y: rawTy };
+    return this.nearestFloorTile(rawTx, rawTy) ?? { x: rawTx, y: rawTy };
+  }
+
+  private isFloorTile(tx: number, ty: number): boolean {
+    return this.mapData?.grid[ty]?.[tx] === 0;
+  }
+
+  /** Nearest floor tile to (tx,ty) by ring search (capped). Null if none near. */
+  private nearestFloorTile(tx: number, ty: number): { x: number; y: number } | null {
+    const md = this.mapData;
+    if (!md) return null;
+    const MAX_R = 10;
+    for (let r = 1; r <= MAX_R; r++) {
+      let best: { x: number; y: number } | null = null;
+      let bestD = Infinity;
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue; // ring only
+          const nx = tx + dx;
+          const ny = ty + dy;
+          if (nx < 0 || ny < 0 || nx >= md.width || ny >= md.height) continue;
+          if (md.grid[ny]?.[nx] !== 0) continue;
+          const d = dx * dx + dy * dy;
+          if (d < bestD) { bestD = d; best = { x: nx, y: ny }; }
+        }
+      }
+      if (best) return best;
+    }
+    return null;
+  }
+
+  /**
+   * Dotted parabolic arc from (sx,sy) to (ex,ey). Dots evenly spaced along the
+   * curve; the path lifts upward proportional to distance so it reads as a
+   * lobbed throw. Drawn on trajectoryGraphics (fillCircle only).
+   */
+  private drawTrajectoryArc(sx: number, sy: number, ex: number, ey: number, ts: number): void {
+    const dist = Math.hypot(ex - sx, ey - sy);
+    if (dist < 2) return;
+    const arcHeight = Math.min(ts * 2.2, dist * 0.35);
+    const dotCount = Math.max(4, Math.round(dist / (ts * 0.42)));
+    const dotR = Math.max(1.5, ts * 0.06);
+    // Skip the first stretch so dots don't pile onto the thrower sprite.
+    const startT = Math.min(0.35, (ts * 0.5) / dist);
+    this.trajectoryGraphics.fillStyle(0xff4444, 0.85);
+    for (let i = 0; i <= dotCount; i++) {
+      const t = startT + (1 - startT) * (i / dotCount);
+      const x = sx + (ex - sx) * t;
+      const y = sy + (ey - sy) * t - arcHeight * 4 * t * (1 - t);
+      this.trajectoryGraphics.fillCircle(x, y, dotR);
+    }
+  }
+
+  /**
+   * Red countdown hourglass over the throw target. Functions EXACTLY like the
+   * movement path hourglass (drawPath), just red:
+   *  - denominator is the full turn (`totalMs = inputMs + transitionMs`)
+   *  - endpoint is throw-start (input→transition boundary), so during input the
+   *    arc drains `phaseRemaining/totalMs`; during transition it shows the
+   *    refilled `(phaseRemaining + inputMs)/totalMs` (matches the movement model)
+   *  - driven off the global phase timer, so it never resets on click
+   * strokeCircle + arc/strokePath only — mirrors drawPath, no fillCircle here.
+   */
+  private drawTargetHourglass(cx: number, cy: number, ts: number): void {
+    if (!this.state) return;
+    const phase = this.state.phase;
+    if (phase !== 'input' && phase !== 'transition') return;
+    const inputMs = BALANCE.match.inputPhaseSeconds * 1000;
+    const transitionMs = BALANCE.match.transitionPhaseSeconds * 1000;
+    const totalMs = inputMs + transitionMs;
+    const phaseRemaining = Math.max(0, this.state.phaseEndsAt - Date.now());
+    const remaining = phase === 'input' ? phaseRemaining : phaseRemaining + inputMs;
+    const progress = Math.max(0, Math.min(1, remaining / totalMs));
+    const radius = ts * 0.255;
+    const g = this.highlightGraphics;
+    g.lineStyle(1.5, 0x442222, 0.4);
+    g.strokeCircle(cx, cy, radius);
+    if (progress > 0) {
+      g.lineStyle(2.5, 0xff4466, 0.76);
+      g.beginPath();
+      const start = -Math.PI / 2;
+      g.arc(cx, cy, radius, start, start + progress * Math.PI * 2, false);
+      g.strokePath();
+    }
+  }
+
+  /**
+   * Explosion-ghost overlay (depth 0.5; fog occludes it naturally). Two parts:
+   *  1. Landed bombs (visible to everyone): filled 40% red tiles for delayed
+   *     explosives (excluding the impact/non-damaging types). Tiles that a
+   *     next-resolution detonation covers (fuseRemaining===0) flash.
+   *  2. Aiming preview (local player only): a red outline of where the armed
+   *     bomb would land, following the snapped target. Hidden in greater fog.
+   * Zones are unioned so overlapping bombs paint each tile once.
+   */
+  private drawGhostZones(): void {
+    this.ghostGraphics.clear();
+    if (!this.mapData || !this.state) return;
+    const ts = this.mapData.tileSize;
+    const closedDoors = this.buildClosedDoorSet();
+    const shieldWalls = this.buildShieldWallSet();
+
+    // --- Landed bombs (filled, everyone) ---
+    const landed = new Map<string, { x: number; y: number; flash: boolean }>();
+    for (const b of this.state.bombs) {
+      if (LANDED_GHOST_EXCLUDED.has(b.type)) continue;
+      // Flash only when an actual explosion is imminent. A scatter bomb (Banana)
+      // at fuse 0 merely spawns its children (no blast that turn), so it stays
+      // steady — only the spawned children flash when THEY are about to explode.
+      const flash = b.fuseRemaining === 0 && BOMB_CATALOG[b.type].behavior.kind !== 'scatter';
+      for (const t of bombAffectedTiles(b.type, b.x, b.y, this.mapData, closedDoors, shieldWalls)) {
+        const key = `${t.x},${t.y}`;
+        const cell = landed.get(key);
+        if (cell) { if (flash) cell.flash = true; }
+        else landed.set(key, { x: t.x, y: t.y, flash });
+      }
+    }
+    // Flash via Date.now() oscillation (no tween — Phaser forceSetTimeOut gotcha).
+    // Alphas are ~1/3 more transparent than the first pass (×2/3).
+    const flashAlpha = 0.167 + 0.20 * (0.5 + 0.5 * Math.sin(Date.now() / 150));
+    for (const cell of landed.values()) {
+      this.ghostGraphics.fillStyle(0xff4444, cell.flash ? flashAlpha : 0.27);
+      this.ghostGraphics.fillRect(cell.x * ts, cell.y * ts, ts, ts);
+    }
+
+    // --- Aiming preview (outline, local only) ---
+    if (this.selectedSlot !== null || this.inputMode.kind === 'aim') {
+      const bombType = this.selectedThrowBombType();
+      let rawTx: number | null = null;
+      let rawTy: number | null = null;
+      if (this.inputMode.kind === 'aim'
+          && this.inputMode.targetX !== null && this.inputMode.targetY !== null) {
+        rawTx = this.inputMode.targetX;
+        rawTy = this.inputMode.targetY;
+      } else if (this.hoveredTileX !== null && this.hoveredTileY !== null) {
+        rawTx = this.hoveredTileX;
+        rawTy = this.hoveredTileY;
+      }
+      if (bombType && rawTx !== null && rawTy !== null) {
+        const snapped = this.snapThrowTarget(rawTx, rawTy, bombType);
+        // Don't reveal a zone whose target sits in greater (black) fog.
+        if (!this.fogRenderer?.isUnseen(snapped.x, snapped.y)) {
+          const tiles = bombAffectedTiles(bombType, snapped.x, snapped.y, this.mapData, closedDoors, shieldWalls);
+          this.strokeZonePerimeter(tiles, ts);
+        }
+      }
+    }
+  }
+
+  /** Outline the perimeter of a tile set (only edges bordering non-set tiles). */
+  private strokeZonePerimeter(tiles: Array<{ x: number; y: number }>, ts: number): void {
+    const set = new Set(tiles.map(t => `${t.x},${t.y}`));
+    this.ghostGraphics.lineStyle(2, 0xff4444, 0.57); // ~1/3 more transparent (×2/3)
+    for (const t of tiles) {
+      const px = t.x * ts;
+      const py = t.y * ts;
+      if (!set.has(`${t.x},${t.y - 1}`)) this.ghostGraphics.lineBetween(px, py, px + ts, py);
+      if (!set.has(`${t.x},${t.y + 1}`)) this.ghostGraphics.lineBetween(px, py + ts, px + ts, py + ts);
+      if (!set.has(`${t.x - 1},${t.y}`)) this.ghostGraphics.lineBetween(px, py, px, py + ts);
+      if (!set.has(`${t.x + 1},${t.y}`)) this.ghostGraphics.lineBetween(px + ts, py, px + ts, py + ts);
+    }
+  }
+
+  private buildClosedDoorSet(): Set<string> {
+    const s = new Set<string>();
+    if (!this.state) return s;
+    for (const d of this.state.doors) {
+      if (d.opened) continue;
+      for (const t of d.tiles) s.add(`${t.x},${t.y}`);
+    }
+    return s;
+  }
+
+  private buildShieldWallSet(): Set<string> {
+    const s = new Set<string>();
+    if (!this.state) return s;
+    for (const w of this.state.shieldWalls) {
+      for (const t of w.tiles) s.add(`${t.x},${t.y}`);
+    }
+    return s;
   }
 
   private onClick(pointer: Phaser.Input.Pointer): void {
@@ -3053,28 +3362,23 @@ export class MatchScene extends Phaser.Scene {
       const slotIdx = this.selectedSlot;
       const selectedType: BombType = slotIdx === 0 ? 'rock'
         : (me.inventory.slots[slotIdx - 1]?.type ?? 'rock');
-      const isFlare = selectedType === 'flare';
-      const tileIsWall = this.mapData.grid[ty]?.[tx] !== 0;
-      const tileUnseen = this.fogRenderer?.isUnseen(tx, ty) ?? false;
 
-      // If the target is a known wall (discovered + blocked), only flares
-      // can be thrown there. Unseen tiles always allow throws (player can't
-      // see whether it's a wall — the bomb just fizzles server-side).
-      if (tileIsWall && !tileUnseen && !isFlare) {
-        console.log(`[click] can't throw ${selectedType} at revealed wall (${tx},${ty})`);
-        return;
-      }
+      // Snap to the same tile the aiming preview points at: restricted bombs
+      // land on the nearest floor tile (so a wall-click still throws to a valid
+      // tile), flare/phosphorus/fart and greater-fog clicks pass through. This
+      // is the committed throw target.
+      const snapped = this.snapThrowTarget(tx, ty, selectedType);
 
       // Stage the throw via aim mode (flushStagedAction handles sending +
       // the input-phase gate so throws queued during transition are deferred).
       this.inputMode = {
         kind: 'aim',
         slotIndex: slotIdx,
-        targetX: tx,
-        targetY: ty,
+        targetX: snapped.x,
+        targetY: snapped.y,
       };
       this.selectedSlot = null;
-      this.spawnClickFeedback('attack', tx, ty);
+      this.spawnClickFeedback('attack', snapped.x, snapped.y);
       this.flushStagedAction();
       this.rebuildEntities();
       this.renderHud();
@@ -3127,9 +3431,69 @@ export class MatchScene extends Phaser.Scene {
    * scene does its own debouncing.
    */
   private refreshTooltip(screenX: number, screenY: number): void {
-    const tip = this.getTooltipScene();
-    if (!tip) return;
-    tip.setKey(this.computeTooltipKey(screenX, screenY));
+    // Rich cursor tooltip for bomb hovers (HUD loadout + loot slots), gated by
+    // the 1s same-bomb hover delay. Suppress the bottom-right panel while a
+    // bomb is hovered so its description isn't duplicated.
+    const hover = this.bombHoverUnderCursor(screenX, screenY);
+    if (hover) {
+      this.getTooltipScene()?.setKey(null);
+      if (this.bombTooltipHoverId !== hover.id) {
+        // Moved onto a different bomb — restart the dwell timer and hide until
+        // it elapses. (Motion within the same bomb keeps the same id, so the
+        // timer is preserved.)
+        this.bombTooltipHoverId = hover.id;
+        this.bombTooltipShowAt = this.time.now + MatchScene.BOMB_TOOLTIP_HOVER_MS;
+        this.bombTooltip?.hide();
+      }
+      if (this.time.now >= this.bombTooltipShowAt) {
+        this.bombTooltip?.show(hover.info);
+        this.bombTooltip?.move(screenX, screenY);
+      }
+      return;
+    }
+
+    // Not a bomb hover — drop the rich tooltip, reset dwell, fall back to the
+    // bottom-right panel for tiles / HP / turns / targeting.
+    this.bombTooltipHoverId = null;
+    this.bombTooltip?.hide();
+    this.getTooltipScene()?.setKey(this.computeTooltipKey(screenX, screenY));
+  }
+
+  /**
+   * If the cursor is over a bomb in a HUD (loadout tray slot incl. the Rock, or
+   * a loot-panel slot across any stacked source row), return a stable identity
+   * for that bomb plus the tooltip content. Returns null otherwise — tiles and
+   * non-bomb UI are deliberately excluded.
+   *
+   * The `id` distinguishes individual slots (`hud:2`, `loot:7`) so the hover
+   * dwell timer restarts when the cursor crosses from one bomb to another.
+   */
+  private bombHoverUnderCursor(
+    screenX: number,
+    screenY: number,
+  ): { id: string; info: BombTooltipInfo } | null {
+    const me = this.myBomberman();
+
+    // Loadout tray. Slot 0 is the always-available Rock.
+    const hudSlot = this.hitTestHud(screenX, screenY);
+    if (hudSlot >= 0) {
+      if (hudSlot === 0) return { id: 'hud:0', info: bombTooltipInfoFor('rock') };
+      const slot = me?.inventory.slots[hudSlot - 1];
+      if (!slot) return null; // empty slot — no tooltip
+      return { id: `hud:${hudSlot}`, info: bombTooltipInfoFor(slot.type) };
+    }
+
+    // Loot panel (chests + bodies under the player, each its own row). The flat
+    // index is unique across all stacked rows.
+    if (me) {
+      const lootIdx = this.hitTestLootPanel(screenX, screenY);
+      if (lootIdx >= 0) {
+        const lootType = this.lootSlotBombType(me, lootIdx);
+        if (lootType) return { id: `loot:${lootIdx}`, info: bombTooltipInfoFor(lootType) };
+      }
+    }
+
+    return null;
   }
 
   /**
