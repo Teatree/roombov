@@ -34,8 +34,6 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   { kind: 'dialogue', portrait: 'char4', text: 'Welcome to the tutorial' },
 
   // --- Beat 0: HUD Primer -------------------------------------------------
-  { kind: 'highlight', target: { kind: 'timer' } },
-  { kind: 'dialogue', portrait: 'char4_neutral', text: 'Every Action Requires a Turn.' },
   { kind: 'highlight', target: { kind: 'hp' } },
   { kind: 'dialogue', portrait: 'char4_neutral', text: 'Your HP. Do not lose it.' },
   { kind: 'highlight', target: { kind: 'bombTray' } },

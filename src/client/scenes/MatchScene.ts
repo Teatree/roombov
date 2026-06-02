@@ -173,15 +173,16 @@ export class MatchScene extends Phaser.Scene {
   // World-space display layers (draw order enforced by setDepth).
   // Spec: top → bottom render order is
   //   Explosion Burst > Bomberman (alive) > Bombs > Corpse > Blood >
-  //     Ender Pearl Decal > Scorch Decal > Chests > Doors/Hatches > Map
+  //     Ender Pearl Decal > Chests > Doors/Hatches > Scorch Decal > Map
   // Depths:
   //   0   map (tilemap layers and tileset graphics)
+  //   5   scorchDecalLayer (explosion/burn scorch marks) — ground level, UNDER
+  //       doors/hatches/chests so those objects sit on top of the burn scars.
+  //       Dimmed by the lesser-fog overlay like the map itself; drawn opaque
+  //       enough that the scars stay clearly visible (not faded to nothing)
+  //       once a tile drops to seen-dim.
   //   10  doors + escape hatch sprites
   //   15  chests
-  //   20  scorchDecalLayer (explosion/burn scorch marks) — ground level, under
-  //       bombs/corpses/objects/chests/doors/hatches. Dimmed by the lesser-fog
-  //       overlay like the map itself; drawn opaque enough that the scars stay
-  //       clearly visible (not faded to nothing) once a tile drops to seen-dim.
   //   22  pearlDecalLayer (ender pearl teleport decals)
   //   25  bloodDecalLayer (blood splatter)
   //   28  corpseLayer (dead Bomberman sprites)
@@ -647,11 +648,12 @@ export class MatchScene extends Phaser.Scene {
 
     // Explicit depth stack — see class-level comment for the full spec.
     // Decals are split into 3 containers so blood > pearl > scorch ordering is enforced.
-    // Scorch stays at ground level (under bombs/corpses/objects/chests/doors);
-    // it's dimmed by the lesser-fog overlay like the map, but drawn opaque
-    // enough to remain visible there. Visibility is gated to discovered tiles
-    // by updateDecalVisibility so it never shows over unexplored (black) fog.
-    this.scorchDecalLayer = this.add.container(0, 0).setDepth(20);
+    // Scorch sits just above the map (depth 5) and BELOW doors/hatches (10) and
+    // chests (15), so those objects render on top of the burn scars. It's dimmed
+    // by the lesser-fog overlay like the map, but drawn opaque enough to remain
+    // visible there. Visibility is gated to discovered tiles by
+    // updateDecalVisibility so it never shows over unexplored (black) fog.
+    this.scorchDecalLayer = this.add.container(0, 0).setDepth(5);
     this.pearlDecalLayer = this.add.container(0, 0).setDepth(22);
     // Shield Wall shards: persistent floor decals from shattered Shield Bombs.
     this.shieldShardLayer = this.add.container(0, 0).setDepth(23);
@@ -952,6 +954,12 @@ export class MatchScene extends Phaser.Scene {
     // aiming ends (drawHighlights() early-returns with both graphics cleared).
     this.drawHighlights();
 
+    // Reveal the map's Contour boundary outline near the throw-aim target.
+    // Tiles within range fade in while aiming; everything fades back out when
+    // not aiming. No-op on maps without a Contour layer.
+    const contourAim = this.currentThrowAimTile();
+    this.mapRenderer?.updateContourReveal(contourAim?.x ?? null, contourAim?.y ?? null, delta);
+
     // Camera follow: snap to the local player's tile center every frame.
     // Skips if the player has escaped (sprite is gone) so the last framing
     // holds through the 500ms delay before the Results transition. Also
@@ -965,8 +973,14 @@ export class MatchScene extends Phaser.Scene {
       }
     }
 
-    const ms = Math.max(0, this.state.phaseEndsAt - Date.now());
-    this.timerText.setText(`${(ms / 1000).toFixed(1)}s`);
+    // Top-center match clock (M:SS). Frozen while a tutorial dialogue/pause is
+    // up so the clock visibly stops with the rest of the game; otherwise it
+    // counts down in real time. See formatMatchClock for the turns→time mapping.
+    const tutorialPaused = this.mode === 'tutorial'
+      && !!(this.scene.get('TutorialOverlayScene') as TutorialOverlayScene | undefined)?.isBlockingInput?.();
+    if (!tutorialPaused) {
+      this.timerText.setText(this.formatMatchClock());
+    }
 
     // Keep the HUD HP number in sync with the sprite system's delayed
     // HP — tick() swaps displayedHp once the post-damage delay ends, and
@@ -3051,25 +3065,10 @@ export class MatchScene extends Phaser.Scene {
     if (!this.mapData) return;
     const ts = this.mapData.tileSize;
     const me = this.myBomberman();
-    const bombType = this.selectedThrowBombType();
 
-    // Raw target: committed aim target > armed-hover preview.
-    let rawTx: number | null = null;
-    let rawTy: number | null = null;
-    if (this.inputMode.kind === 'aim'
-        && this.inputMode.targetX !== null && this.inputMode.targetY !== null) {
-      rawTx = this.inputMode.targetX;
-      rawTy = this.inputMode.targetY;
-    } else if (this.selectedSlot !== null
-        && this.hoveredTileX !== null && this.hoveredTileY !== null) {
-      rawTx = this.hoveredTileX;
-      rawTy = this.hoveredTileY;
-    }
-    if (rawTx === null || rawTy === null || !me || !bombType) return;
-
-    // Snap to a valid target. The committed aim target is already snapped at
-    // click time, so re-snapping it is a no-op.
-    const snapped = this.snapThrowTarget(rawTx, rawTy, bombType);
+    // Snapped throw target (committed aim > armed-hover), or null when not aiming.
+    const snapped = this.currentThrowAimTile();
+    if (!snapped || !me) return;
     const cx = snapped.x * ts + ts / 2;
     const cy = snapped.y * ts + ts / 2;
 
@@ -3084,6 +3083,36 @@ export class MatchScene extends Phaser.Scene {
 
     // Red countdown hourglass over the cross.
     this.drawTargetHourglass(cx, cy, ts);
+  }
+
+  /**
+   * The snapped throw-target tile while the local player is aiming a throw
+   * (committed aim target > armed-slot hover), or null when not aiming. Shared
+   * by the throw reticle (drawHighlights) and the Contour reveal so both track
+   * the exact same tile.
+   */
+  private currentThrowAimTile(): { x: number; y: number } | null {
+    const me = this.myBomberman();
+    const bombType = this.selectedThrowBombType();
+    if (!me || !bombType) return null;
+
+    // Raw target: committed aim target > armed-hover preview.
+    let rawTx: number | null = null;
+    let rawTy: number | null = null;
+    if (this.inputMode.kind === 'aim'
+        && this.inputMode.targetX !== null && this.inputMode.targetY !== null) {
+      rawTx = this.inputMode.targetX;
+      rawTy = this.inputMode.targetY;
+    } else if (this.selectedSlot !== null
+        && this.hoveredTileX !== null && this.hoveredTileY !== null) {
+      rawTx = this.hoveredTileX;
+      rawTy = this.hoveredTileY;
+    }
+    if (rawTx === null || rawTy === null) return null;
+
+    // Snap to a valid target. The committed aim target is already snapped at
+    // click time, so re-snapping it is a no-op.
+    return this.snapThrowTarget(rawTx, rawTy, bombType);
   }
 
   /** Bomb type currently armed for throwing (committed aim or hover slot), or null. */
@@ -3628,7 +3657,8 @@ export class MatchScene extends Phaser.Scene {
       case 'phaseIndicator':
         return { x: W / 2 + 105, y: 10, w: 130, h: 32, space: 'hud' };
       case 'timer':
-        return { x: W / 2 + 235, y: 10, w: 70, h: 32, space: 'hud' };
+        // Match the recentred top-center match clock (timerText at W/2, y≈12).
+        return { x: W / 2 - 45, y: 6, w: 90, h: 32, space: 'hud' };
       case 'hp': {
         // Match the HP bar widget exactly (label + bar), padded for clarity.
         const x = MatchScene.HP_BAR_X - 6;
@@ -3765,20 +3795,23 @@ export class MatchScene extends Phaser.Scene {
     // displayedHp. See HP_BAR_* constants on the class.
     this.buildHpBar();
 
-    this.turnText = this.hud(this.add.text(width / 2, 14, 'Turn 0 / 50', {
+    // Turn counter + phase label are intentionally hidden: we present the match
+    // as a real-time clock instead of a turn count to shed the "turn-based"
+    // feel. The objects are kept (created hidden) so the rest of the HUD code
+    // can keep its references without null checks; nothing updates them anymore.
+    this.turnText = this.hud(this.add.text(width / 2, 14, '', {
       fontSize: '16px', color: '#aaaaaa', fontFamily: 'monospace',
-    }).setOrigin(0.5, 0).setDepth(1001));
+    }).setOrigin(0.5, 0).setDepth(1001).setVisible(false));
 
-    // Phase ("YOUR TURN" / "RESOLVING...") + timer sit immediately right of
-    // the turn counter. Smaller and quieter than before — the HP bar now
-    // owns the loud spot on the top-left.
     this.phaseText = this.hud(this.add.text(width / 2 + 110, 14, '', {
       fontSize: '14px', color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setOrigin(0, 0).setDepth(1001));
+    }).setOrigin(0, 0).setDepth(1001).setVisible(false));
 
-    this.timerText = this.hud(this.add.text(width / 2 + 240, 14, '0.0s', {
-      fontSize: '14px', color: '#ffffff', fontFamily: 'monospace',
-    }).setOrigin(0, 0).setDepth(1001));
+    // Match clock — the only top-center readout now. Shows remaining match time
+    // as M:SS (see formatMatchClock); freezes during tutorial pauses.
+    this.timerText = this.hud(this.add.text(width / 2, 12, '0:00', {
+      fontSize: '18px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5, 0).setDepth(1001));
 
     // Broken-hatch warning, dropped just below the top bar (phase + timer
     // now occupy the space right of the turn counter). Visible only while
@@ -3787,9 +3820,10 @@ export class MatchScene extends Phaser.Scene {
       fontSize: '11px', color: '#ff4040', fontFamily: 'monospace',
     }).setOrigin(0.5, 0).setDepth(1001).setVisible(false));
 
-    // UAV indicator — sits just below the turn counter at the top-center.
-    // Throbs when the next UAV is <=3 turns away; hidden in tutorial matches.
-    this.uavText = this.hud(this.add.text(width / 2, 30, '', {
+    // UAV indicator — sits just below the match clock at the top-center.
+    // Shows a seconds countdown to the next UAV; throbs when it's <=3 turns
+    // away; hidden in tutorial matches.
+    this.uavText = this.hud(this.add.text(width / 2, 34, '', {
       fontSize: '13px', color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5, 0).setDepth(1001).setVisible(false));
 
@@ -4023,6 +4057,40 @@ export class MatchScene extends Phaser.Scene {
     return idx;
   }
 
+  /**
+   * Real-time ms remaining in the current turn: input-phase remainder plus the
+   * full upcoming transition, or just the transition remainder, and 0 once the
+   * match is over. Used to make the match clock and UAV countdown tick smoothly
+   * across turn boundaries instead of jumping a whole turn at a time.
+   */
+  private currentTurnRemainingMs(): number {
+    if (!this.state) return 0;
+    const phaseLeft = Math.max(0, this.state.phaseEndsAt - Date.now());
+    if (this.state.phase === 'input') {
+      return phaseLeft + BALANCE.match.transitionPhaseSeconds * 1000;
+    }
+    if (this.state.phase === 'transition') return phaseLeft;
+    return 0;
+  }
+
+  /**
+   * Remaining match time as "M:SS". The match still runs on discrete turns; we
+   * just convert turns-left into real time using the per-turn duration
+   * (inputPhaseSeconds + transitionPhaseSeconds from balance.ts = one turn) so
+   * the HUD reads like a clock instead of a turn counter. Purely presentational
+   * — no game logic depends on this value, and balance.ts is untouched.
+   */
+  private formatMatchClock(): string {
+    if (!this.state) return '0:00';
+    const turnMs = (BALANCE.match.inputPhaseSeconds + BALANCE.match.transitionPhaseSeconds) * 1000;
+    const fullTurnsLeft = Math.max(0, BALANCE.match.turnLimit - this.state.turnNumber);
+    const totalMs = fullTurnsLeft * turnMs + this.currentTurnRemainingMs();
+    const totalSec = Math.max(0, Math.ceil(totalMs / 1000));
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
   private renderHud(): void {
     if (!this.state) return;
     const me = this.myBomberman();
@@ -4030,16 +4098,9 @@ export class MatchScene extends Phaser.Scene {
     // `maxCustomSlots`. Idempotent — only does work on count change.
     this.rebuildSlotTrayIfNeeded();
 
-    const phaseLabel = this.state.phase === 'input' ? 'YOUR TURN'
-      : this.state.phase === 'transition' ? 'RESOLVING...'
-      : 'MATCH OVER';
-    this.phaseText.setText(phaseLabel);
-    this.phaseText.setColor(this.state.phase === 'input' ? '#44ff88'
-      : this.state.phase === 'transition' ? '#ffcc44' : '#ff4444');
-
-    const turnsLeft = BALANCE.match.turnLimit - this.state.turnNumber;
-    this.turnText.setText(`Turn ${this.state.turnNumber} / ${BALANCE.match.turnLimit}`);
-    this.turnText.setColor(turnsLeft <= BALANCE.match.turnsLeftWarning ? '#ff6644' : '#aaaaaa');
+    // Turn counter + phase label are hidden (see buildHud) — the top-center
+    // match clock in update() is the only time/progress readout now. The match
+    // still runs on discrete turns under the hood; this is purely presentation.
 
     // Hatch warning text: broken (precedence) or needs-keys. Visible only
     // while the local player is alive, not escaped, and standing on a
@@ -4116,14 +4177,17 @@ export class MatchScene extends Phaser.Scene {
     }
 
     // UAV countdown + throb starting 3 turns out. Hidden in tutorial matches
-    // and whenever no UAV is scheduled.
+    // and whenever no UAV is scheduled. Shown as a seconds countdown (turns
+    // until fire × turn duration) rather than the raw turn number.
     const nextFire = this.state.uavNextFireTurn;
     if (this.state.isTutorial || nextFire === undefined) {
       this.uavText?.setVisible(false);
       this.stopUavPulse();
     } else {
       const turnsUntil = nextFire - this.state.turnNumber;
-      this.uavText?.setText(`✈ UAV: ${nextFire}`);
+      const turnMs = (BALANCE.match.inputPhaseSeconds + BALANCE.match.transitionPhaseSeconds) * 1000;
+      const uavMs = Math.max(0, turnsUntil - 1) * turnMs + this.currentTurnRemainingMs();
+      this.uavText?.setText(`✈ UAV ${Math.max(0, Math.ceil(uavMs / 1000))}s`);
       this.uavText?.setVisible(true);
       if (turnsUntil <= 3 && turnsUntil > 0) this.startUavPulse();
       else this.stopUavPulse();

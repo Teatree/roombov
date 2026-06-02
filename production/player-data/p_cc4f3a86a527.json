@@ -1,50 +1,10 @@
 {
   "id": "p_cc4f3a86a527",
   "createdAt": 1777924076503,
-  "updatedAt": 1777932846283,
+  "updatedAt": 1780436333397,
   "coins": 55,
   "treasures": {},
   "ownedBombermen": [
-    {
-      "id": "owned_p_cc4f3a86a527_1777924112640_s4j9",
-      "name": "Kavanagh",
-      "tier": "free",
-      "colors": {
-        "shirt": 4370391,
-        "pants": 9055272,
-        "hair": 8499764
-      },
-      "tint": 11398015,
-      "character": "char7",
-      "maxCustomSlots": 4,
-      "stackSize": 5,
-      "inventory": {
-        "slots": [
-          {
-            "type": "ender_pearl",
-            "count": 4
-          },
-          {
-            "type": "bomb",
-            "count": 3
-          },
-          {
-            "type": "fart_escape",
-            "count": 3
-          },
-          null
-        ]
-      },
-      "purchasedAt": 1777924112640,
-      "sourceTemplateId": "cycle_1777924049385_0_free",
-      "sp": 0,
-      "upgrades": {
-        "cap": 0,
-        "stack": 0,
-        "hp": 0
-      },
-      "lifetimeSp": 0
-    },
     {
       "id": "owned_p_cc4f3a86a527_1777924148726_l8as",
       "name": "Tex",
@@ -130,7 +90,7 @@
       "lifetimeSp": 0
     }
   ],
-  "equippedBombermanId": "owned_p_cc4f3a86a527_1777924112640_s4j9",
+  "equippedBombermanId": "owned_p_cc4f3a86a527_1777924148726_l8as",
   "bombStockpile": {},
   "gamblerStreet": {
     "gamblers": [
@@ -397,5 +357,5 @@
       "sessionTotal": 0
     }
   },
-  "totalMatchesPlayed": 0
+  "totalMatchesPlayed": 1
 }

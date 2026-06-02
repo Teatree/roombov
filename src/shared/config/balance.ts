@@ -25,6 +25,12 @@ export const BALANCE = {
   match: {
     turnLimit: 250,
     turnsLeftWarning: 10,
+    // NOTE: The HUD presents the match as a real-time clock, not a turn count.
+    // The match still runs on these discrete turns under the hood; the UI just
+    // converts turns into minutes:seconds using the per-turn duration
+    // (inputPhaseSeconds + transitionPhaseSeconds = one turn). Changing these
+    // values therefore changes the displayed clock length too — but no game
+    // logic reads the clock. See MatchScene.formatMatchClock.
     inputPhaseSeconds: 1.5,
     transitionPhaseSeconds: 1.5,
     /** Minimum tile distance between spawning Bombermen (falls back if impossible). */

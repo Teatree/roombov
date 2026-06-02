@@ -34,6 +34,19 @@ const TILE_COLORS: Record<TileType, number> = {
  */
 const CONTOUR_DEPTH = 200;
 
+/**
+ * Aim-reveal radius (in tiles) around the throw target within which Contour
+ * tiles fade in. Beyond this they fade back out. Euclidean distance.
+ */
+const CONTOUR_AIM_RADIUS_TILES = 10;
+
+/**
+ * Per-tile fade time constant (ms) for the Contour reveal. Each tile's alpha
+ * eases toward its target (0 or 1) so tiles "pop in" as the aim point nears
+ * and fade out as it leaves — or when aiming ends entirely.
+ */
+const CONTOUR_FADE_MS = 180;
+
 /** Tileset metadata needed to add tilesets to the Phaser tilemap. */
 interface TilesetInfo {
   name: string;
@@ -187,6 +200,11 @@ export class MapRenderer {
   private tilemapLayers: Phaser.Tilemaps.TilemapLayer[] = [];
   private extraGraphics: Phaser.GameObjects.GameObject[] = [];
   private animatedTiles: AnimatedTileInstance[] = [];
+  /** The `Contour` boundary-outline layer, if the map has one. Hidden until the
+   *  local player aims a throw nearby — see updateContourReveal. */
+  private contourLayer: Phaser.Tilemaps.TilemapLayer | null = null;
+  /** Non-empty Contour tiles captured at render time, for the proximity reveal. */
+  private contourTiles: Phaser.Tilemaps.Tile[] = [];
 
   constructor(scene: Phaser.Scene, mapData: MapData, baseDepth = 0, tiledInfo?: { tilemapKey: string; tilesets: TilesetInfo[] } | null) {
     this.scene = scene;
@@ -219,6 +237,38 @@ export class MapRenderer {
     }
   }
 
+  /**
+   * Aim-gated reveal of the `Contour` boundary outline. Call every frame from
+   * the match update loop. While the local player is aiming a throw, pass the
+   * snapped target tile: Contour tiles within CONTOUR_AIM_RADIUS_TILES of it
+   * fade in, the rest fade out. Pass `null` when not aiming to fade the whole
+   * outline back out. No-op on maps without a Contour layer.
+   */
+  updateContourReveal(targetTileX: number | null, targetTileY: number | null, deltaMs: number): void {
+    const layer = this.contourLayer;
+    if (!layer || this.contourTiles.length === 0) return;
+
+    const aiming = targetTileX !== null && targetTileY !== null;
+    // Exponential ease toward each tile's target alpha (0 or 1).
+    const k = Math.min(1, deltaMs / CONTOUR_FADE_MS);
+    const r2 = CONTOUR_AIM_RADIUS_TILES * CONTOUR_AIM_RADIUS_TILES;
+
+    let anyVisible = false;
+    for (const t of this.contourTiles) {
+      let target = 0;
+      if (aiming) {
+        const dx = t.x - (targetTileX as number);
+        const dy = t.y - (targetTileY as number);
+        if (dx * dx + dy * dy <= r2) target = 1;
+      }
+      const a = t.alpha + (target - t.alpha) * k;
+      // Snap tiny residuals so tiles settle exactly at 0/1 instead of churning.
+      t.setAlpha(Math.abs(target - a) < 0.01 ? target : a);
+      if (t.alpha > 0.001) anyVisible = true;
+    }
+    layer.setVisible(anyVisible);
+  }
+
   private renderTiled(scene: Phaser.Scene, info: { tilemapKey: string; tilesets: TilesetInfo[] }): void {
     const tilemap = scene.make.tilemap({ key: info.tilemapKey });
     this.tilemapObj = tilemap;
@@ -246,8 +296,14 @@ export class MapRenderer {
       this.tilemapLayers.push(layer);
       if (ln === 'contour') {
         // Always-on-top boundary outline — fixed high depth, doesn't consume
-        // a normal layer slot. See CONTOUR_DEPTH.
+        // a normal layer slot. See CONTOUR_DEPTH. Starts fully hidden: it only
+        // fades in near a throw-aim target (updateContourReveal).
         layer.setDepth(CONTOUR_DEPTH);
+        layer.setVisible(false);
+        this.contourLayer = layer;
+        layer.forEachTile((t) => {
+          if (t.index > 0) { t.setAlpha(0); this.contourTiles.push(t); }
+        });
       } else {
         layer.setDepth(layerDepth);
         layerDepth++;
@@ -379,6 +435,8 @@ export class MapRenderer {
     for (const g of this.extraGraphics) g.destroy();
     this.extraGraphics = [];
     this.animatedTiles = [];
+    this.contourLayer = null;
+    this.contourTiles = [];
     this.scene = null;
   }
 }
