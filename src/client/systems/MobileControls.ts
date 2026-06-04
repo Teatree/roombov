@@ -61,10 +61,12 @@ export interface MobileHooks {
 type SelectState = 'idle' | 'move' | 'attack';
 type BtnKind = 'move' | 'attack' | 'confirm' | 'cancel';
 
-const BTN_W = 134;
-const BTN_H = 62;
-const BTN_GAP = 14;
-const BTN_MARGIN = 24;
+// Roughly half the original button footprint per design feedback; height kept
+// at 42 so it stays a comfortable touch target.
+const BTN_W = 82;
+const BTN_H = 42;
+const BTN_GAP = 10;
+const BTN_MARGIN = 16;
 
 interface Btn {
   kind: BtnKind;
@@ -137,12 +139,12 @@ export class MobileControls {
       const container = this.scene.add.container(0, 0).setDepth(2000);
       const bg = this.scene.add.graphics();
       bg.fillStyle(d.fill, 0.92);
-      bg.fillRoundedRect(0, 0, BTN_W, BTN_H, 12);
-      bg.lineStyle(3, d.stroke, 1);
-      bg.strokeRoundedRect(0, 0, BTN_W, BTN_H, 12);
+      bg.fillRoundedRect(0, 0, BTN_W, BTN_H, 8);
+      bg.lineStyle(2, d.stroke, 1);
+      bg.strokeRoundedRect(0, 0, BTN_W, BTN_H, 8);
       const isGlyph = d.label === '✓' || d.label === '✗';
       const label = this.scene.add.text(BTN_W / 2, BTN_H / 2, d.label, {
-        fontSize: isGlyph ? '34px' : '22px',
+        fontSize: isGlyph ? '24px' : '15px',
         color: '#ffffff',
         fontFamily: 'monospace',
         fontStyle: 'bold',

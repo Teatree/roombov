@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
+import { isMobileDevice } from '../util/isMobile.ts';
 import type { MatchScene } from './MatchScene.ts';
 import type { HighlightShape, HighlightTarget, PortraitId } from '../tutorial/types.ts';
 import type { TutorialMatchBackend } from '../backends/TutorialMatchBackend.ts';
@@ -76,6 +77,9 @@ export class TutorialOverlayScene extends Phaser.Scene {
    *  the persistent `currentHighlights` list until its timer expires. */
   private flashRect: HighlightRect | null = null;
   private highlightPulseT = 0;
+
+  /** Guide dialogue panel scale — half-size on mobile to match the HUD. */
+  private guideScale = 1;
 
   // Input blocker / click catcher
   private clickCatcher!: Phaser.GameObjects.Rectangle;
@@ -172,6 +176,11 @@ export class TutorialOverlayScene extends Phaser.Scene {
 
     this.dialoguePanel.add([this.dialogueBg, portraitFrame, this.dialogueText, this.dialogueFooter]);
 
+    // Half-size the guide window on mobile so it doesn't dominate the small
+    // landscape screen (matches the half-scale in-match HUD).
+    this.guideScale = isMobileDevice() ? 0.5 : 1;
+    this.dialoguePanel.setScale(this.guideScale);
+
     // --- Highlight layer — draws after everything, depth 90 so pause/dialogue
     //     (100/110) sit on top of it. ---
     this.highlightGfx = this.add.graphics().setDepth(90);
@@ -217,7 +226,8 @@ export class TutorialOverlayScene extends Phaser.Scene {
     if (!this.dialoguePanel) return;
     const width = this.scale.width;
     const hudBottom = this.matchScene?.getRightHudBottomY?.() ?? (DIALOGUE_MARGIN + 28);
-    const x = width - DIALOGUE_PANEL_W - DIALOGUE_MARGIN;
+    // Panel's rendered width shrinks with guideScale, so anchor off the scaled width.
+    const x = width - DIALOGUE_PANEL_W * this.guideScale - DIALOGUE_MARGIN;
     const y = hudBottom + 12;
     this.dialoguePanel.setPosition(x, y);
   }

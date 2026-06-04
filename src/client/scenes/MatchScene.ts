@@ -119,6 +119,18 @@ export class MatchScene extends Phaser.Scene {
   private mobileArmedSlot = 0;
   /** Mobile-only touch control system (buttons + selector + pan/zoom). */
   private mobileControls: MobileControls | null = null;
+  /** HUD size multiplier. 1 on desktop; 0.5 on mobile so the in-match HUD
+   *  (tray, HP bar, top readouts, buttons, guide) is half-size and leaves the
+   *  small landscape screen to the game. Set in create() from `isMobile`. */
+  private hudScale = 1;
+  /** Per-instance tray slot size/gap = SLOT_SIZE/SLOT_GAP × hudScale. Used by
+   *  every tray render + hit-test path so they stay in sync. */
+  private slotSize = SLOT_SIZE;
+  private slotGap = SLOT_GAP;
+  /** Top-right HUD icon sizes × hudScale (coin circle + key image). Used by
+   *  buildHud, layoutResponsiveHud and getRightHudBottomY so they stay in sync. */
+  private coinIconSize = COIN_ICON_SIZE;
+  private keyIconSize = KEY_ICON;
   private lastPhase: string | null = null;
   /** Set on the first middle/right mouse click of a match. Once true, the
    *  per-frame `centerOn` in update() stops running so the player can pan
@@ -538,6 +550,11 @@ export class MatchScene extends Phaser.Scene {
     this.events.once('shutdown', this.shutdown, this);
     this.isMobile = isMobileDevice();
     this.mobileArmedSlot = 0;
+    this.hudScale = this.isMobile ? 0.5 : 1;
+    this.slotSize = Math.round(SLOT_SIZE * this.hudScale);
+    this.slotGap = Math.round(SLOT_GAP * this.hudScale);
+    this.coinIconSize = Math.round(COIN_ICON_SIZE * this.hudScale);
+    this.keyIconSize = Math.round(KEY_ICON * this.hudScale);
     if (this.mode === 'tutorial') {
       // Tutorial is single-player with a fabricated player id — skip the
       // profile lookup and the post-match UI-anim-lock clear.
@@ -3588,8 +3605,9 @@ export class MatchScene extends Phaser.Scene {
     // ---- HUD hit tests (top bar + bomb tray) ----
     if (screenY >= 0 && screenY <= 48) {
       // HP bar (top-left) — covers label + segmented bar.
-      const hpRight = MatchScene.HP_BAR_X + MatchScene.HP_BAR_LABEL_W + MatchScene.HP_BAR_W;
-      if (screenX >= MatchScene.HP_BAR_X - 4 && screenX <= hpRight + 4) return { kind: 'hp' };
+      const hp = this.hpMetrics();
+      const hpRight = hp.x + hp.labelW + hp.barW;
+      if (screenX >= hp.x - 4 && screenX <= hpRight + 4) return { kind: 'hp' };
       // turn counter (centered around W/2)
       if (Math.abs(screenX - W / 2) <= 100) return { kind: 'turnLimit' };
       // phase indicator + timer (right of the turn counter)
@@ -3713,10 +3731,11 @@ export class MatchScene extends Phaser.Scene {
         return { x: W / 2 - 45, y: 6, w: 90, h: 32, space: 'hud' };
       case 'hp': {
         // Match the HP bar widget exactly (label + bar), padded for clarity.
-        const x = MatchScene.HP_BAR_X - 6;
-        const y = MatchScene.HP_BAR_Y - 6;
-        const w = MatchScene.HP_BAR_LABEL_W + MatchScene.HP_BAR_W + 12;
-        const h = MatchScene.HP_BAR_H + 12;
+        const hp = this.hpMetrics();
+        const x = hp.x - 6;
+        const y = hp.y - 6;
+        const w = hp.labelW + hp.barW + 12;
+        const h = hp.barH + 12;
         return { x, y, w, h, space: 'hud' };
       }
       case 'treasureList': {
@@ -3728,25 +3747,25 @@ export class MatchScene extends Phaser.Scene {
         return { x: W - 130, y: 8, w: 125, h: 60, space: 'hud' };
       }
       case 'bombTray': {
-        // 5 slots of SLOT_SIZE (64) + 4 gaps of SLOT_GAP (8), bottom-centered.
-        const totalW = this.localTotalSlotCount() * SLOT_SIZE + (this.localTotalSlotCount() - 1) * SLOT_GAP;
-        return { x: (W - totalW) / 2, y: H - SLOT_SIZE - 16, w: totalW, h: SLOT_SIZE, space: 'hud' };
+        // N slots + gaps, bottom-centered (sizes scale with hudScale on mobile).
+        const totalW = this.localTotalSlotCount() * this.slotSize + (this.localTotalSlotCount() - 1) * this.slotGap;
+        return { x: (W - totalW) / 2, y: H - this.slotSize - 16, w: totalW, h: this.slotSize, space: 'hud' };
       }
       case 'slot': {
         const i = target.index ?? 0;
-        const totalW = this.localTotalSlotCount() * SLOT_SIZE + (this.localTotalSlotCount() - 1) * SLOT_GAP;
+        const totalW = this.localTotalSlotCount() * this.slotSize + (this.localTotalSlotCount() - 1) * this.slotGap;
         const trayX = (W - totalW) / 2;
         return {
-          x: trayX + i * (SLOT_SIZE + SLOT_GAP),
-          y: H - SLOT_SIZE - 16,
-          w: SLOT_SIZE,
-          h: SLOT_SIZE,
+          x: trayX + i * (this.slotSize + this.slotGap),
+          y: H - this.slotSize - 16,
+          w: this.slotSize,
+          h: this.slotSize,
           space: 'hud',
         };
       }
       case 'lootPanel':
         // Approximate — real position is centered above the tray.
-        return { x: (W - 320) / 2, y: H - SLOT_SIZE - 140, w: 320, h: 110, space: 'hud' };
+        return { x: (W - 320) / 2, y: H - this.slotSize - 140, w: 320, h: 110, space: 'hud' };
       case 'lootItem':
         return target.bombType ? this.getLootItemRect(target.bombType) : null;
       default:
@@ -3793,13 +3812,13 @@ export class MatchScene extends Phaser.Scene {
     if (idx < 0) return null;
 
     const W = this.scale.width;
-    const panelWidth = this.localTotalSlotCount() * SLOT_SIZE + (this.localTotalSlotCount() - 1) * SLOT_GAP + 20;
+    const panelWidth = this.localTotalSlotCount() * this.slotSize + (this.localTotalSlotCount() - 1) * this.slotGap + 20;
     const panelX = (W - panelWidth) / 2;
     const slotStartX = panelX + 10;
     return {
-      x: slotStartX + idx * (SLOT_SIZE + SLOT_GAP),
+      x: slotStartX + idx * (this.slotSize + this.slotGap),
       y: this.lootPanelY + 30,
-      w: SLOT_SIZE,
+      w: this.slotSize,
       h: 50,
       space: 'hud',
     };
@@ -3835,11 +3854,15 @@ export class MatchScene extends Phaser.Scene {
 
   private buildHud(): void {
     const { width, height } = this.scale;
+    const hs = this.hudScale;
+    const f = (px: number): string => `${Math.max(9, Math.round(px * hs))}px`;
+    const coinSize = this.coinIconSize;
+    const keySize = this.keyIconSize;
 
-    // Top bar
+    // Top bar — height scales with the HUD so it doesn't eat a short screen.
     const topBg = this.add.graphics().setDepth(1000);
     topBg.fillStyle(0x0a0a14, 0.85);
-    topBg.fillRect(0, 0, width, 48);
+    topBg.fillRect(0, 0, width, Math.round(48 * hs));
     this.topBarBg = this.hud(topBg);
 
     // Top-left HP bar widget (replaces old phaseText + the right-side hpText).
@@ -3851,32 +3874,32 @@ export class MatchScene extends Phaser.Scene {
     // as a real-time clock instead of a turn count to shed the "turn-based"
     // feel. The objects are kept (created hidden) so the rest of the HUD code
     // can keep its references without null checks; nothing updates them anymore.
-    this.turnText = this.hud(this.add.text(width / 2, 14, '', {
-      fontSize: '16px', color: '#aaaaaa', fontFamily: 'monospace',
+    this.turnText = this.hud(this.add.text(width / 2, Math.round(14 * hs), '', {
+      fontSize: f(16), color: '#aaaaaa', fontFamily: 'monospace',
     }).setOrigin(0.5, 0).setDepth(1001).setVisible(false));
 
-    this.phaseText = this.hud(this.add.text(width / 2 + 110, 14, '', {
-      fontSize: '14px', color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
+    this.phaseText = this.hud(this.add.text(width / 2 + 110, Math.round(14 * hs), '', {
+      fontSize: f(14), color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0, 0).setDepth(1001).setVisible(false));
 
     // Match clock — the only top-center readout now. Shows remaining match time
     // as M:SS (see formatMatchClock); freezes during tutorial pauses.
-    this.timerText = this.hud(this.add.text(width / 2, 12, '0:00', {
-      fontSize: '18px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
+    this.timerText = this.hud(this.add.text(width / 2, Math.round(12 * hs), '0:00', {
+      fontSize: f(18), color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5, 0).setDepth(1001));
 
     // Broken-hatch warning, dropped just below the top bar (phase + timer
     // now occupy the space right of the turn counter). Visible only while
     // the local bomberman is standing on a broken or under-keyed hatch.
-    this.brokenHatchText = this.hud(this.add.text(width / 2, 52, 'This Hatch is Broken, you won’t be able to Escape from it', {
-      fontSize: '11px', color: '#ff4040', fontFamily: 'monospace',
+    this.brokenHatchText = this.hud(this.add.text(width / 2, Math.round(52 * hs), 'This Hatch is Broken, you won’t be able to Escape from it', {
+      fontSize: f(11), color: '#ff4040', fontFamily: 'monospace',
     }).setOrigin(0.5, 0).setDepth(1001).setVisible(false));
 
     // UAV indicator — sits just below the match clock at the top-center.
     // Shows a seconds countdown to the next UAV; throbs when it's <=3 turns
     // away; hidden in tutorial matches.
-    this.uavText = this.hud(this.add.text(width / 2, 34, '', {
-      fontSize: '13px', color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
+    this.uavText = this.hud(this.add.text(width / 2, Math.round(34 * hs), '', {
+      fontSize: f(13), color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5, 0).setDepth(1001).setVisible(false));
 
     // (Old top-right "HP --" text moved to the new top-left HP bar widget.)
@@ -3887,7 +3910,7 @@ export class MatchScene extends Phaser.Scene {
     // (COIN_ICON_SIZE / COIN_ROW_Y are module constants — see layoutResponsiveHud.)
     const coinIcon = this.add.graphics().setDepth(1001);
     {
-      const r = COIN_ICON_SIZE / 2;
+      const r = coinSize / 2;
       const cx = -r;
       const cy = r;
       coinIcon.fillStyle(0xffd944, 1);
@@ -3900,16 +3923,16 @@ export class MatchScene extends Phaser.Scene {
     }
     this.coinHudIcon = this.hud(coinIcon);
     this.coinHudText = this.hud(this.add.text(
-      width - HUD_RIGHT_MARGIN - COIN_ICON_SIZE - 6,
-      COIN_ROW_Y + COIN_ICON_SIZE / 2,
+      width - HUD_RIGHT_MARGIN - coinSize - 6,
+      COIN_ROW_Y + coinSize / 2,
       'x0',
       {
-        fontSize: '16px',
+        fontSize: f(16),
         color: '#ffd944',
         fontFamily: 'monospace',
         fontStyle: 'bold',
         stroke: '#000000',
-        strokeThickness: 3,
+        strokeThickness: Math.max(2, Math.round(3 * hs)),
       },
     ).setOrigin(1, 0.5).setDepth(1001));
 
@@ -3917,23 +3940,25 @@ export class MatchScene extends Phaser.Scene {
     // treasures during the match. Anchored below the coin row.
     this.treasureList = new TreasureListWidget(this, {
       x: width - HUD_RIGHT_MARGIN,
-      y: COIN_ROW_Y + COIN_ICON_SIZE + 6,
+      y: COIN_ROW_Y + coinSize + 6,
       anchor: 'top-right',
-      iconScale: 1.0,
-      fontSize: 16,
+      iconScale: hs,
+      fontSize: Math.max(9, Math.round(16 * hs)),
       depth: 1001,
       pulseOnCount: true,
     });
 
     // Keys counter — small icon + "N/3" text, sits just left of the
     // coin row + TreasureListWidget column. Its own column, per docs/keys-system.md §9.
-    this.keysHudIcon = this.hud(this.add.image(width - 160, 14 + KEY_ICON / 2, 'key')
+    const keyColX = Math.round(160 * hs);
+    const keyTxtX = Math.round(146 * hs);
+    this.keysHudIcon = this.hud(this.add.image(width - keyColX, COIN_ROW_Y + keySize / 2, 'key')
       .setOrigin(0.5, 0.5)
-      .setDisplaySize(KEY_ICON, KEY_ICON)
+      .setDisplaySize(keySize, keySize)
       .setDepth(1001));
-    this.keysHudText = this.hud(this.add.text(width - 146, 14 + KEY_ICON / 2, `0/${BALANCE.keys.requiredPerHatch}`, {
-      fontSize: '14px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
-      stroke: '#000000', strokeThickness: 3,
+    this.keysHudText = this.hud(this.add.text(width - keyTxtX, COIN_ROW_Y + keySize / 2, `0/${BALANCE.keys.requiredPerHatch}`, {
+      fontSize: f(14), color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
+      stroke: '#000000', strokeThickness: Math.max(2, Math.round(3 * hs)),
     }).setOrigin(0, 0.5).setDepth(1001));
 
     // Slot tray is built lazily — at this point the local Bomberman state
@@ -3944,7 +3969,7 @@ export class MatchScene extends Phaser.Scene {
     // monospace "[ < BACK ]" style used as the back button on other scenes.
     if (this.mode === 'tutorial') {
       const exitBtn = this.add.text(20, height - 30, '[ EXIT TUTORIAL ]', {
-        fontSize: '16px', color: '#888888', fontFamily: 'monospace',
+        fontSize: f(16), color: '#888888', fontFamily: 'monospace',
       }).setOrigin(0, 0.5).setDepth(1001).setInteractive({ useHandCursor: true });
       exitBtn.on('pointerover', () => exitBtn.setColor('#cccccc'));
       exitBtn.on('pointerout', () => exitBtn.setColor('#888888'));
@@ -3962,27 +3987,30 @@ export class MatchScene extends Phaser.Scene {
    */
   private layoutResponsiveHud(): void {
     const { width, height } = this.scale;
+    const hs = this.hudScale;
+    const coinSize = this.coinIconSize;
+    const keySize = this.keyIconSize;
 
-    // Top bar — redraw to the full new width.
+    // Top bar — redraw to the full new width (scaled height).
     if (this.topBarBg) {
       this.topBarBg.clear();
       this.topBarBg.fillStyle(0x0a0a14, 0.85);
-      this.topBarBg.fillRect(0, 0, width, 48);
+      this.topBarBg.fillRect(0, 0, width, Math.round(48 * hs));
     }
     // Top-center readouts.
-    this.timerText?.setPosition(width / 2, 12);
-    this.turnText?.setPosition(width / 2, 14);
-    this.phaseText?.setPosition(width / 2 + 110, 14);
-    this.uavText?.setPosition(width / 2, 34);
-    this.brokenHatchText?.setPosition(width / 2, 52);
+    this.timerText?.setPosition(width / 2, Math.round(12 * hs));
+    this.turnText?.setPosition(width / 2, Math.round(14 * hs));
+    this.phaseText?.setPosition(width / 2 + 110, Math.round(14 * hs));
+    this.uavText?.setPosition(width / 2, Math.round(34 * hs));
+    this.brokenHatchText?.setPosition(width / 2, Math.round(52 * hs));
     this.errorText?.setPosition(width / 2, height / 2);
 
     // Top-right column: coins, treasure list, keys.
     this.coinHudIcon?.setPosition(width - HUD_RIGHT_MARGIN, COIN_ROW_Y);
-    this.coinHudText?.setPosition(width - HUD_RIGHT_MARGIN - COIN_ICON_SIZE - 6, COIN_ROW_Y + COIN_ICON_SIZE / 2);
+    this.coinHudText?.setPosition(width - HUD_RIGHT_MARGIN - coinSize - 6, COIN_ROW_Y + coinSize / 2);
     this.treasureList?.setX(width - HUD_RIGHT_MARGIN);
-    this.keysHudIcon?.setPosition(width - 160, 14 + KEY_ICON / 2);
-    this.keysHudText?.setPosition(width - 146, 14 + KEY_ICON / 2);
+    this.keysHudIcon?.setPosition(width - Math.round(160 * hs), COIN_ROW_Y + keySize / 2);
+    this.keysHudText?.setPosition(width - Math.round(146 * hs), COIN_ROW_Y + keySize / 2);
 
     // Bottom-left exit-tutorial button.
     this.exitTutorialBtn?.setPosition(20, height - 30);
@@ -4001,7 +4029,7 @@ export class MatchScene extends Phaser.Scene {
    * The tutorial guide window docks here so it never overlaps the treasures.
    */
   getRightHudBottomY(): number {
-    const coinBottom = COIN_ROW_Y + COIN_ICON_SIZE;
+    const coinBottom = COIN_ROW_Y + this.coinIconSize;
     let treasureBottom = coinBottom;
     if (this.treasureList) {
       const r = this.treasureList.getRect();
@@ -4168,15 +4196,21 @@ export class MatchScene extends Phaser.Scene {
     this.slotHighlights = [];
 
     const { width, height } = this.scale;
-    const trayWidth = count * SLOT_SIZE + (count - 1) * SLOT_GAP;
+    const s = this.slotSize;
+    const gap = this.slotGap;
+    const hs = this.hudScale;
+    // Text floors at 9px so the half-scale mobile HUD stays legible.
+    const f = (px: number): string => `${Math.max(9, Math.round(px * hs))}px`;
+    const pad = Math.round(10 * hs);
+    const trayWidth = count * s + (count - 1) * gap;
     const trayX = (width - trayWidth) / 2;
-    const trayY = height - SLOT_SIZE - 16;
+    const trayY = height - s - Math.round(16 * hs);
     this.hudTrayX = trayX;
     this.hudTrayY = trayY;
 
     const trayBg = this.add.graphics().setDepth(1000);
     trayBg.fillStyle(0x0a0a14, 0.85);
-    trayBg.fillRoundedRect(trayX - 10, trayY - 10, trayWidth + 20, SLOT_SIZE + 20, 6);
+    trayBg.fillRoundedRect(trayX - pad, trayY - pad, trayWidth + pad * 2, s + pad * 2, 6);
     this.hudTrayBg = this.hud(trayBg);
 
     // Bomb-threat camera-edge warning — a thick stroked rectangle around
@@ -4194,17 +4228,17 @@ export class MatchScene extends Phaser.Scene {
     // interactive elements behind it.
     const stunOverlay = this.add.graphics().setDepth(1050).setVisible(false);
     stunOverlay.fillStyle(0x223355, 0.7);
-    stunOverlay.fillRoundedRect(trayX - 10, trayY - 10, trayWidth + 20, SLOT_SIZE + 20, 6);
+    stunOverlay.fillRoundedRect(trayX - pad, trayY - pad, trayWidth + pad * 2, s + pad * 2, 6);
     stunOverlay.lineStyle(3, 0x88ccff, 0.9);
-    stunOverlay.strokeRoundedRect(trayX - 10, trayY - 10, trayWidth + 20, SLOT_SIZE + 20, 6);
+    stunOverlay.strokeRoundedRect(trayX - pad, trayY - pad, trayWidth + pad * 2, s + pad * 2, 6);
     this.stunHudOverlay = this.hud(stunOverlay);
 
     const stunLabel = this.add.text(
-      trayX + trayWidth / 2, trayY + SLOT_SIZE / 2,
+      trayX + trayWidth / 2, trayY + s / 2,
       'STUNNED',
       {
-        fontSize: '24px', color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
-        stroke: '#000022', strokeThickness: 5,
+        fontSize: f(24), color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
+        stroke: '#000022', strokeThickness: Math.max(2, Math.round(5 * hs)),
       },
     ).setOrigin(0.5).setDepth(1051).setVisible(false);
     this.stunHudLabel = this.hud(stunLabel);
@@ -4216,8 +4250,8 @@ export class MatchScene extends Phaser.Scene {
     // each newer buff stacks one slot to its left. See `layoutBuffsRow`.
     // Icons here are created at the rightmost position; layoutBuffsRow
     // moves them into the correct slot when they become visible.
-    this.buffsRightX = trayX - 18;
-    this.buffsCenterY = trayY + SLOT_SIZE / 2;
+    this.buffsRightX = trayX - Math.round(18 * hs);
+    this.buffsCenterY = trayY + s / 2;
     const BUFF_SIZE = this.buffIconBaseSize();
     const meleeIcon = this.add.image(this.buffsRightX, this.buffsCenterY, 'sword_icon')
       .setOrigin(0.5, 0.5)
@@ -4233,30 +4267,30 @@ export class MatchScene extends Phaser.Scene {
     this.rushHudIcon = this.hud(rushIcon);
 
     for (let i = 0; i < count; i++) {
-      const sx = trayX + i * (SLOT_SIZE + SLOT_GAP);
+      const sx = trayX + i * (s + gap);
 
-      const rect = this.add.rectangle(sx, trayY, SLOT_SIZE, SLOT_SIZE, 0x1a1a2e, 1)
+      const rect = this.add.rectangle(sx, trayY, s, s, 0x1a1a2e, 1)
         .setOrigin(0, 0)
         .setStrokeStyle(2, 0x444466)
         .setDepth(1001);
       this.slotRects.push(this.hud(rect));
 
       // Keyboard shortcut key badge — white bg, black text, bottom-left
-      const label = this.add.text(sx + 4, trayY + SLOT_SIZE - 4, `${i + 1}`, {
-        fontSize: '12px', color: '#000000', fontFamily: 'monospace', fontStyle: 'bold',
-        backgroundColor: '#ffffff', padding: { x: 3, y: 1 },
+      const label = this.add.text(sx + Math.round(4 * hs), trayY + s - Math.round(4 * hs), `${i + 1}`, {
+        fontSize: f(12), color: '#000000', fontFamily: 'monospace', fontStyle: 'bold',
+        backgroundColor: '#ffffff', padding: { x: Math.max(1, Math.round(3 * hs)), y: 1 },
       }).setOrigin(0, 1).setDepth(1003);
       this.slotLabelTexts.push(this.hud(label));
 
       // Bomb icon image centered in the slot
-      const icon = this.add.image(sx + SLOT_SIZE / 2, trayY + SLOT_SIZE / 2, 'bomb_icons', 0)
-        .setDisplaySize(SLOT_SIZE - 16, SLOT_SIZE - 16)
+      const icon = this.add.image(sx + s / 2, trayY + s / 2, 'bomb_icons', 0)
+        .setDisplaySize(s * 0.75, s * 0.75)
         .setDepth(1001)
         .setVisible(false);
       this.slotIcons.push(this.hud(icon));
 
-      const countTxt = this.add.text(sx + SLOT_SIZE / 2, trayY + SLOT_SIZE - 4, '', {
-        fontSize: '14px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
+      const countTxt = this.add.text(sx + s / 2, trayY + s - Math.round(4 * hs), '', {
+        fontSize: f(14), color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
       }).setOrigin(0.5, 1).setDepth(1002);
       this.slotCountTexts.push(this.hud(countTxt));
 
@@ -4269,14 +4303,14 @@ export class MatchScene extends Phaser.Scene {
 
   /** Returns slot index [0..4] if (x,y) is on a bomb slot, -1 otherwise. */
   private hitTestHud(screenX: number, screenY: number): number {
-    if (screenY < this.hudTrayY || screenY > this.hudTrayY + SLOT_SIZE) return -1;
+    if (screenY < this.hudTrayY || screenY > this.hudTrayY + this.slotSize) return -1;
     const rel = screenX - this.hudTrayX;
     if (rel < 0) return -1;
-    const stride = SLOT_SIZE + SLOT_GAP;
+    const stride = this.slotSize + this.slotGap;
     const idx = Math.floor(rel / stride);
     if (idx < 0 || idx >= this.localTotalSlotCount()) return -1;
     const offset = rel - idx * stride;
-    if (offset > SLOT_SIZE) return -1; // in the gap between slots
+    if (offset > this.slotSize) return -1; // in the gap between slots
     return idx;
   }
 
@@ -4490,7 +4524,7 @@ export class MatchScene extends Phaser.Scene {
 
   /** Base display size shared by every icon in the HUD buffs row. */
   private buffIconBaseSize(): number {
-    return SLOT_SIZE * 0.6;
+    return this.slotSize * 0.6;
   }
 
   /** Map a buff ID to its icon GameObject. Central so the layout helper
@@ -4562,7 +4596,7 @@ export class MatchScene extends Phaser.Scene {
     onDone: () => void,
   ): Phaser.Tweens.Tween {
     pulseTween?.remove();
-    const popSize = SLOT_SIZE * 0.95;
+    const popSize = this.slotSize * 0.95;
     return this.tweens.add({
       targets: icon,
       displayWidth: popSize,
@@ -4766,18 +4800,27 @@ export class MatchScene extends Phaser.Scene {
    * Graphics that gets redrawn per segment in `updateHpBar`. The whole row
    * lives inside a Container so a hurt tween can jitter it cheaply.
    */
+  /** HP bar geometry scaled by hudScale (half-size on mobile). Shared by
+   *  buildHpBar / updateHpBar / getHudRect / hitTestHud so they stay in sync. */
+  private hpMetrics(): { x: number; y: number; labelW: number; barW: number; barH: number } {
+    const k = this.hudScale;
+    return {
+      x: Math.round(MatchScene.HP_BAR_X * k),
+      y: Math.round(MatchScene.HP_BAR_Y * k),
+      labelW: Math.round(MatchScene.HP_BAR_LABEL_W * k),
+      barW: Math.round(MatchScene.HP_BAR_W * k),
+      barH: 2 * Math.round(MatchScene.HP_BAR_H * k / 2), // keep even
+    };
+  }
+
   private buildHpBar(): void {
-    const x = MatchScene.HP_BAR_X;
-    const y = MatchScene.HP_BAR_Y;
-    const labelW = MatchScene.HP_BAR_LABEL_W;
-    const barW = MatchScene.HP_BAR_W;
-    const barH = MatchScene.HP_BAR_H;
+    const { x, y, labelW, barW, barH } = this.hpMetrics();
 
     const container = this.add.container(x, y).setDepth(1001);
     this.hud(container);
 
     this.hpBarLabel = this.add.text(0, barH / 2, 'HP:', {
-      fontSize: '16px', color: '#ff8888', fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: `${Math.max(9, Math.round(16 * this.hudScale))}px`, color: '#ff8888', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0, 0.5);
     container.add(this.hpBarLabel);
 
@@ -4803,9 +4846,7 @@ export class MatchScene extends Phaser.Scene {
    */
   private updateHpBar(current: number, max: number, dead: boolean): void {
     if (!this.hpBarFill || !this.hpBarLabel) return;
-    const labelW = MatchScene.HP_BAR_LABEL_W;
-    const barW = MatchScene.HP_BAR_W;
-    const barH = MatchScene.HP_BAR_H;
+    const { labelW, barW, barH } = this.hpMetrics();
     const innerPad = 2;
     const segGap = 2;
     const innerW = barW - innerPad * 2;
@@ -4933,7 +4974,7 @@ export class MatchScene extends Phaser.Scene {
       hl.clear();
       if (isSelected) {
         hl.lineStyle(3, 0xff4444, 1);
-        hl.strokeRoundedRect(this.hudTrayX + i * (SLOT_SIZE + SLOT_GAP), this.hudTrayY, SLOT_SIZE, SLOT_SIZE, 4);
+        hl.strokeRoundedRect(this.hudTrayX + i * (this.slotSize + this.slotGap), this.hudTrayY, this.slotSize, this.slotSize, 4);
       }
     }
   }
