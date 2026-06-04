@@ -20,7 +20,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     fuseTurns: 0,
     behavior: { kind: 'explode', shape: { kind: 'single' } },
     price: 0,
-    description: 'Free infinite fallback. Hits only the tile it lands on.',
+    description: 'A tursy rock. There is always one to throw.',
     category: 'standard',
   },
   bomb: {
@@ -29,7 +29,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     fuseTurns: 1,
     behavior: { kind: 'explode', shape: { kind: 'plus', radius: 4 } },
     price: 25,
-    description: 'Classic + blast, radius 4. Detonates next turn.',
+    description: 'Simple + pattern blast, radius 4. Detonates next turn.',
     category: 'tactical',
   },
   bomb_wide: {
@@ -38,7 +38,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     fuseTurns: 2,
     behavior: { kind: 'explode', shape: { kind: 'circle', radius: 2, rayCast: true } },
     price: 40,
-    description: 'Wide 5x5 blast — walls block the shockwave. Detonates after 2 turns.',
+    description: 'Wide 5x5 blast. Detonates after 2 turns.',
     category: 'tactical',
   },
   delay_tricky: {
@@ -47,7 +47,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     fuseTurns: 1,
     behavior: { kind: 'explode', shape: { kind: 'diag', radius: 3 } },
     price: 25,
-    description: 'Diagonal blast, radius 3. Detonates next turn.',
+    description: 'Diagonal x pattern blast, radius 3. Detonates next turn.',
     category: 'tactical',
   },
   contact: {
@@ -56,7 +56,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     fuseTurns: 0,
     behavior: { kind: 'explode', shape: { kind: 'plus', radius: 1 } },
     price: 95,
-    description: 'Tight + blast that detonates the moment it lands.',
+    description: 'Detonates on impact. Small + pattern blast.',
     category: 'instant',
   },
   banana: {
@@ -141,7 +141,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
       detectionRadius: BALANCE.bombs.motionDetectorRadius,
     },
     price: 5,
-    description: 'Hidden trap. Fires a flare when an enemy steps within 3 tiles in line of sight.',
+    description: 'Hidden trap. Fires a flare when an enemy steps within 3 tiles of it.',
     category: 'utility',
   },
   flash: {
@@ -155,7 +155,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
       stunTurns: BALANCE.bombs.flashStunTurns,
     },
     price: 65,
-    description: 'Blue 7x7 blast. Anyone caught is stunned for 1 turn.',
+    description: '7x7 blast. Anyone caught is stunned for 1 turn.',
     category: 'utility',
   },
   // Special bombs gate behind treasure costs. Pricing tuned against average
@@ -197,7 +197,7 @@ export const BOMB_CATALOG: Record<BombType, BombDef> = {
     behavior: { kind: 'explode', shape: { kind: 'circle', radius: 5, rayCast: true } },
     price: 125,
     treasureCost: { type: 'lanterns', amount: 2 },
-    description: 'Massive 11x11 explosion — walls block the shockwave. Detonates after 2 turns.',
+    description: 'Massive 11x11 explosion. Detonates after 2 turns.',
     category: 'special',
   },
   shield: {

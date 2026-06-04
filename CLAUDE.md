@@ -54,7 +54,9 @@ Path aliases (configured in `vite.config.ts` and `tsconfig.json`): `@shared/*`, 
 
 - `MatchScheduler` — lobby carousel of joinable matches with auto-start countdowns
 - `MatchRoom` instances — one per active match, owns per-match state and runs `resolveTurn` each turn
-- `BombermanShopService` / `BombsShopService` — meta-progression shops
+- `BombermanShopService` / `BombsShopService` / `FactoryService` — meta-progression shops and crafting
+- `BombermanUpgradeService` — spends per-Bomberman SP on CAP/STACK/HP tracks (`upgrade_bomberman` event → `shop_result`)
+- `BotPlayer` / `ScavPlayer` — server-side AI: `BotPlayer` is the PvP opponent behaviour tree; `ScavPlayer` drives the loot-stealing Scav NPC
 
 Socket event map lives on `GameServer` (`auth`, `join_match`, `player_action`, `loot_bomb`, shop events, etc.). All gameplay-affecting events are validated server-side; clients are not trusted.
 
@@ -92,7 +94,7 @@ Maps are authored in Tiled (`public/maps/*.tmj`) and converted to JSON under `sr
 
 ### Tests
 
-`tests/` contains Vitest unit tests: pure systems (`BombResolver`, `LineOfSight`, `Pathfinding`), meta subsystems (`gambler-street-engine`, `gambler-street-rewards`, `loot-roll`, `treasure-roll`, `factory`), and per-mechanic regression suites (`shield-bomb`, `escape-hatch`, `keys`, `uav`, `scav`), plus two e2e smoke harnesses (`e2e-match.ts`, `e2e-smoke.ts` — not auto-run by `npm test`). New gameplay logic should be testable as a pure function of state — if it isn't, reconsider the design before adding the test.
+`tests/` contains Vitest unit tests: pure systems (`BombResolver`, `LineOfSight`, `Pathfinding`), meta subsystems (`gambler-street-engine`, `gambler-street-rewards`, `loot-roll`, `treasure-roll`, `factory`), and per-mechanic regression suites (`shield-bomb`, `escape-hatch`, `keys`, `uav`, `scav`, `bomberman-upgrade`, `sp-earning`, `confused-move`), plus two e2e smoke harnesses (`e2e-match.ts`, `e2e-smoke.ts` — not auto-run by `npm test`). New gameplay logic should be testable as a pure function of state — if it isn't, reconsider the design before adding the test.
 
 ## Conventions
 

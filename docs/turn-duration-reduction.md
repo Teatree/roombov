@@ -3,13 +3,23 @@
 Audit prepared before the planned 25% reduction of each turn phase. Use this
 as the per-aspect decision sheet during implementation.
 
+## Change log
+
+- **May 29, 2026 — 25% faster.** Each phase 2.0 s → 1.5 s (turn 4000 → 3000 ms).
+  Burst pinned to absolute 1400 ms (see A3). Original subject of this doc.
+- **Jun 3, 2026 — another 10% faster.** Each phase 1.5 s → 1.35 s (turn 3000 →
+  2700 ms). No bucket-A pins needed — the 1400 ms burst pin from May 29 still
+  holds, and melee impact had since been re-anchored to `ATTACK3_DURATION_MS`
+  (no longer turn-derived), so the A7/B5 risks below are now moot. Tutorial
+  pacing (section D) still NOT reviewed — carry forward.
+
 ## Context
 
-| Phase       | Current | Proposed |
-|-------------|--------:|---------:|
-| Input       | 2000 ms | 1500 ms  |
-| Transition  | 2000 ms | 1500 ms  |
-| **Total**   | 4000 ms | 3000 ms  |
+| Phase       | Original | After May 29 | After Jun 3 (current) |
+|-------------|---------:|-------------:|----------------------:|
+| Input       | 2000 ms  | 1500 ms      | 1350 ms               |
+| Transition  | 2000 ms  | 1500 ms      | 1350 ms               |
+| **Total**   | 4000 ms  | 3000 ms      | **2700 ms**           |
 
 The change itself is two numbers in `src/shared/config/balance.ts:28-29`
 (`inputPhaseSeconds: 2 → 1.5`, `transitionPhaseSeconds: 2 → 1.5`). Almost

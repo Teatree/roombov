@@ -1,13 +1,13 @@
 {
   "id": "p_d54d355a2f08",
   "createdAt": 1777895533792,
-  "updatedAt": 1777895778390,
-  "coins": 500,
+  "updatedAt": 1780514289338,
+  "coins": 873,
   "treasures": {
-    "coffee": 15,
-    "grapes": 68,
-    "lanterns": 68,
-    "mushrooms": 69
+    "coffee": 70,
+    "grapes": 91,
+    "lanterns": 75,
+    "mushrooms": 282
   },
   "ownedBombermen": [
     {
@@ -24,11 +24,11 @@
       "inventory": {
         "slots": [
           {
-            "type": "bomb_wide",
-            "count": 5
+            "type": "motion_detector_flare",
+            "count": 1
           },
           {
-            "type": "bomb",
+            "type": "big_huge",
             "count": 5
           },
           {
@@ -36,8 +36,8 @@
             "count": 5
           },
           {
-            "type": "shield",
-            "count": 5
+            "type": "flash",
+            "count": 3
           }
         ]
       },
@@ -45,18 +45,19 @@
       "sourceTemplateId": "cycle_1777895548432_0_free",
       "maxCustomSlots": 4,
       "stackSize": 5,
-      "sp": 0,
+      "sp": 78,
       "upgrades": {
         "cap": 0,
         "stack": 0,
         "hp": 0
       },
-      "lifetimeSp": 0
+      "lifetimeSp": 78
     }
   ],
   "equippedBombermanId": "owned_p_d54d355a2f08_1777895549097_vk18",
   "bombStockpile": {
-    "flare": 5
+    "flare": 5,
+    "big_huge": 1
   },
   "gamblerStreet": {
     "gamblers": [
@@ -110,7 +111,184 @@
     "lastTickedAt": 1777895535649,
     "nextGamblerSerial": 6
   },
-  "bombermanShop": null,
+  "bombermanShop": {
+    "cycleId": "cycle_p_d54d355a2f08_mpyg4fei",
+    "startedAt": 1780514098938,
+    "endsAt": 1780514218938,
+    "bombermen": [
+      {
+        "id": "cycle_p_d54d355a2f08_mpyg4fei_0_free",
+        "name": "Duffy",
+        "tier": "free",
+        "price": 580,
+        "colors": {
+          "shirt": 14140738,
+          "pants": 2638986,
+          "hair": 9647282
+        },
+        "tint": 7568861,
+        "character": "char6",
+        "maxCustomSlots": 4,
+        "stackSize": 6,
+        "inventory": {
+          "slots": [
+            {
+              "type": "bomb",
+              "count": 4
+            },
+            {
+              "type": "delay_tricky",
+              "count": 3
+            },
+            {
+              "type": "shield",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_d54d355a2f08_mpyg4fei_1_free",
+        "name": "Kelly",
+        "tier": "free",
+        "price": 740,
+        "colors": {
+          "shirt": 4345303,
+          "pants": 8857738,
+          "hair": 11678843
+        },
+        "tint": 9685474,
+        "character": "char3",
+        "maxCustomSlots": 4,
+        "stackSize": 6,
+        "inventory": {
+          "slots": [
+            {
+              "type": "banana",
+              "count": 4
+            },
+            {
+              "type": "ender_pearl",
+              "count": 3
+            },
+            {
+              "type": "bomb",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_d54d355a2f08_mpyg4fei_2_paid",
+        "name": "Big Jake",
+        "tier": "paid",
+        "price": 1090,
+        "colors": {
+          "shirt": 5363522,
+          "pants": 9054310,
+          "hair": 3446194
+        },
+        "tint": 10779098,
+        "character": "char1",
+        "maxCustomSlots": 5,
+        "stackSize": 9,
+        "inventory": {
+          "slots": [
+            {
+              "type": "bomb_wide",
+              "count": 5
+            },
+            {
+              "type": "fart_escape",
+              "count": 5
+            },
+            {
+              "type": "banana",
+              "count": 4
+            },
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_d54d355a2f08_mpyg4fei_3_paid",
+        "name": "Big Jake",
+        "tier": "paid",
+        "price": 900,
+        "colors": {
+          "shirt": 6505175,
+          "pants": 9062696,
+          "hair": 8303156
+        },
+        "tint": 15500202,
+        "character": "char3",
+        "maxCustomSlots": 5,
+        "stackSize": 9,
+        "inventory": {
+          "slots": [
+            {
+              "type": "flare",
+              "count": 4
+            },
+            {
+              "type": "bomb_wide",
+              "count": 4
+            },
+            {
+              "type": "delay_tricky",
+              "count": 3
+            },
+            {
+              "type": "fart_escape",
+              "count": 3
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_d54d355a2f08_mpyg4fei_4_paid_expensive",
+        "name": "Leonidas",
+        "tier": "paid_expensive",
+        "price": 1380,
+        "colors": {
+          "shirt": 4380581,
+          "pants": 2656868,
+          "hair": 10433714
+        },
+        "tint": 13955224,
+        "character": "char2",
+        "maxCustomSlots": 6,
+        "stackSize": 10,
+        "inventory": {
+          "slots": [
+            {
+              "type": "motion_detector_flare",
+              "count": 5
+            },
+            {
+              "type": "ender_pearl",
+              "count": 5
+            },
+            {
+              "type": "banana",
+              "count": 5
+            },
+            {
+              "type": "phosphorus",
+              "count": 1
+            },
+            null,
+            null
+          ]
+        }
+      }
+    ],
+    "boughtTemplateIds": []
+  },
   "factories": {
     "1": {
       "firstCycleStartedAt": null,
@@ -141,5 +319,5 @@
       "sessionTotal": 0
     }
   },
-  "totalMatchesPlayed": 0
+  "totalMatchesPlayed": 1
 }
