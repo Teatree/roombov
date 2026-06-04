@@ -141,10 +141,11 @@ export class TutorialOverlayScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.pauseContainer.add([this.pauseDim, this.pauseText, pauseFooter]);
 
-    // --- Dialogue panel — bottom-right. Portrait + text + footer. ---
-    const panelX = width - DIALOGUE_PANEL_W - DIALOGUE_MARGIN;
-    const panelY = height - DIALOGUE_PANEL_H - DIALOGUE_MARGIN;
-    this.dialoguePanel = this.add.container(panelX, panelY).setDepth(110).setVisible(false);
+    // --- Dialogue panel — top-right, docked just below the coin/treasure HUD
+    //     column so the guide window and the treasure list never overlap.
+    //     Initial position is refined by dockPanelTopRight() once HUD exists. ---
+    this.dialoguePanel = this.add.container(width - DIALOGUE_PANEL_W - DIALOGUE_MARGIN, DIALOGUE_MARGIN)
+      .setDepth(110).setVisible(false);
 
     this.dialogueBg = this.add.rectangle(0, 0, DIALOGUE_PANEL_W, DIALOGUE_PANEL_H, 0x0a1020, 0.92)
       .setOrigin(0, 0)
@@ -182,6 +183,9 @@ export class TutorialOverlayScene extends Phaser.Scene {
     // Handle window resize.
     this.scale.on('resize', this.onResize, this);
 
+    // Dock the guide window below the treasure HUD column now that it exists.
+    this.dockPanelTopRight();
+
     // Notify the backend that overlay primitives are ready. Triggers the
     // director to start walking the script.
     this.backend?.attachOverlay(this);
@@ -200,10 +204,22 @@ export class TutorialOverlayScene extends Phaser.Scene {
     this.clickCatcher?.setSize(width, height);
     this.pauseDim?.setSize(width, height);
     this.pauseText?.setPosition(width / 2, height / 2);
-    this.dialoguePanel?.setPosition(
-      width - DIALOGUE_PANEL_W - DIALOGUE_MARGIN,
-      height - DIALOGUE_PANEL_H - DIALOGUE_MARGIN,
-    );
+    this.dockPanelTopRight();
+  }
+
+  /**
+   * Pin the dialogue panel to the top-right, just below the coin/treasure HUD
+   * column (queried from MatchScene). Keeps the guide window clear of the
+   * treasure list, which shares the same corner. Called on create, resize, and
+   * each time a line is shown (the treasure column can have grown).
+   */
+  private dockPanelTopRight(): void {
+    if (!this.dialoguePanel) return;
+    const width = this.scale.width;
+    const hudBottom = this.matchScene?.getRightHudBottomY?.() ?? (DIALOGUE_MARGIN + 28);
+    const x = width - DIALOGUE_PANEL_W - DIALOGUE_MARGIN;
+    const y = hudBottom + 12;
+    this.dialoguePanel.setPosition(x, y);
   }
 
   // ============================================================
@@ -221,6 +237,7 @@ export class TutorialOverlayScene extends Phaser.Scene {
   showDialogue(text: string, onAdvance: () => void, portrait?: PortraitId): void {
     this.ensurePortrait(portrait ?? 'char4');
     this.dialogueText.setText(text);
+    this.dockPanelTopRight();
     this.dialoguePanel.setVisible(true);
     this.enableClickCatcher(onAdvance);
   }

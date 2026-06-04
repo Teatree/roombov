@@ -27,6 +27,8 @@ import { BombShopTooltip, bombTooltipInfoFor, type BombTooltipInfo } from '../sy
 import { preloadTreasureIcons, TREASURE_TEXTURE_KEY, treasureIconFrame } from '../systems/TreasureIcons.ts';
 import { TreasureListWidget } from '../systems/TreasureListWidget.ts';
 import { ShieldRenderer } from '../systems/ShieldRenderer.ts';
+import { MobileControls, type MobileHooks } from '../systems/MobileControls.ts';
+import { isMobileDevice } from '../util/isMobile.ts';
 import {
   type TreasureType,
   type TreasureBundle,
@@ -50,6 +52,14 @@ type InputMode =
 
 const SLOT_SIZE = 64;
 const SLOT_GAP = 8;
+
+// Top-right HUD column geometry. Shared by buildHud() and the resize relayout
+// (layoutResponsiveHud) so the coin row / treasure list / keys counter stay
+// pinned to the right edge at any viewport width.
+const COIN_ICON_SIZE = 28;
+const COIN_ROW_Y = 14;
+const KEY_ICON = 22;
+const HUD_RIGHT_MARGIN = 20;
 
 /** Bombs that may be thrown onto ANY tile (incl. walls) — their throw target
  *  snaps to whatever tile is under the cursor. Every other bomb is "restricted"
@@ -99,6 +109,16 @@ export class MatchScene extends Phaser.Scene {
   /** Which bomb slot is armed for throwing. Purely visual — movement continues
    *  until the player actually clicks a tile to throw at. */
   private selectedSlot: number | null = null;
+  /** True on touch devices: swaps the PC click-to-act input for the mobile
+   *  Move/Attack button + drag-selector scheme (see MobileControls). */
+  private isMobile = false;
+  /** Mobile-only: the always-selected bomb slot (Rock = 0 by default). Drives
+   *  the persistent armed-slot border in the tray. Distinct from `selectedSlot`,
+   *  which is set only while actively aiming so the ghost/trajectory preview
+   *  doesn't show outside attack-selection. */
+  private mobileArmedSlot = 0;
+  /** Mobile-only touch control system (buttons + selector + pan/zoom). */
+  private mobileControls: MobileControls | null = null;
   private lastPhase: string | null = null;
   /** Set on the first middle/right mouse click of a match. Once true, the
    *  per-frame `centerOn` in update() stops running so the player can pan
@@ -251,6 +271,10 @@ export class MatchScene extends Phaser.Scene {
    *  of amount, pinned above the treasure list. */
   private coinHudIcon: Phaser.GameObjects.Graphics | null = null;
   private coinHudText: Phaser.GameObjects.Text | null = null;
+  /** Top bar background + exit-tutorial button refs, kept so the responsive
+   *  relayout (layoutResponsiveHud) can re-stretch / re-anchor them on resize. */
+  private topBarBg: Phaser.GameObjects.Graphics | null = null;
+  private exitTutorialBtn: Phaser.GameObjects.Text | null = null;
   /** Running tally of coins the local player has picked up this match.
    *  Client-authoritative for the Results screen — same pattern as
    *  myTreasureTally. */
@@ -512,6 +536,8 @@ export class MatchScene extends Phaser.Scene {
 
   create(): void {
     this.events.once('shutdown', this.shutdown, this);
+    this.isMobile = isMobileDevice();
+    this.mobileArmedSlot = 0;
     if (this.mode === 'tutorial') {
       // Tutorial is single-player with a fabricated player id — skip the
       // profile lookup and the post-match UI-anim-lock clear.
@@ -754,6 +780,24 @@ export class MatchScene extends Phaser.Scene {
     this.bombTooltipShowAt = 0;
     this.pointerInsideGame = true;
 
+    // Re-pin viewport-anchored HUD whenever the canvas resizes (window drag,
+    // orientation change). Registered for both desktop and mobile.
+    this.scale.on('resize', this.onResize, this);
+
+    // Mobile: install the touch control scheme (Move/Attack buttons, drag
+    // selector, one-finger pan, pinch zoom) instead of the PC click-to-act
+    // handlers below. Everything the mobile path needs from the scene is
+    // exposed through `buildMobileHooks()`.
+    if (this.isMobile) {
+      this.input.addPointer(2); // ensure 2 touch pointers for pinch-zoom
+      this.mobileControls = new MobileControls(this, this.buildMobileHooks());
+      // Suppress the browser context menu so a long-press doesn't pop the OS
+      // menu over the canvas. (The PC path adds this below; mobile returns early.)
+      this.game.canvas.addEventListener('contextmenu', this.preventContext);
+      // Keyboard slot hotkeys are pointless on mobile — skip the rest of create().
+      return;
+    }
+
     // Left-click = game actions. Middle/right = manual camera pan: first
     // press also flips `cameraManualOverride` on, which disables the
     // per-frame auto-centering in update() for the rest of the match.
@@ -917,6 +961,9 @@ export class MatchScene extends Phaser.Scene {
       this.cameras.remove(this.hudCamera);
       this.hudCamera = null;
     }
+    this.scale.off('resize', this.onResize, this);
+    this.mobileControls?.destroy();
+    this.mobileControls = null;
     this.input.keyboard?.removeAllListeners();
   }
 
@@ -938,6 +985,11 @@ export class MatchScene extends Phaser.Scene {
 
     // Update ready-to-escape feedback (banner above head + progress ring)
     this.updateEscapeReadyIndicator();
+
+    // Mobile: refresh the drag selector + preview (path for move, aim tile for
+    // attack). Runs before the ghost/path draws below so they pick up the
+    // selector's tile this frame.
+    this.mobileControls?.update();
 
     // Redraw the path each frame so the path[0] hourglass arc animates
     // smoothly during the input phase (instead of stepping only on
@@ -3788,7 +3840,7 @@ export class MatchScene extends Phaser.Scene {
     const topBg = this.add.graphics().setDepth(1000);
     topBg.fillStyle(0x0a0a14, 0.85);
     topBg.fillRect(0, 0, width, 48);
-    this.hud(topBg);
+    this.topBarBg = this.hud(topBg);
 
     // Top-left HP bar widget (replaces old phaseText + the right-side hpText).
     // Container is jittered on hurt; bar fill is redrawn per-frame to track
@@ -3832,8 +3884,7 @@ export class MatchScene extends Phaser.Scene {
     // Coin row (NEW_META §2) — pinned at the top of the top-right column,
     // always visible regardless of amount. Drawn as a graphics circle to
     // mirror the tooltip 'coin' shape (no extra texture asset needed).
-    const COIN_ICON_SIZE = 28;
-    const COIN_ROW_Y = 14;
+    // (COIN_ICON_SIZE / COIN_ROW_Y are module constants — see layoutResponsiveHud.)
     const coinIcon = this.add.graphics().setDepth(1001);
     {
       const r = COIN_ICON_SIZE / 2;
@@ -3845,11 +3896,11 @@ export class MatchScene extends Phaser.Scene {
       coinIcon.fillCircle(cx, cy, r * 0.7);
       coinIcon.fillStyle(0xffd944, 1);
       coinIcon.fillRect(cx - r * 0.1, cy - r * 0.45, r * 0.2, r * 0.9);
-      coinIcon.setPosition(width - 20, COIN_ROW_Y);
+      coinIcon.setPosition(width - HUD_RIGHT_MARGIN, COIN_ROW_Y);
     }
     this.coinHudIcon = this.hud(coinIcon);
     this.coinHudText = this.hud(this.add.text(
-      width - 20 - COIN_ICON_SIZE - 6,
+      width - HUD_RIGHT_MARGIN - COIN_ICON_SIZE - 6,
       COIN_ROW_Y + COIN_ICON_SIZE / 2,
       'x0',
       {
@@ -3865,7 +3916,7 @@ export class MatchScene extends Phaser.Scene {
     // Treasure list — vertical, top-right, fills as the player picks up
     // treasures during the match. Anchored below the coin row.
     this.treasureList = new TreasureListWidget(this, {
-      x: width - 20,
+      x: width - HUD_RIGHT_MARGIN,
       y: COIN_ROW_Y + COIN_ICON_SIZE + 6,
       anchor: 'top-right',
       iconScale: 1.0,
@@ -3876,7 +3927,6 @@ export class MatchScene extends Phaser.Scene {
 
     // Keys counter — small icon + "N/3" text, sits just left of the
     // coin row + TreasureListWidget column. Its own column, per docs/keys-system.md §9.
-    const KEY_ICON = 22;
     this.keysHudIcon = this.hud(this.add.image(width - 160, 14 + KEY_ICON / 2, 'key')
       .setOrigin(0.5, 0.5)
       .setDisplaySize(KEY_ICON, KEY_ICON)
@@ -3899,8 +3949,181 @@ export class MatchScene extends Phaser.Scene {
       exitBtn.on('pointerover', () => exitBtn.setColor('#cccccc'));
       exitBtn.on('pointerout', () => exitBtn.setColor('#888888'));
       exitBtn.on('pointerdown', () => this.scene.start('MainMenuScene'));
-      this.hud(exitBtn);
+      this.exitTutorialBtn = this.hud(exitBtn);
     }
+  }
+
+  /**
+   * Reposition the viewport-anchored HUD after a resize (window drag, device
+   * orientation, DPR change). All these elements are created in buildHud() at
+   * the then-current size; this re-pins them to the new edges so nothing drifts
+   * off-screen. The HP bar (top-left, fixed) and the bomb tray (rebuilt via
+   * rebuildSlotTrayIfNeeded) are handled separately.
+   */
+  private layoutResponsiveHud(): void {
+    const { width, height } = this.scale;
+
+    // Top bar — redraw to the full new width.
+    if (this.topBarBg) {
+      this.topBarBg.clear();
+      this.topBarBg.fillStyle(0x0a0a14, 0.85);
+      this.topBarBg.fillRect(0, 0, width, 48);
+    }
+    // Top-center readouts.
+    this.timerText?.setPosition(width / 2, 12);
+    this.turnText?.setPosition(width / 2, 14);
+    this.phaseText?.setPosition(width / 2 + 110, 14);
+    this.uavText?.setPosition(width / 2, 34);
+    this.brokenHatchText?.setPosition(width / 2, 52);
+    this.errorText?.setPosition(width / 2, height / 2);
+
+    // Top-right column: coins, treasure list, keys.
+    this.coinHudIcon?.setPosition(width - HUD_RIGHT_MARGIN, COIN_ROW_Y);
+    this.coinHudText?.setPosition(width - HUD_RIGHT_MARGIN - COIN_ICON_SIZE - 6, COIN_ROW_Y + COIN_ICON_SIZE / 2);
+    this.treasureList?.setX(width - HUD_RIGHT_MARGIN);
+    this.keysHudIcon?.setPosition(width - 160, 14 + KEY_ICON / 2);
+    this.keysHudText?.setPosition(width - 146, 14 + KEY_ICON / 2);
+
+    // Bottom-left exit-tutorial button.
+    this.exitTutorialBtn?.setPosition(20, height - 30);
+
+    // Bomb tray is centered + bottom-anchored — force a rebuild so it re-centers.
+    this.lastBuiltSlotCount = -1;
+    this.rebuildSlotTrayIfNeeded();
+    this.renderHud();
+
+    // Mobile control buttons re-anchor to the new bottom-right corner.
+    this.mobileControls?.layout();
+  }
+
+  /**
+   * Screen-space Y just below the top-right HUD column (coins + treasure list).
+   * The tutorial guide window docks here so it never overlaps the treasures.
+   */
+  getRightHudBottomY(): number {
+    const coinBottom = COIN_ROW_Y + COIN_ICON_SIZE;
+    let treasureBottom = coinBottom;
+    if (this.treasureList) {
+      const r = this.treasureList.getRect();
+      treasureBottom = r.y + r.h;
+    }
+    return Math.max(coinBottom, treasureBottom);
+  }
+
+  /** Canvas resize → resize the HUD camera and re-pin all anchored HUD. */
+  private onResize(gameSize: Phaser.Structs.Size): void {
+    this.hudCamera?.setSize(gameSize.width, gameSize.height);
+    this.layoutResponsiveHud();
+  }
+
+  // ============================================================
+  // Mobile control bridge — methods called by MobileControls.
+  // ============================================================
+
+  /**
+   * The bundle of scene operations MobileControls needs. Grouping them in one
+   * object keeps the public surface small and the coupling explicit.
+   */
+  private buildMobileHooks(): MobileHooks {
+    return {
+      canAct: () => {
+        const me = this.myBomberman();
+        if (!me || !me.alive || me.escaped) return false;
+        if ((me.statusEffects ?? []).some(s => s.kind === 'stunned' && s.turnsRemaining > 0)) return false;
+        return true;
+      },
+      playerTile: () => {
+        const me = this.myBomberman();
+        return me ? { x: me.x, y: me.y } : null;
+      },
+      tileSize: () => this.mapData?.tileSize ?? 32,
+      mapSize: () => ({ w: this.mapData?.width ?? 0, h: this.mapData?.height ?? 0 }),
+      computePath: (tx, ty) => {
+        const me = this.myBomberman();
+        if (!me || !this.mapData) return [];
+        return findPath(me.x, me.y, tx, ty, this.mapData);
+      },
+      snapThrow: (tx, ty) => {
+        const bt = this.mobileArmedBombType();
+        return this.snapThrowTarget(tx, ty, bt);
+      },
+      worldCamera: () => this.cameras.main,
+      tagWorldObject: (obj) => { this.hudCamera?.ignore(obj); },
+      beginManualCamera: () => {
+        if (!this.cameraManualOverride) this.cameras.main.removeBounds();
+        this.cameraManualOverride = true;
+      },
+      tryHandleHudTap: (x, y) => this.mobileHandleHudTap(x, y),
+      haltStaged: () => {
+        this.inputMode = { kind: 'idle' };
+        this.flushStagedAction();
+      },
+      beginAttackAim: () => {
+        this.selectedSlot = this.mobileArmedSlot;
+        this.renderHud();
+      },
+      endAim: () => {
+        this.selectedSlot = null;
+        this.hoveredTileX = null;
+        this.hoveredTileY = null;
+        this.renderHud();
+      },
+      setAimTile: (tile) => {
+        this.hoveredTileX = tile ? tile.x : null;
+        this.hoveredTileY = tile ? tile.y : null;
+      },
+      commitMove: (path) => {
+        if (path.length === 0) return;
+        this.inputMode = { kind: 'pathing', path };
+        const dest = path[path.length - 1];
+        this.spawnClickFeedback('move', dest.x, dest.y);
+        this.flushStagedAction();
+        this.rebuildEntities();
+      },
+      commitAttack: (tile) => {
+        this.inputMode = {
+          kind: 'aim',
+          slotIndex: this.mobileArmedSlot,
+          targetX: tile.x,
+          targetY: tile.y,
+        };
+        this.selectedSlot = null;
+        this.hoveredTileX = null;
+        this.hoveredTileY = null;
+        this.spawnClickFeedback('attack', tile.x, tile.y);
+        this.flushStagedAction();
+        this.rebuildEntities();
+        this.renderHud();
+      },
+    };
+  }
+
+  /** Bomb type for the currently armed mobile slot (Rock for slot 0). */
+  private mobileArmedBombType(): BombType {
+    const me = this.myBomberman();
+    if (this.mobileArmedSlot === 0 || !me) return 'rock';
+    return me.inventory.slots[this.mobileArmedSlot - 1]?.type ?? 'rock';
+  }
+
+  /** Mobile tap on the bomb tray / loot panel. Returns true if it hit one. */
+  private mobileHandleHudTap(x: number, y: number): boolean {
+    const lootIdx = this.hitTestLootPanel(x, y);
+    if (lootIdx >= 0) { this.onLootSlotClicked(lootIdx); return true; }
+    const slot = this.hitTestHud(x, y);
+    if (slot >= 0) { this.mobileArmSlot(slot); return true; }
+    return false;
+  }
+
+  /** Mobile: select (not toggle) a tray slot as the armed bomb. No-op for an
+   *  empty slot so exactly one valid slot stays armed at all times. */
+  private mobileArmSlot(slotIndex: number): void {
+    const me = this.myBomberman();
+    if (!me) return;
+    if (slotIndex !== 0 && me.inventory.slots[slotIndex - 1] == null) return;
+    this.mobileArmedSlot = slotIndex;
+    // If we're mid-aim, keep the live preview in sync with the new bomb.
+    if (this.selectedSlot !== null) this.selectedSlot = slotIndex;
+    this.renderHud();
   }
 
   /**
@@ -4700,9 +4923,12 @@ export class MatchScene extends Phaser.Scene {
       this.slotLabelTexts[i].setAlpha(bombType ? 1 : 0.3);
       this.slotCountTexts[i].setText(sub);
 
-      // Highlight selected slot (armed for throwing, or staged throw in aim mode)
+      // Highlight selected slot (armed for throwing, or staged throw in aim
+      // mode). On mobile, the armed slot border is always shown — exactly one
+      // bomb is selected at all times (Rock by default).
       const isSelected = this.selectedSlot === i
-        || (this.inputMode.kind === 'aim' && this.inputMode.slotIndex === i);
+        || (this.inputMode.kind === 'aim' && this.inputMode.slotIndex === i)
+        || (this.isMobile && this.mobileArmedSlot === i);
       const hl = this.slotHighlights[i];
       hl.clear();
       if (isSelected) {
