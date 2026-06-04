@@ -6,11 +6,19 @@ import { ActivityIndicator } from '../systems/ActivityIndicator.ts';
 import { BombermanSelector } from '../systems/BombermanSelector.ts';
 import { preloadBombIcons } from '../systems/BombIcons.ts';
 import { preloadBombermanSpritesheets, ensureBombermanAnims } from '../systems/BombermanAnimations.ts';
+import { designViewport, fitSceneToViewport } from '../util/responsiveScene.ts';
 import type { MatchListing } from '@shared/types/match.ts';
 
 const CARD_WIDTH = 260;
 const CARD_HEIGHT = 280;
 const CARD_GAP = 24;
+
+/** Design box the scene lays out against; the camera scales it to fit short
+ *  landscape-phone viewports. Width is generous (centered content); height is
+ *  the natural stack: top titles → mid card row (center 0.4·H, half-height
+ *  140) → bottom Bomberman selector band (height−130) and status bar. */
+const DESIGN_W = 600;
+const DESIGN_H = 740;
 
 const ROLL_IN_MS = 280;
 const ROLL_OUT_MS = 260;
@@ -63,6 +71,9 @@ export class LobbyScene extends Phaser.Scene {
    *  initial roll-in cascade. */
   private firstRender = true;
 
+  /** Rescale the camera-fit on viewport resize (no-op on desktop). */
+  private readonly onResize = (): void => fitSceneToViewport(this, DESIGN_W, DESIGN_H);
+
   constructor() {
     super({ key: 'LobbyScene' });
   }
@@ -81,7 +92,8 @@ export class LobbyScene extends Phaser.Scene {
     this.cardViews = new Map();
     this.firstRender = true;
 
-    const { width, height } = this.scale;
+    const { width } = this.scale;
+    const { layoutH } = designViewport(this, DESIGN_W, DESIGN_H);
 
     this.add.text(width / 2, 40, 'LOBBY', {
       fontSize: '40px', color: '#e0e0e0', fontFamily: 'monospace', fontStyle: 'bold',
@@ -95,11 +107,11 @@ export class LobbyScene extends Phaser.Scene {
       fontSize: '14px', color: '#ff8844', fontFamily: 'monospace',
     }).setOrigin(0.5);
 
-    this.statusText = this.add.text(width / 2, height - 20, 'Connecting...', {
+    this.statusText = this.add.text(width / 2, layoutH - 20, 'Connecting...', {
       fontSize: '12px', color: '#666', fontFamily: 'monospace',
     }).setOrigin(0.5);
 
-    const backBtn = this.add.text(20, height - 30, '[ < MENU ]', {
+    const backBtn = this.add.text(20, layoutH - 30, '[ < MENU ]', {
       fontSize: '16px', color: '#888', fontFamily: 'monospace',
     }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
     backBtn.on('pointerover', () => backBtn.setColor('#ccc'));
@@ -162,11 +174,15 @@ export class LobbyScene extends Phaser.Scene {
     }
 
     // Bomberman selector at the bottom — equip from the lobby
-    this.selector = new BombermanSelector(this, height - 130);
+    this.selector = new BombermanSelector(this, layoutH - 130);
     this.selector.create();
+
+    fitSceneToViewport(this, DESIGN_W, DESIGN_H);
+    this.scale.on('resize', this.onResize, this);
   }
 
   shutdown(): void {
+    this.scale.off('resize', this.onResize, this);
     const socket = NetworkManager.getSocket();
     socket.off('connect');
     socket.off('disconnect');
@@ -235,7 +251,10 @@ export class LobbyScene extends Phaser.Scene {
   }
 
   private createAndArriveCard(listing: MatchListing, index: number, count: number, delay: number): void {
-    const cardY = this.scale.height * 0.4;
+    // Use the design height (not the live viewport) so the 40%-down card row
+    // lands in the right place inside the scaled design box on short viewports.
+    const { layoutH } = designViewport(this, DESIGN_W, DESIGN_H);
+    const cardY = layoutH * 0.4;
     const startX = this.scale.width + CARD_WIDTH;
     const targetX = this.cardTargetX(index, count);
 

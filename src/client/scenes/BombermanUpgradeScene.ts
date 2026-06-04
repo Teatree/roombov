@@ -18,6 +18,7 @@
  */
 
 import Phaser from 'phaser';
+import { designViewport, fitSceneToViewport } from '../util/responsiveScene.ts';
 import { NetworkManager } from '../NetworkManager.ts';
 import { trackScreen } from './sceneAnalytics.ts';
 import { ProfileStore } from '../ClientState.ts';
@@ -42,6 +43,11 @@ const POPUP_W = 540;
 const PAD = 22;
 const ROW_H = 84;
 const ROW_GAP = 12;
+// Design box for the centered modal panel. Tallest panel (fully-maxed hero)
+// is heroH(266) + (ROW_H+ROW_GAP)*3 - ROW_GAP + PAD*2 = 586px; 620/600 leaves a
+// small margin and keeps desktop a no-op (panel + wallet fit a 720p viewport).
+const DESIGN_W = 600;
+const DESIGN_H = 620;
 const TRACK_COLORS: Record<UpgradeTrack, { fill: number; text: string }> = {
   cap:   { fill: 0x5db5ff, text: '#5db5ff' },
   stack: { fill: 0x44dd88, text: '#44dd88' },
@@ -65,6 +71,8 @@ export class BombermanUpgradeScene extends Phaser.Scene {
   private wallet: TreasureListWidget | null = null;
   private walletSpText: Phaser.GameObjects.Text | null = null;
   private walletCoinsText: Phaser.GameObjects.Text | null = null;
+  /** Re-fit the camera when the viewport changes (orientation / window drag). */
+  private readonly onResize = (): void => fitSceneToViewport(this, DESIGN_W, DESIGN_H);
 
   constructor() {
     super({ key: 'BombermanUpgradeScene' });
@@ -114,10 +122,17 @@ export class BombermanUpgradeScene extends Phaser.Scene {
     this.unsub = ProfileStore.subscribe(() => this.rebuild());
     this.rebuild();
 
+    // Scale the centered panel to fit short/narrow viewports (no-op on
+    // desktop). The backdrop stays sized to the live viewport so it always
+    // covers the screen.
+    fitSceneToViewport(this, DESIGN_W, DESIGN_H);
+    this.scale.on('resize', this.onResize, this);
+
     void backdrop;
   }
 
   shutdown(): void {
+    this.scale.off('resize', this.onResize, this);
     this.unsub?.();
     this.unsub = null;
     this.wallet?.destroy();
@@ -147,7 +162,10 @@ export class BombermanUpgradeScene extends Phaser.Scene {
     // Hero block is taller now — bigger name + larger sprite zone.
     const heroH = 230 + (fullyMaxed ? 36 : 0);
     const panelH = heroH + (ROW_H + ROW_GAP) * 3 - ROW_GAP + PAD * 2;
-    const { width, height } = this.scale;
+    // Center the panel on the design box so the camera-fit (which centers on the
+    // design box) keeps it centered on short viewports. `layoutW`/`layoutH` are
+    // the live viewport on desktop (no-op) and the design dims when short.
+    const { layoutW: width, layoutH: height } = designViewport(this, DESIGN_W, DESIGN_H);
     const cx = width / 2;
     const cy = height / 2;
 

@@ -14,6 +14,19 @@ import { attachTierInfoBadge } from '../systems/TierInfoBadge.ts';
 import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
 import { BombShopTooltip } from '../systems/BombShopTooltip.ts';
 import { effectiveMaxCustomSlots, effectiveStackSize } from '@shared/utils/bomberman-stats.ts';
+import { designViewport, fitSceneToViewport } from '../util/responsiveScene.ts';
+
+/** Design box this three-panel shop is authored against; the main camera scales
+ *  it down to fit short/narrow viewports (no-op on desktop). DESIGN_W (780) is
+ *  the minimum width that keeps all three panels comfortable — the BOMBERMAN
+ *  mid panel stays above the UNEQUIP_ICON_BREAKPOINT (260px). DESIGN_H (720) is
+ *  the minimum comfortable height: title (y≈30) + body panels (top 72, bottom
+ *  at height-250) + the BombermanSelector card region; at 720 the panels get a
+ *  usable ~398px body, and any viewport at least this tall/wide is an exact
+ *  no-op so desktop layout is unchanged. Short landscape phones (~390px tall)
+ *  trip the height condition and scale. */
+const DESIGN_W = 780;
+const DESIGN_H = 720;
 
 /**
  * Bombs Shop scene — three-column layout (CATALOG / BOMBERMAN / STOCKPILE).
@@ -97,6 +110,9 @@ export class BombsShopScene extends Phaser.Scene {
    *  to the Main Menu when launched without context. */
   private backScene: string = 'MainMenuScene';
 
+  /** Re-fit the camera when the viewport changes (orientation / window drag). */
+  private readonly onResize = (): void => fitSceneToViewport(this, DESIGN_W, DESIGN_H);
+
   constructor() {
     super({ key: 'BombsShopScene' });
   }
@@ -115,7 +131,11 @@ export class BombsShopScene extends Phaser.Scene {
     trackScreen(this, 'BombsShop');
     this.events.once('shutdown', this.shutdown, this);
     ensureBombermanAnims(this);
-    const { width, height } = this.scale;
+    const { width } = this.scale;
+    // Lay out against the design box; `layoutW`/`layoutH` keep edge-anchored
+    // elements on the box edges so the camera can scale the whole thing to fit
+    // short/narrow viewports (no-op on desktop).
+    const { layoutW, layoutH } = designViewport(this, DESIGN_W, DESIGN_H);
 
     this.add.text(width / 2, 30, 'BOMBS SHOP', {
       fontSize: '26px', color: '#e0e0e0', fontFamily: 'monospace', fontStyle: 'bold',
@@ -123,7 +143,7 @@ export class BombsShopScene extends Phaser.Scene {
 
     // Coins + treasure wallet — both depth-bumped so they always render on top
     // of the panels (the wallet would otherwise overlap the stockpile column).
-    this.coinsText = this.add.text(width - 20, 14, '', {
+    this.coinsText = this.add.text(layoutW - 20, 14, '', {
       fontSize: '18px', color: COIN_GOLD, fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(1, 0).setDepth(100);
 
@@ -132,7 +152,7 @@ export class BombsShopScene extends Phaser.Scene {
     // the rect width (horizontal layout always extends rightward from anchor,
     // so we compute the width up-front and shift X to right-align).
     this.treasureList = new TreasureListWidget(this, {
-      x: width - 20,
+      x: layoutW - 20,
       y: 42,
       anchor: 'top-left',
       direction: 'horizontal',
@@ -142,11 +162,11 @@ export class BombsShopScene extends Phaser.Scene {
       depth: 100,
     });
 
-    this.toastText = this.add.text(width / 2, height - 30, '', {
+    this.toastText = this.add.text(width / 2, layoutH - 30, '', {
       fontSize: '14px', color: '#44ff88', fontFamily: 'monospace',
     }).setOrigin(0.5);
 
-    const backBtn = this.add.text(20, height - 30, '[ < BACK ]', {
+    const backBtn = this.add.text(20, layoutH - 30, '[ < BACK ]', {
       fontSize: '14px', color: TEXT_DIM, fontFamily: 'monospace',
     }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
     backBtn.on('pointerover', () => backBtn.setColor('#cccccc'));
@@ -157,8 +177,7 @@ export class BombsShopScene extends Phaser.Scene {
 
     this.activity = new ActivityIndicator(this);
 
-    const { height: sceneH } = this.scale;
-    this.selector = new BombermanSelector(this, sceneH - 130);
+    this.selector = new BombermanSelector(this, layoutH - 130);
     this.selector.create();
 
     this.tooltip = new BombShopTooltip(this);
@@ -199,9 +218,14 @@ export class BombsShopScene extends Phaser.Scene {
 
     this.renderWallet();
     this.rebuild();
+
+    // Scale the whole shop to fit short/narrow viewports (no-op on desktop).
+    fitSceneToViewport(this, DESIGN_W, DESIGN_H);
+    this.scale.on('resize', this.onResize, this);
   }
 
   shutdown(): void {
+    this.scale.off('resize', this.onResize, this);
     this.unsubProfile?.();
     this.unsubProfile = null;
     this.activity?.destroy();
@@ -242,10 +266,13 @@ export class BombsShopScene extends Phaser.Scene {
     this.coinsText.setText(`Coins: ${profile.coins}`);
     this.treasureList?.setBundle(profile.treasures ?? {});
     // Horizontal layout extends rightward from anchor — right-align by computing
-    // the rendered width and shifting X to (rightEdge - width).
+    // the rendered width and shifting X to (rightEdge - width). Use the design
+    // box's right edge (`layoutW`) so the wallet sits on the same edge the
+    // camera scales, matching the coins/treasure anchors set in create().
+    const { layoutW } = designViewport(this, DESIGN_W, DESIGN_H);
     const rect = this.treasureList?.getRect();
     if (rect && rect.w > 0) {
-      this.treasureList?.setX(this.scale.width - 20 - rect.w);
+      this.treasureList?.setX(layoutW - 20 - rect.w);
     }
   }
 
@@ -256,12 +283,16 @@ export class BombsShopScene extends Phaser.Scene {
     const profile = ProfileStore.get();
     if (!profile || this.catalog.length === 0) return;
 
-    const { width, height } = this.scale;
-    // Hard cutoff: BombermanSelector is anchored at (sceneH - 130) with a 180px
-    // tall card centered there, so the YOUR BOMBERMEN label sits at sceneH - 240.
+    const { width } = this.scale;
+    // Column widths follow the live viewport width (centered content); the
+    // vertical extent follows the design box height so panels and the selector
+    // keep their spacing when the camera scales a short viewport.
+    const { layoutH } = designViewport(this, DESIGN_W, DESIGN_H);
+    // Hard cutoff: BombermanSelector is anchored at (layoutH - 130) with a 180px
+    // tall card centered there, so the YOUR BOMBERMEN label sits at layoutH - 240.
     // Stop the panels 10px above that to guarantee no overlap.
     const bodyTop = 72;
-    const bodyBottom = height - 250;
+    const bodyBottom = layoutH - 250;
     const bodyH = bodyBottom - bodyTop;
 
     const availW = width - OUTER_PAD * 2 - COL_GAP * 2;

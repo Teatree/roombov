@@ -9,6 +9,18 @@ import { BOMB_CATALOG } from '@shared/config/bombs.ts';
 import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
 import { BombermanSelector } from '../systems/BombermanSelector.ts';
 import { attachTierInfoBadge } from '../systems/TierInfoBadge.ts';
+import { designViewport, fitSceneToViewport } from '../util/responsiveScene.ts';
+
+// Design box for the fit-to-viewport responsive scaling.
+// DESIGN_H = bottom-anchored cluster + ~30 margin: cards bottom is cardY(340) +
+//   CARD_HEIGHT/2(230) = 570; the selector sits at layoutH-130 and must clear
+//   that → layoutH ≥ 700; 740 leaves the selector at 610, toast at 680, back at
+//   710, with margin to spare (mirrors MainMenuScene's 740).
+// DESIGN_W = widest resting card row + margin. Cards are centered as a group;
+//   a 4-card row is 4*200 + 3*20 = 860 wide, so 900 holds it (and the
+//   right-anchored coins text) with margin while staying a no-op on desktop.
+const DESIGN_W = 900;
+const DESIGN_H = 740;
 
 const CARD_WIDTH = 200;
 const CARD_HEIGHT = 460;
@@ -52,6 +64,7 @@ export class BombermanShopScene extends Phaser.Scene {
   /** Cached cycleId of the most recent render — used to detect cycle rollover
    *  so we can sequence "fly old off" → "roll new in". */
   private renderedCycleId: string | null = null;
+  private readonly onResize = (): void => fitSceneToViewport(this, DESIGN_W, DESIGN_H);
 
   constructor() {
     super({ key: 'BombermanShopScene' });
@@ -66,13 +79,14 @@ export class BombermanShopScene extends Phaser.Scene {
     trackScreen(this, 'BombermanShop');
     this.events.once('shutdown', this.shutdown, this);
     ensureBombermanAnims(this);
-    const { width, height } = this.scale;
+    const { width } = this.scale;
+    const { layoutW, layoutH } = designViewport(this, DESIGN_W, DESIGN_H);
 
     this.add.text(width / 2, 40, 'BOMBERMAN SHOP', {
       fontSize: '32px', color: '#e0e0e0', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5);
 
-    this.coinsText = this.add.text(width - 20, 30, '', {
+    this.coinsText = this.add.text(layoutW - 20, 30, '', {
       fontSize: '20px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(1, 0);
 
@@ -84,12 +98,12 @@ export class BombermanShopScene extends Phaser.Scene {
       fontSize: '14px', color: '#888888', fontFamily: 'monospace',
     }).setOrigin(0.5);
 
-    this.toastText = this.add.text(width / 2, height - 60, '', {
+    this.toastText = this.add.text(width / 2, layoutH - 60, '', {
       fontSize: '16px', color: '#44ff88', fontFamily: 'monospace',
     }).setOrigin(0.5);
 
     // Back button
-    const backBtn = this.add.text(20, height - 30, '[ < BACK ]', {
+    const backBtn = this.add.text(20, layoutH - 30, '[ < BACK ]', {
       fontSize: '16px', color: '#888888', fontFamily: 'monospace',
     }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
     backBtn.on('pointerover', () => backBtn.setColor('#cccccc'));
@@ -115,11 +129,14 @@ export class BombermanShopScene extends Phaser.Scene {
     this.unsubShop = BombermanShopStore.subscribe(() => this.renderCards());
 
     // Consistent Bomberman selector at the bottom (same component as Bombs Shop / Lobby)
-    this.selector = new BombermanSelector(this, height - 130);
+    this.selector = new BombermanSelector(this, layoutH - 130);
     this.selector.create();
 
     this.renderHeader();
     this.renderCards();
+
+    fitSceneToViewport(this, DESIGN_W, DESIGN_H);
+    this.scale.on('resize', this.onResize, this);
   }
 
   update(): void {
@@ -139,6 +156,7 @@ export class BombermanShopScene extends Phaser.Scene {
   }
 
   shutdown(): void {
+    this.scale.off('resize', this.onResize, this);
     this.unsubProfile?.();
     this.unsubShop?.();
     this.unsubProfile = null;

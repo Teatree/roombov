@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { designViewport, fitSceneToViewport } from '../util/responsiveScene.ts';
 import { NetworkManager } from '../NetworkManager.ts';
 import { trackScreen } from './sceneAnalytics.ts';
 import { type TreasureBundle, hasAnyTreasure } from '@shared/config/treasures.ts';
@@ -45,6 +46,19 @@ export interface MatchResultsData {
 }
 
 /**
+ * Design box the Results layout is authored against. On viewports at least this
+ * size desktop is untouched; shorter landscape-phone viewports get the whole
+ * scene camera-scaled to fit (see `fitSceneToViewport`).
+ *
+ * DESIGN_W (600): the escaped-state shortcut row — [ FACTORY ] [ BOMBS SHOP ]
+ * [ UPGRADE BOMBERMAN ] with two 24px gaps — is the widest content (~575px).
+ * DESIGN_H (620): the shortcut row sits at 0.92·H (lowest element); 0.92·620 ≈
+ * 570 plus the button's ~14px half-height and ~30px margin ≈ 614.
+ */
+const DESIGN_W = 600;
+const DESIGN_H = 620;
+
+/**
  * Results screen — shown after the match ends.
  *
  * Three outcomes:
@@ -61,6 +75,8 @@ export class ResultsScene extends Phaser.Scene {
   /** Cached reference to the upgrade button so the pip can re-attach to it. */
   private upgradeBtn: Phaser.GameObjects.Text | null = null;
   private profileUnsub: (() => void) | null = null;
+  /** Re-fit the camera when the viewport changes (orientation / resize). */
+  private readonly onResize = (): void => fitSceneToViewport(this, DESIGN_W, DESIGN_H);
 
   constructor() {
     super({ key: 'ResultsScene' });
@@ -90,11 +106,19 @@ export class ResultsScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       this.profileUnsub?.();
       this.profileUnsub = null;
+      this.scale.off('resize', this.onResize, this);
     });
     const { width, height } = this.scale;
+    // Bottom-anchored chrome (back button + shortcut row) is placed against
+    // layoutH so it sits at the design-box bottom edge when the viewport is
+    // short; on desktop layoutH === height (no change). Centered/top content
+    // stays on the live `height`.
+    const { layoutH } = designViewport(this, DESIGN_W, DESIGN_H);
     const r = this.results;
 
-    // Background
+    // Background — camera bg color fills any area outside the design box when
+    // the camera zooms out on short viewports; the rect covers desktop 1:1.
+    this.cameras.main.setBackgroundColor(0x0a0a14);
     const bg = this.add.graphics();
     bg.fillStyle(0x0a0a14, 1);
     bg.fillRect(0, 0, width, height);
@@ -117,12 +141,12 @@ export class ResultsScene extends Phaser.Scene {
         break;
     }
 
-    this.add.text(width / 2, height * 0.16, title, {
+    this.add.text(width / 2, layoutH * 0.16, title, {
       fontSize: '48px', color: titleColor, fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5);
 
     // Subtitle line
-    let subtitleY = height * 0.26;
+    let subtitleY = layoutH * 0.26;
 
     if (r.outcome === 'escaped') {
       // Section header style is shared between Treasures Gathered + Items
@@ -242,7 +266,7 @@ export class ResultsScene extends Phaser.Scene {
     }
 
     // Back button
-    const playBtn = this.add.text(width / 2, height * 0.82, '[ BACK TO LOBBY ]', {
+    const playBtn = this.add.text(width / 2, layoutH * 0.82, '[ BACK TO LOBBY ]', {
       fontSize: '24px', color: '#44aaff', fontFamily: 'monospace',
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
@@ -253,7 +277,7 @@ export class ResultsScene extends Phaser.Scene {
     // Shortcut row — Factory + Bombs Shop + (escaped only) Upgrade Bomberman,
     // all sharing the same chrome so the row reads as a parallel set of
     // detours before re-queueing.
-    const shortcutY = height * 0.92;
+    const shortcutY = layoutH * 0.92;
     const shortcutGap = 24;
     const shortcutStyle: Phaser.Types.GameObjects.Text.TextStyle = {
       fontSize: '16px', color: '#44aaff', fontFamily: 'monospace',
@@ -323,6 +347,11 @@ export class ResultsScene extends Phaser.Scene {
     }
 
     this.input.keyboard?.on('keydown-ESC', () => this.backToLobby());
+
+    // Fit the design box into short viewports (no-op on desktop), and keep it
+    // fitted across orientation / resize changes.
+    fitSceneToViewport(this, DESIGN_W, DESIGN_H);
+    this.scale.on('resize', this.onResize, this);
   }
 
   /**

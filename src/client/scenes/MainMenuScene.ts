@@ -12,6 +12,14 @@ import { NotificationBadge } from '../systems/NotificationBadge.ts';
 import { FACTORY_IDS, projectedClaimable } from '@shared/types/factory.ts';
 import { FACTORIES } from '@shared/config/factories.ts';
 import type { PlayerProfile } from '@shared/types/player-profile.ts';
+import { designViewport, fitSceneToViewport } from '../util/responsiveScene.ts';
+
+/** Design box this scene is authored against; scaled to fit smaller viewports.
+ *  Set to the content's natural height (5 buttons end ≈642, bottom debug/status
+ *  strip below that) so windows at least this tall are an exact no-op (desktop
+ *  unchanged) and only shorter viewports — phones, small laptop windows — scale. */
+const DESIGN_W = 600;
+const DESIGN_H = 740;
 
 /**
  * Entry point after Boot. Connects to the server, authenticates, and offers
@@ -27,6 +35,8 @@ export class MainMenuScene extends Phaser.Scene {
   private debugFeedback!: Phaser.GameObjects.Text;
   private factoryBadge: NotificationBadge | null = null;
   private factoryBadgeTimer: Phaser.Time.TimerEvent | null = null;
+  /** Re-fit the camera when the viewport changes (orientation / window drag). */
+  private readonly onResize = (): void => fitSceneToViewport(this, DESIGN_W, DESIGN_H);
 
   constructor() {
     super({ key: 'MainMenuScene' });
@@ -41,7 +51,10 @@ export class MainMenuScene extends Phaser.Scene {
     trackScreen(this, 'MainMenu');
     this.events.once('shutdown', this.shutdown, this);
     ensureBombermanAnims(this);
-    const { width, height } = this.scale;
+    const { width } = this.scale;
+    // Lay out against the design box; `layoutH` keeps the bottom strip on the
+    // box edge so the camera can scale the whole thing to fit short viewports.
+    const { layoutH } = designViewport(this, DESIGN_W, DESIGN_H);
 
     this.add.text(width / 2, 60, 'BOMBERMAN', {
       fontSize: '56px', color: '#e0e0e0', fontFamily: 'monospace', fontStyle: 'bold',
@@ -116,7 +129,7 @@ export class MainMenuScene extends Phaser.Scene {
     }
 
     // Debug reset — dev-only helper. Wipes the profile clean on the server.
-    const debugBtn = this.add.text(width / 2, height - 80, '[ DEBUG: RESET PROFILE ]', {
+    const debugBtn = this.add.text(width / 2, layoutH - 80, '[ DEBUG: RESET PROFILE ]', {
       fontSize: '14px',
       color: '#ff6644',
       fontFamily: 'monospace',
@@ -131,13 +144,13 @@ export class MainMenuScene extends Phaser.Scene {
       NetworkManager.getSocket().emit('debug_reset', { confirm: true });
     });
 
-    this.debugFeedback = this.add.text(width / 2, height - 48, '', {
+    this.debugFeedback = this.add.text(width / 2, layoutH - 48, '', {
       fontSize: '12px', color: '#888', fontFamily: 'monospace',
     }).setOrigin(0.5);
 
     this.activity = new ActivityIndicator(this);
 
-    this.statusText = this.add.text(width / 2, height - 20, 'Connecting...', {
+    this.statusText = this.add.text(width / 2, layoutH - 20, 'Connecting...', {
       fontSize: '12px', color: '#666666', fontFamily: 'monospace',
     }).setOrigin(0.5);
 
@@ -154,9 +167,14 @@ export class MainMenuScene extends Phaser.Scene {
 
     this.unsubscribe = ProfileStore.subscribe(() => this.renderProfile());
     this.renderProfile();
+
+    // Scale the whole menu to fit short/narrow viewports (no-op on desktop).
+    fitSceneToViewport(this, DESIGN_W, DESIGN_H);
+    this.scale.on('resize', this.onResize, this);
   }
 
   shutdown(): void {
+    this.scale.off('resize', this.onResize, this);
     this.unsubscribe?.();
     this.unsubscribe = null;
     this.activity?.destroy();
