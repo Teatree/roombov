@@ -265,15 +265,11 @@ export class BombsShopScene extends Phaser.Scene {
     if (!profile) return;
     this.coinsText.setText(`Coins: ${profile.coins}`);
     this.treasureList?.setBundle(profile.treasures ?? {});
-    // Horizontal layout extends rightward from anchor — right-align by computing
-    // the rendered width and shifting X to (rightEdge - width). Use the design
-    // box's right edge (`layoutW`) so the wallet sits on the same edge the
-    // camera scales, matching the coins/treasure anchors set in create().
+    // Flush right against the design box's right edge (`layoutW`, the edge the
+    // camera scales) — align by the real rendered extent so short counts don't
+    // leave a trailing gap (see rightAlignTo).
     const { layoutW } = designViewport(this, DESIGN_W, DESIGN_H);
-    const rect = this.treasureList?.getRect();
-    if (rect && rect.w > 0) {
-      this.treasureList?.setX(layoutW - 20 - rect.w);
-    }
+    this.treasureList?.rightAlignTo(layoutW - 20);
   }
 
   private rebuild(): void {

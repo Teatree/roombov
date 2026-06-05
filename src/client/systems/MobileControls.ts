@@ -4,22 +4,26 @@ import Phaser from 'phaser';
  * Mobile in-match touch controls.
  *
  * Replaces the PC click-to-act model (which MatchScene skips on touch devices)
- * with an explicit, commit-based scheme designed for fingers:
+ * with a drag-and-hold scheme designed for fingers:
  *
- *   - Bottom-right buttons: [MOVE] [ATTACK]. Tapping one enters a *selection*
- *     state and swaps the pair for [✗ CANCEL] [✓ CONFIRM].
- *   - A tile-snapping selector spawns on the player's tile. The player drags it
- *     around the map; CONFIRM commits the action, CANCEL aborts and restores
- *     the Move/Attack buttons.
- *   - MOVE selection auto-generates the walk path to the selector (reusing the
- *     server-authoritative BFS via hooks.computePath).
- *   - ATTACK selection drives the same ghost area-of-effect + dotted trajectory
- *     the PC build shows, by feeding the snapped target tile back to the scene
- *     (hooks.beginAttackAim + setAimTile).
+ *   - **Drag from a button.** The bottom-right [MOVE] / [ATTACK] buttons are
+ *     drag handles: press one and, *in the same gesture*, drag out onto the
+ *     map. The selector/indicator sticks to the finger; releasing commits the
+ *     action (a brief confirm flash plays on the tile). There is no separate
+ *     confirm/cancel step — lifting the finger *is* the commit. Releasing
+ *     without dragging onto the map cancels.
+ *       · MOVE drags the green path selector (BFS path to the finger tile).
+ *       · ATTACK drags the same ghost AoE + dotted trajectory the PC build
+ *         shows, throwing whichever tray slot is currently armed.
  *
- * Camera is fully player-controlled at all times: one-finger drag on empty map
- * pans, two-finger pinch zooms, and a drag that begins on the selector moves
- * the selector instead of panning.
+ *   - **Urgent move (press-and-hold a tile).** Pressing and holding a finger
+ *     on a map tile for ~0.5s commits a move there. A radial hourglass fills
+ *     under the finger to telegraph the commit. Because a one-finger press on
+ *     the map is also how panning starts, we disambiguate by movement: if the
+ *     finger travels beyond a (forgiving) tolerance before the hold completes
+ *     it becomes a camera pan instead, and the hourglass is dropped.
+ *
+ *   - **Camera.** One-finger drag on empty map pans; two-finger pinch zooms.
  *
  * All gameplay/state mutation is delegated to MatchScene through `MobileHooks`
  * so this class stays a pure input+presentation layer.
@@ -58,8 +62,11 @@ export interface MobileHooks {
   commitAttack(tile: { x: number; y: number }): void;
 }
 
+/** What the active single-finger gesture is doing. */
+type DragRole = 'none' | 'btnMove' | 'btnAttack' | 'urgent' | 'pan' | 'pinch' | 'ui';
+/** Drives selector/preview rendering; derived from the button drag. */
 type SelectState = 'idle' | 'move' | 'attack';
-type BtnKind = 'move' | 'attack' | 'confirm' | 'cancel';
+type BtnKind = 'move' | 'attack';
 
 // Roughly half the original button footprint per design feedback; height kept
 // at 42 so it stays a comfortable touch target.
@@ -67,6 +74,15 @@ const BTN_W = 82;
 const BTN_H = 42;
 const BTN_GAP = 10;
 const BTN_MARGIN = 16;
+
+// Urgent-move tuning.
+const URGENT_HOLD_MS = 500;        // hold this long to commit a move
+const URGENT_MOVE_TOLERANCE = 22;  // finger travel (px) allowed before it's a pan
+const HOURGLASS_R = 46;            // radius — sized to read around a fingertip
+// A drag from a button must travel this far to count as "dragged onto the map"
+// (so a stray tap on the button doesn't commit a move to the player's own tile).
+const BTN_DRAG_THRESHOLD = 20;
+const FLASH_MS = 260;              // commit confirmation flash duration
 
 interface Btn {
   kind: BtnKind;
@@ -88,31 +104,53 @@ export class MobileControls {
   // --- selector + preview (world space) ---
   private selectorGfx: Phaser.GameObjects.Graphics;
   private previewGfx: Phaser.GameObjects.Graphics;
+  /** Commit confirmation flash (world space). */
+  private flashGfx: Phaser.GameObjects.Graphics;
+  private flash: { x: number; y: number; start: number; kind: SelectState } | null = null;
+  /** Urgent-move hourglass (HUD space — two graphics to respect Phaser's
+   *  "don't mix strokeCircle with path ops on one Graphics" gotcha). */
+  private hourglassGfx: Phaser.GameObjects.Graphics;
+  private hourglassArc: Phaser.GameObjects.Graphics;
+
   /** Raw tile under the finger (move destination / attack aim before snap). */
   private dragTile: { x: number; y: number } = { x: 0, y: 0 };
   /** Snapped throw target while attacking (= dragTile for move). */
   private attackTarget: { x: number; y: number } = { x: 0, y: 0 };
   private previewPath: { x: number; y: number }[] = [];
   private previewValid = false;
+  /** True once a button drag has travelled far enough to count as on-map. */
+  private movedOntoMap = false;
 
   // --- touch gesture tracking ---
   private pointers = new Map<number, PointerInfo>();
-  private dragRole: 'none' | 'pan' | 'selector' | 'pinch' | 'ui' = 'none';
+  private dragRole: DragRole = 'none';
   private panStart = { scrollX: 0, scrollY: 0, px: 0, py: 0 };
   private pinchStartDist = 0;
   private pinchStartZoom = 1;
+  /** Down position + time for the active single-finger gesture. */
+  private downX = 0;
+  private downY = 0;
+  private downTime = 0;
 
   constructor(scene: Phaser.Scene, hooks: MobileHooks) {
     this.scene = scene;
     this.hooks = hooks;
 
-    // World-space selector + move-preview path. Drawn by the main camera only.
+    // World-space selector + move-preview path + commit flash. Main camera only.
     this.previewGfx = scene.add.graphics().setDepth(60);
     this.selectorGfx = scene.add.graphics().setDepth(70);
+    this.flashGfx = scene.add.graphics().setDepth(72);
     hooks.tagWorldObject(this.previewGfx);
     hooks.tagWorldObject(this.selectorGfx);
+    hooks.tagWorldObject(this.flashGfx);
     this.previewGfx.setVisible(false);
     this.selectorGfx.setVisible(false);
+
+    // Hourglass lives in HUD space (over the finger). Main camera must ignore it.
+    this.hourglassGfx = scene.add.graphics().setDepth(2100).setVisible(false);
+    this.hourglassArc = scene.add.graphics().setDepth(2101).setVisible(false);
+    scene.cameras.main.ignore(this.hourglassGfx);
+    scene.cameras.main.ignore(this.hourglassArc);
 
     this.createButtons();
     this.layout();
@@ -130,10 +168,8 @@ export class MobileControls {
 
   private createButtons(): void {
     const defs: Array<{ kind: BtnKind; label: string; fill: number; stroke: number }> = [
-      { kind: 'move',    label: 'MOVE',   fill: 0x1d3a5f, stroke: 0x4aa3ff },
-      { kind: 'attack',  label: 'ATTACK', fill: 0x5f1d1d, stroke: 0xff5a4a },
-      { kind: 'cancel',  label: '✗',      fill: 0x5f1d1d, stroke: 0xff5a4a },
-      { kind: 'confirm', label: '✓',      fill: 0x1d5f2e, stroke: 0x4aff84 },
+      { kind: 'move',   label: 'MOVE',   fill: 0x1d3a5f, stroke: 0x4aa3ff },
+      { kind: 'attack', label: 'ATTACK', fill: 0x5f1d1d, stroke: 0xff5a4a },
     ];
     for (const d of defs) {
       const container = this.scene.add.container(0, 0).setDepth(2000);
@@ -142,9 +178,8 @@ export class MobileControls {
       bg.fillRoundedRect(0, 0, BTN_W, BTN_H, 8);
       bg.lineStyle(2, d.stroke, 1);
       bg.strokeRoundedRect(0, 0, BTN_W, BTN_H, 8);
-      const isGlyph = d.label === '✓' || d.label === '✗';
       const label = this.scene.add.text(BTN_W / 2, BTN_H / 2, d.label, {
-        fontSize: isGlyph ? '24px' : '15px',
+        fontSize: '15px',
         color: '#ffffff',
         fontFamily: 'monospace',
         fontStyle: 'bold',
@@ -165,8 +200,8 @@ export class MobileControls {
     const { width, height } = this.scene.scale;
     const rightX = width - BTN_MARGIN;
     const y = height - BTN_MARGIN - BTN_H;
-    const leftX = rightX - 2 * BTN_W - BTN_GAP; // left slot's left edge
-    const rgtX = rightX - BTN_W;                // right slot's left edge
+    const leftX = rightX - 2 * BTN_W - BTN_GAP; // MOVE (left slot)
+    const rgtX = rightX - BTN_W;                // ATTACK (right slot)
 
     const place = (kind: BtnKind, x: number) => {
       const b = this.buttons.find(bt => bt.kind === kind);
@@ -175,24 +210,14 @@ export class MobileControls {
       b.bounds.setTo(x, y, BTN_W, BTN_H);
     };
     place('move', leftX);
-    place('cancel', leftX);
     place('attack', rgtX);
-    place('confirm', rgtX);
 
     this.refreshButtonVisibility();
   }
 
   private refreshButtonVisibility(): void {
-    const canAct = this.hooks.canAct();
-    const selecting = this.state !== 'idle';
-    for (const b of this.buttons) {
-      let visible = false;
-      if (canAct) {
-        if (selecting) visible = b.kind === 'confirm' || b.kind === 'cancel';
-        else visible = b.kind === 'move' || b.kind === 'attack';
-      }
-      b.container.setVisible(visible);
-    }
+    const visible = this.hooks.canAct();
+    for (const b of this.buttons) b.container.setVisible(visible);
   }
 
   private hitButton(x: number, y: number): BtnKind | null {
@@ -203,17 +228,8 @@ export class MobileControls {
     return null;
   }
 
-  private onButton(kind: BtnKind): void {
-    switch (kind) {
-      case 'move': this.enterState('move'); break;
-      case 'attack': this.enterState('attack'); break;
-      case 'confirm': this.confirm(); break;
-      case 'cancel': this.cancel(); break;
-    }
-  }
-
   // ============================================================
-  // Selection state machine
+  // Selection state (driven by an in-progress button drag)
   // ============================================================
 
   private enterState(s: SelectState): void {
@@ -223,38 +239,37 @@ export class MobileControls {
     // Stop any in-progress walk so the player isn't moving while re-deciding.
     this.hooks.haltStaged();
     this.state = s;
+    this.movedOntoMap = false;
     this.dragTile = { x: pt.x, y: pt.y };
     this.attackTarget = { x: pt.x, y: pt.y };
     if (s === 'attack') this.hooks.beginAttackAim();
     this.selectorGfx.setVisible(true);
     this.previewGfx.setVisible(s === 'move');
     this.updatePreview();
-    this.refreshButtonVisibility();
   }
 
-  private confirm(): void {
+  /** Commit the in-progress button drag (move/attack) and flash. */
+  private commitDrag(): void {
     if (this.state === 'move') {
       if (this.previewValid && this.previewPath.length > 0) {
+        this.spawnFlash(this.dragTile, 'move');
         this.hooks.commitMove(this.previewPath);
       }
     } else if (this.state === 'attack') {
+      this.spawnFlash(this.attackTarget, 'attack');
       this.hooks.commitAttack(this.attackTarget);
     }
     this.exitToIdle(false);
   }
 
-  private cancel(): void {
-    this.exitToIdle(true);
-  }
-
-  /** Leave selection. `aborted` true = nothing committed (clear aim preview). */
+  /** Leave the button-drag selection. `aborted` true = nothing committed. */
   private exitToIdle(aborted: boolean): void {
     if (this.state === 'attack' && aborted) this.hooks.endAim();
     this.state = 'idle';
+    this.movedOntoMap = false;
     this.selectorGfx.setVisible(false).clear();
     this.previewGfx.setVisible(false).clear();
     this.previewPath = [];
-    this.refreshButtonVisibility();
   }
 
   private updatePreview(): void {
@@ -278,29 +293,32 @@ export class MobileControls {
 
     // Second finger down → start pinch-zoom, abandoning any single-finger drag.
     if (this.pointers.size >= 2) {
+      this.cancelUrgent();
       this.beginPinch();
       return;
     }
 
-    // 1. Buttons.
+    this.downX = pointer.x;
+    this.downY = pointer.y;
+    this.downTime = Date.now();
+
+    // 1. Buttons → begin a drag-from-button gesture.
     const btn = this.hitButton(pointer.x, pointer.y);
-    if (btn) { this.dragRole = 'ui'; this.onButton(btn); return; }
+    if (btn) {
+      this.dragRole = btn === 'move' ? 'btnMove' : 'btnAttack';
+      this.enterState(btn === 'move' ? 'move' : 'attack');
+      return;
+    }
 
     // 2. Bomb tray / loot panel taps (handled by the scene).
     if (this.hooks.tryHandleHudTap(pointer.x, pointer.y)) { this.dragRole = 'ui'; return; }
 
-    // 3. Drag the selector if the touch landed on it.
-    if (this.state !== 'idle' && this.isOverSelector(pointer.x, pointer.y)) {
-      this.dragRole = 'selector';
-      this.moveSelectorToPointer(pointer);
-      return;
-    }
-
-    // 4. Otherwise pan the camera.
-    this.dragRole = 'pan';
+    // 3. Otherwise this is a one-finger map press: ambiguous between an urgent
+    //    move (hold still) and a pan (drag). Start in 'urgent' and let movement
+    //    promote it to a pan. Capture pan origin now so the promotion is seamless.
+    this.dragRole = 'urgent';
     const cam = this.hooks.worldCamera();
     this.panStart = { scrollX: cam.scrollX, scrollY: cam.scrollY, px: pointer.x, py: pointer.y };
-    this.hooks.beginManualCamera();
   }
 
   private onPointerMove(pointer: Phaser.Input.Pointer): void {
@@ -312,23 +330,51 @@ export class MobileControls {
       this.updatePinch();
       return;
     }
+
+    if (this.dragRole === 'btnMove' || this.dragRole === 'btnAttack') {
+      this.moveSelectorToPointer(pointer);
+      if (Phaser.Math.Distance.Between(this.downX, this.downY, pointer.x, pointer.y) > BTN_DRAG_THRESHOLD) {
+        this.movedOntoMap = true;
+      }
+      return;
+    }
+
+    if (this.dragRole === 'urgent') {
+      // Forgiving: small jitter keeps the hold alive; real travel → pan.
+      if (Phaser.Math.Distance.Between(this.downX, this.downY, pointer.x, pointer.y) > URGENT_MOVE_TOLERANCE) {
+        this.cancelUrgent();
+        this.dragRole = 'pan';
+        this.hooks.beginManualCamera();
+      } else {
+        return;
+      }
+    }
+
     if (this.dragRole === 'pan') {
       const cam = this.hooks.worldCamera();
       cam.scrollX = this.panStart.scrollX - (pointer.x - this.panStart.px) / cam.zoom;
       cam.scrollY = this.panStart.scrollY - (pointer.y - this.panStart.py) / cam.zoom;
-      return;
-    }
-    if (this.dragRole === 'selector') {
-      this.moveSelectorToPointer(pointer);
     }
   }
 
   private onPointerUp(pointer: Phaser.Input.Pointer): void {
+    const role = this.dragRole;
     this.pointers.delete(pointer.id);
+
+    if (role === 'btnMove' || role === 'btnAttack') {
+      // Lifting the finger is the commit — but only if it was actually dragged
+      // onto the map (a stray tap on the button cancels instead).
+      if (this.movedOntoMap) this.commitDrag();
+      else this.exitToIdle(true);
+    } else if (role === 'urgent') {
+      // Released before the hold completed → a tap, which does nothing.
+      this.cancelUrgent();
+    }
+
     // End the current gesture; require a fresh touch to start the next one so
     // lifting one finger of a pinch doesn't snap into a pan.
     if (this.pointers.size === 0) this.dragRole = 'none';
-    else if (this.dragRole === 'pinch') this.dragRole = 'none';
+    else if (role === 'pinch') this.dragRole = 'none';
   }
 
   private onWheel(_p: Phaser.Input.Pointer, _objs: unknown[], _dx: number, dy: number): void {
@@ -356,6 +402,68 @@ export class MobileControls {
   }
 
   // ============================================================
+  // Urgent move (press-and-hold a tile)
+  // ============================================================
+
+  /** Tile currently under the original press point (camera may not have moved). */
+  private tileUnderDown(): { x: number; y: number } | null {
+    const cam = this.hooks.worldCamera();
+    const ts = this.hooks.tileSize();
+    const { w, h } = this.hooks.mapSize();
+    if (w <= 0 || h <= 0) return null;
+    const world = cam.getWorldPoint(this.downX, this.downY);
+    return {
+      x: Phaser.Math.Clamp(Math.floor(world.x / ts), 0, w - 1),
+      y: Phaser.Math.Clamp(Math.floor(world.y / ts), 0, h - 1),
+    };
+  }
+
+  private completeUrgent(): void {
+    const tile = this.tileUnderDown();
+    this.cancelUrgent();
+    this.dragRole = 'none';
+    if (!tile || !this.hooks.canAct()) return;
+    const path = this.hooks.computePath(tile.x, tile.y);
+    if (path.length === 0) return; // unreachable — silently ignore
+    this.hooks.haltStaged();
+    this.spawnFlash(tile, 'move');
+    this.hooks.commitMove(path);
+  }
+
+  private cancelUrgent(): void {
+    this.hourglassGfx.setVisible(false).clear();
+    this.hourglassArc.setVisible(false).clear();
+  }
+
+  private drawHourglass(progress: number): void {
+    const g = this.hourglassGfx;
+    const a = this.hourglassArc;
+    const cx = this.downX;
+    const cy = this.downY;
+    const R = HOURGLASS_R;
+    const done = progress >= 1;
+    const col = done ? 0x66ffaa : 0x44ff88;
+
+    // Backing disc + outline ring (circle ops on their own Graphics).
+    g.clear();
+    g.setVisible(true);
+    g.fillStyle(0x06140c, 0.4);
+    g.fillCircle(cx, cy, R);
+    g.lineStyle(3, col, 0.85);
+    g.strokeCircle(cx, cy, R);
+
+    // Progress pie (path ops on a separate Graphics — see gotcha note).
+    a.clear();
+    a.setVisible(true);
+    a.fillStyle(col, 0.45);
+    a.beginPath();
+    a.moveTo(cx, cy);
+    a.arc(cx, cy, R - 5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Phaser.Math.Clamp(progress, 0, 1), false);
+    a.closePath();
+    a.fillPath();
+  }
+
+  // ============================================================
   // Selector helpers
   // ============================================================
 
@@ -369,18 +477,6 @@ export class MobileControls {
     if (tx === this.dragTile.x && ty === this.dragTile.y) return;
     this.dragTile = { x: tx, y: ty };
     this.updatePreview();
-  }
-
-  /** True if (screenX,screenY) is over (or near) the current selector tile. */
-  private isOverSelector(screenX: number, screenY: number): boolean {
-    const cam = this.hooks.worldCamera();
-    const ts = this.hooks.tileSize();
-    const tile = this.state === 'attack' ? this.attackTarget : this.dragTile;
-    const world = cam.getWorldPoint(screenX, screenY);
-    const cx = tile.x * ts + ts / 2;
-    const cy = tile.y * ts + ts / 2;
-    // Grab radius ~1 tile so a fingertip near the selector still catches it.
-    return Math.abs(world.x - cx) <= ts && Math.abs(world.y - cy) <= ts;
   }
 
   private drawSelector(): void {
@@ -425,21 +521,55 @@ export class MobileControls {
     for (const t of this.previewPath) g.fillCircle(t.x * ts + ts / 2, t.y * ts + ts / 2, dotR);
   }
 
+  /** Spawn a brief expanding-ring confirmation on the committed tile. */
+  private spawnFlash(tile: { x: number; y: number }, kind: SelectState): void {
+    const ts = this.hooks.tileSize();
+    this.flash = { x: tile.x * ts + ts / 2, y: tile.y * ts + ts / 2, start: Date.now(), kind };
+  }
+
+  private drawFlash(): void {
+    const g = this.flashGfx;
+    g.clear();
+    if (!this.flash) return;
+    const t = (Date.now() - this.flash.start) / FLASH_MS;
+    if (t >= 1) { this.flash = null; return; }
+    const ts = this.hooks.tileSize();
+    const color = this.flash.kind === 'attack' ? 0xffcc44 : 0x66ffaa;
+    const r = ts * (0.5 + 0.7 * t);
+    g.lineStyle(Math.max(2, 5 * (1 - t)), color, 1 - t);
+    g.strokeRect(this.flash.x - r, this.flash.y - r, r * 2, r * 2);
+  }
+
   // ============================================================
   // Per-frame
   // ============================================================
 
   update(): void {
-    // Bail out of selection if the player can no longer act (died / stunned).
-    if (this.state !== 'idle' && !this.hooks.canAct()) {
-      this.exitToIdle(true);
+    // Bail out of any gesture if the player can no longer act (died / stunned).
+    if (!this.hooks.canAct() && (this.state !== 'idle' || this.dragRole === 'urgent')) {
+      if (this.state !== 'idle') this.exitToIdle(true);
+      this.cancelUrgent();
+      if (this.dragRole === 'btnMove' || this.dragRole === 'btnAttack' || this.dragRole === 'urgent') {
+        this.dragRole = 'none';
+      }
     }
     this.refreshButtonVisibility();
-    if (this.state === 'idle') return;
-    // Keep the aim tile asserted (the scene's ghost/trajectory reads it each
-    // frame) and animate the selector pulse.
-    if (this.state === 'attack') this.hooks.setAimTile(this.attackTarget);
-    this.drawSelector();
+
+    // Urgent-move hold: tick the hourglass; commit when it fills.
+    if (this.dragRole === 'urgent') {
+      const progress = (Date.now() - this.downTime) / URGENT_HOLD_MS;
+      this.drawHourglass(progress);
+      if (progress >= 1) this.completeUrgent();
+    }
+
+    // Button drag: keep the aim asserted (the scene's ghost/trajectory reads it
+    // each frame) and animate the selector pulse.
+    if (this.state !== 'idle') {
+      if (this.state === 'attack') this.hooks.setAimTile(this.attackTarget);
+      this.drawSelector();
+    }
+
+    this.drawFlash();
   }
 
   destroy(): void {
@@ -450,6 +580,9 @@ export class MobileControls {
     this.scene.input.off('wheel', this.onWheel, this);
     this.selectorGfx.destroy();
     this.previewGfx.destroy();
+    this.flashGfx.destroy();
+    this.hourglassGfx.destroy();
+    this.hourglassArc.destroy();
     for (const b of this.buttons) b.container.destroy();
     this.buttons = [];
     this.pointers.clear();

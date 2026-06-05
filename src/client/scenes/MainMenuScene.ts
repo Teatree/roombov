@@ -210,12 +210,9 @@ export class MainMenuScene extends Phaser.Scene {
 
     this.coinsText.setText(`Coins: ${profile.coins}`);
     this.treasureList.setBundle(profile.treasures);
-    // Horizontal layout extends rightward from anchor — right-align by
-    // computing the rendered width and shifting X to (rightEdge - width).
-    const tRect = this.treasureList.getRect();
-    if (tRect && tRect.w > 0) {
-      this.treasureList.setX(this.scale.width - 20 - tRect.w);
-    }
+    // Flush right against the screen edge — align by the real rendered extent
+    // so short counts don't leave a trailing gap (see rightAlignTo).
+    this.treasureList.rightAlignTo(this.scale.width - 20);
     this.refreshFactoryBadge();
 
     // Clear and rebuild the equipped preview

@@ -7,7 +7,9 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #111; overflow: hidden; }
-    #game { width: 100vw; height: 100vh; }
+    /* dvh tracks the *visible* viewport (excludes the mobile URL bar) where
+       supported; installMobileViewport() also sets explicit px on mobile. */
+    #game { width: 100vw; height: 100vh; height: 100dvh; }
   </style>
 </head>
 <body>

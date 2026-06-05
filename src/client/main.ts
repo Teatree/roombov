@@ -11,14 +11,21 @@ import { TutorialOverlayScene } from './scenes/TutorialOverlayScene.ts';
 import { TooltipScene } from './scenes/TooltipScene.ts';
 import { FactoryScene } from './scenes/FactoryScene.ts';
 import { BombermanUpgradeScene } from './scenes/BombermanUpgradeScene.ts';
+import { installMobileViewport } from './util/mobileViewport.ts';
 // GamblerStreetScene unregistered post-NEW_META §8. File preserved for revival.
 // import { GamblerStreetScene } from './scenes/GamblerStreetScene.ts';
+
+// Prefer the *visible* viewport so the dynamic mobile URL bar doesn't leave the
+// bottom HUD clipped (see installMobileViewport). Falls back to window.* on
+// browsers without visualViewport.
+const initialW = Math.round(window.visualViewport?.width ?? window.innerWidth);
+const initialH = Math.round(window.visualViewport?.height ?? window.innerHeight);
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
   parent: 'game',
-  width: window.innerWidth,
-  height: window.innerHeight,
+  width: initialW,
+  height: initialH,
   backgroundColor: '#1a1a2e',
   scale: {
     mode: Phaser.Scale.RESIZE,
@@ -29,5 +36,8 @@ const config: Phaser.Types.Core.GameConfig = {
 };
 
 const game = new Phaser.Game(config);
+// Mobile: size to the visible viewport (URL-bar aware) + portrait rotate gate.
+// No-op on desktop.
+installMobileViewport(game);
 // Dev hook: expose for Playwright/manual testing. Stripped by tree-shake in prod.
 (window as unknown as { __game?: Phaser.Game }).__game = game;

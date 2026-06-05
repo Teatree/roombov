@@ -3812,14 +3812,15 @@ export class MatchScene extends Phaser.Scene {
     if (idx < 0) return null;
 
     const W = this.scale.width;
-    const panelWidth = this.localTotalSlotCount() * this.slotSize + (this.localTotalSlotCount() - 1) * this.slotGap + 20;
+    const hs = this.hudScale;
+    const panelWidth = this.localTotalSlotCount() * this.slotSize + (this.localTotalSlotCount() - 1) * this.slotGap + Math.round(20 * hs);
     const panelX = (W - panelWidth) / 2;
-    const slotStartX = panelX + 10;
+    const slotStartX = panelX + Math.round(10 * hs);
     return {
       x: slotStartX + idx * (this.slotSize + this.slotGap),
-      y: this.lootPanelY + 30,
+      y: this.lootPanelY + Math.round(18 * hs),
       w: this.slotSize,
-      h: 50,
+      h: Math.round(50 * hs),
       space: 'hud',
     };
   }
@@ -4138,7 +4139,17 @@ export class MatchScene extends Phaser.Scene {
     const lootIdx = this.hitTestLootPanel(x, y);
     if (lootIdx >= 0) { this.onLootSlotClicked(lootIdx); return true; }
     const slot = this.hitTestHud(x, y);
-    if (slot >= 0) { this.mobileArmSlot(slot); return true; }
+    if (slot >= 0) {
+      // Loot swap: when a loot bomb is staged (no compatible slot to merge
+      // into), tapping an inventory slot completes the swap — mirrors the PC
+      // click-loot-then-click-slot flow. Otherwise the tap just arms the slot.
+      if (this.lootPendingSwap && slot >= 1 && slot <= this.localCustomSlotCount()) {
+        this.executeLootSwap(slot);
+      } else {
+        this.mobileArmSlot(slot);
+      }
+      return true;
+    }
     return false;
   }
 
@@ -5104,23 +5115,33 @@ export class MatchScene extends Phaser.Scene {
     this.lootPanelVisible = true;
 
     const { width } = this.scale;
-    const lootSlotSize = SLOT_SIZE;
-    const rowH = 70;
-    const rowGap = 8;
-    const headerH = 26;
+    // Loot slots match the player's loadout tray size (half-scale on mobile).
+    // All literals are scaled by hudScale so the loot tray reads as the same
+    // size as the loadout — hitTestLootPanel + getLootItemRect mirror these.
+    const hs = this.hudScale;
+    const lootSlotSize = this.slotSize;
+    const lootGap = this.slotGap;
+    const slotH = Math.round(50 * hs);
+    const labelH = Math.round(18 * hs);
+    const rowGap = Math.round(8 * hs);
+    const headerH = Math.round(26 * hs);
+    const rowH = Math.round(70 * hs);
+    const panelPad = Math.round(20 * hs);
+    const iconPx = Math.round(28 * hs);
+    const f = (px: number): string => `${Math.max(9, Math.round(px * hs))}px`;
 
-    // Panel sized by the widest row. Each row's width = slotCount * SLOT_SIZE
-    // + (slotCount - 1) * SLOT_GAP + 20 padding.
+    // Panel sized by the widest row. Each row's width = slotCount * slotSize
+    // + (slotCount - 1) * gap + padding.
     let widestRow = 0;
     for (const src of sources) {
-      const w = src.slotCount * lootSlotSize + Math.max(0, src.slotCount - 1) * SLOT_GAP + 20;
+      const w = src.slotCount * lootSlotSize + Math.max(0, src.slotCount - 1) * lootGap + panelPad;
       if (w > widestRow) widestRow = w;
     }
     const panelWidth = widestRow;
-    const panelHeight = headerH + sources.length * rowH + Math.max(0, sources.length - 1) * rowGap + 12;
+    const panelHeight = headerH + sources.length * rowH + Math.max(0, sources.length - 1) * rowGap + Math.round(12 * hs);
 
     const panelX = (width - panelWidth) / 2;
-    const panelY = this.hudTrayY - panelHeight - 10;
+    const panelY = this.hudTrayY - panelHeight - Math.round(10 * hs);
     this.lootPanelY = panelY;
 
     // Background
@@ -5134,32 +5155,32 @@ export class MatchScene extends Phaser.Scene {
     // Render each source as its own slot row. Index `i` here is the row;
     // the absolute slot index across all rows is what the click handlers
     // use (reconstructed in the same order in `tryLootSlotAt`).
-    let cursorY = panelY + 8;
+    let cursorY = panelY + Math.round(8 * hs);
     for (const src of sources) {
-      const rowTitle = this.hud(this.add.text(panelX + 12, cursorY, src.label, {
-        fontSize: '11px', color: src.kind === 'chest' ? '#44ff88' : '#ffaa66',
+      const rowTitle = this.hud(this.add.text(panelX + Math.round(12 * hs), cursorY, src.label, {
+        fontSize: f(11), color: src.kind === 'chest' ? '#44ff88' : '#ffaa66',
         fontFamily: 'monospace', fontStyle: 'bold',
       }).setOrigin(0, 0).setDepth(1011));
       this.lootPanelObjects.push(rowTitle);
-      cursorY += 18;
+      cursorY += labelH;
 
-      const rowWidth = src.slotCount * lootSlotSize + Math.max(0, src.slotCount - 1) * SLOT_GAP;
+      const rowWidth = src.slotCount * lootSlotSize + Math.max(0, src.slotCount - 1) * lootGap;
       const slotStartX = panelX + (panelWidth - rowWidth) / 2;
       const slotY = cursorY;
 
       for (let i = 0; i < src.slotCount; i++) {
-        const sx = slotStartX + i * (lootSlotSize + SLOT_GAP);
+        const sx = slotStartX + i * (lootSlotSize + lootGap);
         const bomb = src.bombs[i];
 
-        const rect = this.hud(this.add.rectangle(sx, slotY, lootSlotSize, 50, 0x1a2a1e, 1)
+        const rect = this.hud(this.add.rectangle(sx, slotY, lootSlotSize, slotH, 0x1a2a1e, 1)
           .setOrigin(0, 0)
           .setStrokeStyle(2, bomb ? (src.kind === 'chest' ? 0x44ff88 : 0xffaa66) : 0x333355)
           .setDepth(1011));
         this.lootPanelObjects.push(rect);
 
         if (!bomb) {
-          const dash = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + 25, '—', {
-            fontSize: '12px', color: '#444', fontFamily: 'monospace',
+          const dash = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + slotH * 0.5, '—', {
+            fontSize: f(12), color: '#444', fontFamily: 'monospace',
           }).setOrigin(0.5).setDepth(1012));
           this.lootPanelObjects.push(dash);
           continue;
@@ -5168,27 +5189,27 @@ export class MatchScene extends Phaser.Scene {
         const isPending = this.lootPendingSwap?.sourceId === src.id && this.lootPendingSwap?.bombType === bomb.type;
 
         const lootIcon = this.hud(this.add.image(
-          sx + lootSlotSize / 2, slotY + 22, 'bomb_icons', bombIconFrame(bomb.type),
-        ).setDisplaySize(28, 28).setDepth(1012));
+          sx + lootSlotSize / 2, slotY + slotH * 0.44, 'bomb_icons', bombIconFrame(bomb.type),
+        ).setDisplaySize(iconPx, iconPx).setDepth(1012));
         this.lootPanelObjects.push(lootIcon);
 
         const countLabel = src.kind === 'body' && src.stackSize
           ? `${bomb.count}/${src.stackSize}`
           : `x${bomb.count}`;
-        const countText = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + 42, countLabel, {
-          fontSize: '12px', color: isPending ? '#ffcc44' : '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
+        const countText = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + slotH * 0.86, countLabel, {
+          fontSize: f(12), color: isPending ? '#ffcc44' : '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
         }).setOrigin(0.5, 1).setDepth(1012));
         this.lootPanelObjects.push(countText);
 
         if (isPending) {
           const hlGfx = this.hud(this.add.graphics().setDepth(1013));
           hlGfx.lineStyle(3, 0xffcc44, 1);
-          hlGfx.strokeRoundedRect(sx, slotY, lootSlotSize, 50, 4);
+          hlGfx.strokeRoundedRect(sx, slotY, lootSlotSize, slotH, 4);
           this.lootPanelObjects.push(hlGfx);
         }
       }
 
-      cursorY += 50 + rowGap;
+      cursorY += slotH + rowGap;
     }
   }
 
@@ -5271,36 +5292,42 @@ export class MatchScene extends Phaser.Scene {
     }
     if (rows.length === 0) return -1;
 
+    // Mirror renderLootPanel's hudScale-scaled geometry exactly.
     const { width } = this.scale;
-    const lootSlotSize = SLOT_SIZE;
-    const rowGap = 8;
+    const hs = this.hudScale;
+    const lootSlotSize = this.slotSize;
+    const lootGap = this.slotGap;
+    const slotH = Math.round(50 * hs);
+    const labelH = Math.round(18 * hs);
+    const rowGap = Math.round(8 * hs);
+    const panelPad = Math.round(20 * hs);
 
     let widestRow = 0;
     for (const r of rows) {
-      const w = r.slotCount * lootSlotSize + Math.max(0, r.slotCount - 1) * SLOT_GAP + 20;
+      const w = r.slotCount * lootSlotSize + Math.max(0, r.slotCount - 1) * lootGap + panelPad;
       if (w > widestRow) widestRow = w;
     }
     const panelWidth = widestRow;
     const panelX = (width - panelWidth) / 2;
 
-    // Mirror render: each row is title (18px) + slots (50px) + rowGap.
-    let cursorY = this.lootPanelY + 8;
+    // Mirror render: each row is title (labelH) + slots (slotH) + rowGap.
+    let cursorY = this.lootPanelY + Math.round(8 * hs);
     for (const row of rows) {
-      cursorY += 18; // label height
+      cursorY += labelH; // label height
       const slotYTop = cursorY;
-      const slotYBot = cursorY + 50;
+      const slotYBot = cursorY + slotH;
       if (screenY >= slotYTop && screenY <= slotYBot) {
-        const rowWidth = row.slotCount * lootSlotSize + Math.max(0, row.slotCount - 1) * SLOT_GAP;
+        const rowWidth = row.slotCount * lootSlotSize + Math.max(0, row.slotCount - 1) * lootGap;
         const slotStartX = panelX + (panelWidth - rowWidth) / 2;
         const rel = screenX - slotStartX;
         if (rel < 0) return -1;
-        const stride = lootSlotSize + SLOT_GAP;
+        const stride = lootSlotSize + lootGap;
         const idx = Math.floor(rel / stride);
         if (idx < 0 || idx >= row.slotCount) return -1;
         if (rel - idx * stride > lootSlotSize) return -1;
         return row.flatStart + idx;
       }
-      cursorY += 50 + rowGap;
+      cursorY += slotH + rowGap;
     }
     return -1;
   }

@@ -182,6 +182,25 @@ export class TreasureListWidget {
   }
 
   /**
+   * Position the widget so its rightmost *rendered* pixel sits at screen X
+   * `rightEdgeX` — i.e. genuinely flush right. Unlike
+   * `setX(rightEdgeX - getRect().w)`, this measures the real text/icon extents
+   * instead of the reserved text column, so short counts ("x5") don't leave a
+   * trailing gap that makes the wallet look inset from the edge. Call after
+   * `setBundle`/`setBundleStatic` so the row text widths are up to date.
+   */
+  rightAlignTo(rightEdgeX: number): this {
+    let maxRightLocal = 0;
+    for (const row of this.rows.values()) {
+      const textRight = row.text.x + (1 - row.text.originX) * row.text.width;
+      const iconRight = row.icon.x + (1 - row.icon.originX) * row.icon.displayWidth;
+      maxRightLocal = Math.max(maxRightLocal, textRight, iconRight);
+    }
+    this.setX(rightEdgeX - maxRightLocal);
+    return this;
+  }
+
+  /**
    * Bounding rect in screen space, useful for tutorial highlights and
    * tooltip hit-tests. Returns the union of all current rows.
    */

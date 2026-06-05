@@ -582,8 +582,8 @@ export class FactoryScene extends Phaser.Scene {
     // extends rightward; right-align by computing width and shifting X.
     if (this.wallet) {
       this.wallet.setBundle(profile.treasures);
-      const r = this.wallet.getRect();
-      if (r && r.w > 0) this.wallet.setX(this.scale.width - 20 - r.w);
+      // Flush right — align by real rendered extent (see rightAlignTo).
+      this.wallet.rightAlignTo(this.scale.width - 20);
     }
 
     // Defensive: older profiles loaded by a hot-reloaded server may not yet
