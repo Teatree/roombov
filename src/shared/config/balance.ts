@@ -31,8 +31,8 @@ export const BALANCE = {
     // (inputPhaseSeconds + transitionPhaseSeconds = one turn). Changing these
     // values therefore changes the displayed clock length too — but no game
     // logic reads the clock. See MatchScene.formatMatchClock.
-    inputPhaseSeconds: 1.35,
-    transitionPhaseSeconds: 1.35,
+    inputPhaseSeconds: 1.5,
+    transitionPhaseSeconds: 1.5,
     /** Minimum tile distance between spawning Bombermen (falls back if impossible). */
     minSpawnDistance: 5,
     bombermanMaxHp: 2,

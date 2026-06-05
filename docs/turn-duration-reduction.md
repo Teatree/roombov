@@ -12,14 +12,19 @@ as the per-aspect decision sheet during implementation.
   holds, and melee impact had since been re-anchored to `ATTACK3_DURATION_MS`
   (no longer turn-derived), so the A7/B5 risks below are now moot. Tutorial
   pacing (section D) still NOT reviewed — carry forward.
+- **Jun 5, 2026 — Jun 3 reverted.** Each phase 1.35 s → 1.5 s (turn 2700 →
+  3000 ms), back to the May 29 timing per design call. Pure two-constant change;
+  everything derives from `inputPhaseSeconds`/`transitionPhaseSeconds` so all
+  animations rescaled automatically (the fixed-rate explosion sprite, ~667 ms,
+  just gains more headroom in the longer transition).
 
 ## Context
 
-| Phase       | Original | After May 29 | After Jun 3 (current) |
-|-------------|---------:|-------------:|----------------------:|
-| Input       | 2000 ms  | 1500 ms      | 1350 ms               |
-| Transition  | 2000 ms  | 1500 ms      | 1350 ms               |
-| **Total**   | 4000 ms  | 3000 ms      | **2700 ms**           |
+| Phase       | Original | After May 29 | Jun 3 | Current (Jun 5) |
+|-------------|---------:|-------------:|------:|----------------:|
+| Input       | 2000 ms  | 1500 ms      | 1350 ms | 1500 ms       |
+| Transition  | 2000 ms  | 1500 ms      | 1350 ms | 1500 ms       |
+| **Total**   | 4000 ms  | 3000 ms      | 2700 ms | **3000 ms**   |
 
 The change itself is two numbers in `src/shared/config/balance.ts:28-29`
 (`inputPhaseSeconds: 2 → 1.5`, `transitionPhaseSeconds: 2 → 1.5`). Almost
