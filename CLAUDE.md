@@ -132,3 +132,4 @@ The following files are auto-included by Claude Code and contain standards, coor
 - `docs/BOMB_SHOP_CHANGE.md` — Bombs Shop three-panel redesign spec (implemented; kept for reference on tooltip / category / panel intent)
 - `docs/sprite-animation-guide.md` — sprite-sheet authoring + `BombermanAnimations` conventions
 - `docs/ANALYTICS-SPEC.md` — analytics event schema: the four Google-Sheet tabs and exact per-row column order (see Analytics under Server flow)
+- `docs/MOBILE.md` — full reference for the mobile (responsive-browser) build: every difference from desktop, the `isMobileDevice()` gate, viewport/portrait handling, `hudScale`, the drag-and-hold touch controls, and tuning constants. Read before touching any mobile code (expands on the "Mobile" subsection above).

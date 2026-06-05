@@ -152,6 +152,12 @@ export class MatchRoom {
   get id(): string { return this.config.id; }
 
   private createBots(): void {
+    // "No Bots or Scavs" matches skip AI entirely (scavs are gated separately
+    // via scavNextSpawnTurn=undefined at state init).
+    if (!this.config.allowBots) {
+      console.log(`[MatchRoom] createBots: allowBots=false, no bots for match ${this.config.id}`);
+      return;
+    }
     const cfg = BALANCE.bots;
     const realCount = this.participants.length;
     console.log(`[MatchRoom] createBots: real=${realCount} minPlayersForBots=${cfg.minPlayersForBots} maxPerMatch=${cfg.maxPerMatch} fillToTotal=${cfg.fillToTotal}`);
@@ -438,7 +444,10 @@ export class MatchRoom {
       phosphorusPending: [],
       isTutorial: false,
       uavNextFireTurn: 60 + Math.floor(Math.random() * 31), // first UAV in turns 60-90
-      scavNextSpawnTurn: 20 + Math.floor(Math.random() * 11), // first scav wave in turns 20-30
+      // first scav wave in turns 20-30 — undefined disables scav spawning
+      // entirely for "No Bots or Scavs" matches (TurnResolver step 5d skips
+      // when scavNextSpawnTurn is undefined).
+      scavNextSpawnTurn: this.config.allowBots ? 20 + Math.floor(Math.random() * 11) : undefined,
     };
   }
 

@@ -18,6 +18,12 @@ export interface MatchConfig {
   mapId: string;
   mapName: string;
   maxPlayers: number;
+  /**
+   * When false, the match runs with no AI: no bots fill empty slots and no
+   * Scavenger NPCs spawn ("No Bots or Scavs" in the lobby). When true it's a
+   * "Normal" match. The scheduler alternates this every other listing.
+   */
+  allowBots: boolean;
 }
 
 /** A carousel entry shown in the lobby. */

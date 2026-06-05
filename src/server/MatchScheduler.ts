@@ -41,14 +41,24 @@ function genMatchId(): string { return `match_${Date.now()}_${nextId++}`; }
  */
 let nextMapIndex = 0;
 
+/**
+ * Sequence counter for the bots/scavs toggle. Every second listing is a
+ * "No Bots or Scavs" match: even sequence numbers → Normal (allowBots), odd →
+ * no AI. Process-lifetime state, like `nextMapIndex` (restarts begin Normal).
+ */
+let nextMatchSeq = 0;
+
 function generateMatchConfig(): MatchConfig {
   const mapEntry = MAP_MANIFEST[nextMapIndex % MAP_MANIFEST.length];
   nextMapIndex += 1;
+  const allowBots = nextMatchSeq % 2 === 0;
+  nextMatchSeq += 1;
   return {
     id: genMatchId(),
     mapId: mapEntry.id,
     mapName: mapEntry.name,
     maxPlayers: BALANCE.lobby.maxPlayersPerMatch,
+    allowBots,
   };
 }
 

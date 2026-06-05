@@ -306,6 +306,19 @@ export class LobbyScene extends Phaser.Scene {
       fontSize: '18px', color: '#fff', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5));
 
+    // Mode label — "Normal" matches have bots + scavs; the alternating
+    // "No Bots or Scavs" matches run AI-free (see MatchConfig.allowBots).
+    container.add(this.add.text(
+      0, -CARD_HEIGHT / 2 + 48,
+      cfg.allowBots ? 'Normal' : 'No Bots or Scavs',
+      {
+        fontSize: '13px',
+        color: cfg.allowBots ? '#88ccaa' : '#ffcc44',
+        fontFamily: 'monospace',
+        fontStyle: 'bold',
+      },
+    ).setOrigin(0.5));
+
     const playerCountText = this.add.text(0, 0, `Players: ${listing.playerCount}/${cfg.maxPlayers}`, {
       fontSize: '14px', color: '#ccc', fontFamily: 'monospace',
     }).setOrigin(0.5);
