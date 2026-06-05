@@ -17,12 +17,10 @@
  * cycle. Slot does NOT refill — the row shrinks until next cycle.
  */
 
-import type { BombType } from '../shared/types/bombs.ts';
 import { rollBombermanName } from '../shared/config/bomberman-names.ts';
 import type {
   BombermanShopCycle,
   BombermanTemplate,
-  BombermanTier,
   BombInventory,
   BombSlot,
   CharacterVariant,
@@ -32,15 +30,15 @@ import type {
 import { CHARACTER_VARIANTS } from '../shared/types/bomberman.ts';
 import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import {
-  SHOP_CYCLE_COMPOSITION,
   SHOP_CYCLE_DURATION_MS,
-  TIER_CONFIG,
-  BOMBERMAN_PRICING,
+  SHOP_OFFER_COUNT,
+  OFFER_BOMB_POOLS,
+  ESCAPE_PRICES,
+  OFFER_STATS,
+  FREE_BONUS_STATS,
 } from '../shared/config/bomberman-tiers.ts';
-import { BOMB_CATALOG } from '../shared/config/bombs.ts';
 import { BALANCE } from '../shared/config/balance.ts';
-import { createSeededRandom, seededRandInt } from '../shared/utils/seeded-random.ts';
-import { rollBombLoot } from '../shared/utils/loot-roll.ts';
+import { createSeededRandom } from '../shared/utils/seeded-random.ts';
 import { rollColors, rollTint } from '../shared/utils/cosmetic-color.ts';
 import type { PlayerStore } from './PlayerStore.ts';
 
@@ -76,27 +74,45 @@ export class BombermanShopService {
    */
   async getCycleForClient(profile: PlayerProfile, now = Date.now()): Promise<BombermanShopCycle> {
     const cycle = await this.getOrGenerateCycle(profile, now);
+
+    // Apply the hardship discount (cheapest still-buyable → free for a broke,
+    // Bomberman-less player) to the three paid offers.
     const discountedId = hardshipDiscountTemplateId(profile, cycle);
-    if (!discountedId) return cycle;
-    return {
-      ...cycle,
-      bombermen: cycle.bombermen.map(b => (b.id === discountedId ? { ...b, price: 0 } : b)),
-    };
+    const base = discountedId
+      ? cycle.bombermen.map(b => (b.id === discountedId ? { ...b, price: 0 } : b))
+      : cycle.bombermen;
+
+    // Append the bonus FREE Bomberman once all three paid offers are bought
+    // (and the bonus itself hasn't been taken). It rides in `bombermen` so the
+    // existing client render path shows it like any other card.
+    const bombermen = this.shouldOfferFreeBonus(cycle)
+      ? [...base, cycle.freeBonus!]
+      : base;
+
+    return { ...cycle, bombermen };
+  }
+
+  /** True when every paid offer is bought and the bonus free one is available. */
+  private shouldOfferFreeBonus(cycle: BombermanShopCycle): boolean {
+    if (!cycle.freeBonus) return false;
+    const bought = new Set(cycle.boughtTemplateIds);
+    if (bought.has(cycle.freeBonus.id)) return false;
+    return cycle.bombermen.length > 0 && cycle.bombermen.every(b => bought.has(b.id));
   }
 
   private generateCycle(playerId: string, now: number): BombermanShopCycle {
     // Seed mixes the player's id and the wall-clock start so each player
     // gets a unique roster and each cycle is fresh.
     const cycleId = `cycle_${playerId}_${now.toString(36)}`;
-    const seed = hashString(cycleId);
-    const rng = createSeededRandom(seed);
+    const rng = createSeededRandom(hashString(cycleId));
 
     const bombermen: BombermanTemplate[] = [];
-    for (const entry of SHOP_CYCLE_COMPOSITION) {
-      for (let i = 0; i < entry.count; i++) {
-        bombermen.push(this.rollBomberman(entry.tier, rng, `${cycleId}_${bombermen.length}`));
-      }
+    for (let i = 0; i < SHOP_OFFER_COUNT; i++) {
+      bombermen.push(this.rollOffer(rng, `${cycleId}_${i}`));
     }
+    // Pre-roll the bonus free Bomberman now (deterministic); it's only shown
+    // once all the paid offers are bought (see shouldOfferFreeBonus).
+    const freeBonus = this.rollFreeBonus(rng, `${cycleId}_free`);
 
     return {
       cycleId,
@@ -104,55 +120,69 @@ export class BombermanShopService {
       endsAt: now + SHOP_CYCLE_DURATION_MS,
       bombermen,
       boughtTemplateIds: [],
+      freeBonus,
     };
   }
 
-  private rollBomberman(tier: BombermanTier, rng: () => number, idPrefix: string): BombermanTemplate {
-    const cfg = TIER_CONFIG[tier];
+  /**
+   * Roll one offered (paid, "blue"/tier-1) Bomberman: 4 slots / stack 5 / 2 HP,
+   * loadout = one offensive ×5, one escape ×2, one flare ×2, 4th slot empty.
+   * Price is set purely by the escape (see ESCAPE_PRICES).
+   */
+  private rollOffer(rng: () => number, idPrefix: string): BombermanTemplate {
+    const offensive = pick(OFFER_BOMB_POOLS.offensive, rng);
+    const escape = pick(OFFER_BOMB_POOLS.escape, rng);
+    const flare = pick(OFFER_BOMB_POOLS.flare, rng);
 
-    // Colors (shop cards) + tint (in-match sprite) share one palette source
-    // in src/shared/utils/cosmetic-color.ts so scavs use the same recipe.
-    const colors: CosmeticColors = rollColors(rng);
-    const tint = rollTint(rng);
-
-    // Tier-driven stats: customSlots is fixed per tier; stackSize is rolled
-    // uniformly inside the tier's range so two Bombermen of the same tier
-    // can have visibly different ceilings.
-    const maxCustomSlots = cfg.customSlots;
-    const [stackMin, stackMax] = cfg.stackSizeRange;
-    const stackSize = seededRandInt(rng, stackMin, stackMax + 1);
-
-    // Starting inventory: pick unique bomb types weighted, then distribute
-    // totalBombs proportionally to those weights (largest-remainder rule).
-    // Same algorithm as chests — see utils/loot-roll.ts.
-    const rolled = rollBombLoot(cfg.weights, cfg.totalBombs, cfg.maxUniqueSlots, rng);
-    if (rolled.length === 0) throw new Error(`Tier ${tier} produced empty inventory`);
-    const counts: Partial<Record<BombType, number>> = {};
-    for (const r of rolled) counts[r.type] = r.count;
-
-    const inventory = packInventory(counts, maxCustomSlots, stackSize);
-
-    // Derived price — every tier (including free) runs through the same
-    // pricing formula post-NEW_META §6. Free-tier Bombermen now cost
-    // ~50–120 coins driven by their stack roll + bomb inventory.
-    const price = computeBombermanPrice(maxCustomSlots, stackSize, inventory);
-
-    const name = rollBombermanName(tier, rng);
-
-    // Sprite-sheet variant — same random lifecycle as tint.
-    const character: CharacterVariant = CHARACTER_VARIANTS[Math.floor(rng() * CHARACTER_VARIANTS.length)];
+    const slots: (BombSlot | null)[] = [
+      { type: offensive, count: OFFER_STATS.offensiveCount },
+      { type: escape, count: OFFER_STATS.escapeCount },
+      { type: flare, count: OFFER_STATS.flareCount },
+      null,
+    ];
+    const inventory: BombInventory = { slots };
 
     return {
-      id: `${idPrefix}_${tier}`,
-      name,
-      tier,
-      price,
-      colors,
-      tint,
-      character,
-      maxCustomSlots,
-      stackSize,
+      id: `${idPrefix}_paid`,
+      name: rollBombermanName('paid', rng),
+      tier: 'paid', // blue visual
+      price: ESCAPE_PRICES[escape] ?? 500,
+      colors: rollColors(rng),
+      tint: rollTint(rng),
+      character: CHARACTER_VARIANTS[Math.floor(rng() * CHARACTER_VARIANTS.length)],
+      maxCustomSlots: OFFER_STATS.maxCustomSlots,
+      stackSize: OFFER_STATS.stackSize,
       inventory,
+    };
+  }
+
+  /**
+   * Roll the bonus FREE Bomberman (green "CHEAP" tier): same 4 slots / stack 5,
+   * lighter loadout = one offensive ×3, one escape ×1, one flare ×1.
+   */
+  private rollFreeBonus(rng: () => number, idPrefix: string): BombermanTemplate {
+    const offensive = pick(OFFER_BOMB_POOLS.offensive, rng);
+    const escape = pick(OFFER_BOMB_POOLS.escape, rng);
+    const flare = pick(OFFER_BOMB_POOLS.flare, rng);
+
+    const slots: (BombSlot | null)[] = [
+      { type: offensive, count: FREE_BONUS_STATS.offensiveCount },
+      { type: escape, count: FREE_BONUS_STATS.escapeCount },
+      { type: flare, count: FREE_BONUS_STATS.flareCount },
+      null,
+    ];
+
+    return {
+      id: `${idPrefix}_free`,
+      name: rollBombermanName('free', rng),
+      tier: 'free',
+      price: 0,
+      colors: rollColors(rng),
+      tint: rollTint(rng),
+      character: CHARACTER_VARIANTS[Math.floor(rng() * CHARACTER_VARIANTS.length)],
+      maxCustomSlots: FREE_BONUS_STATS.maxCustomSlots,
+      stackSize: FREE_BONUS_STATS.stackSize,
+      inventory: { slots },
     };
   }
 
@@ -165,7 +195,12 @@ export class BombermanShopService {
    */
   async buyBomberman(profile: PlayerProfile, templateId: string): Promise<BuyResult> {
     const cycle = await this.getOrGenerateCycle(profile);
-    const template = cycle.bombermen.find(b => b.id === templateId);
+    let template = cycle.bombermen.find(b => b.id === templateId);
+    // The bonus free Bomberman lives outside `bombermen` and is only buyable
+    // once all paid offers are bought (mirrors shouldOfferFreeBonus).
+    if (!template && cycle.freeBonus?.id === templateId && this.shouldOfferFreeBonus(cycle)) {
+      template = cycle.freeBonus;
+    }
     if (!template) return { ok: false, reason: 'not_in_cycle' };
 
     if (cycle.boughtTemplateIds.includes(templateId)) {
@@ -238,74 +273,9 @@ function hashString(s: string): number {
   return h >>> 0;
 }
 
-/**
- * Pack type→count map into the Bomberman's custom slot count, respecting
- * its per-slot stack size. If totals exceed slotCount × stackSize the
- * overflow is dropped (shouldn't happen with current tier tuning, which
- * always sizes totalBombs comfortably under that ceiling).
- */
-function packInventory(
-  counts: Partial<Record<BombType, number>>,
-  slotCount: number,
-  stackLimit: number,
-): BombInventory {
-  const slots: (BombSlot | null)[] = new Array(slotCount).fill(null);
-  let slotIdx = 0;
-
-  const types = Object.entries(counts).filter(([, c]) => c && c > 0) as [BombType, number][];
-  types.sort((a, b) => b[1] - a[1]);
-
-  for (const [type, count] of types) {
-    let remaining = count;
-    while (remaining > 0 && slotIdx < slots.length) {
-      const take = Math.min(remaining, stackLimit);
-      slots[slotIdx] = { type, count: take };
-      slotIdx++;
-      remaining -= take;
-    }
-  }
-
-  return { slots };
-}
-
-/**
- * Bomberman shop price = slot premium + stack premium + `bombCostRatio` ×
- * total bomb-shop value, rounded to the nearest 5 coins. Post 2026-05-24 the
- * ratio is 1.0, so the bomb component is 100 % of the loadout's coin value.
- *
- * `maxCustomSlots` does NOT include Rock; the "Slots" baseline of 5 in the
- * pricing config is the user-facing total (custom + Rock). So a Bomberman
- * with 4 custom slots = 5 total = 0 extra slot premium; 5 custom = 6 total =
- * 1 extra (50c); 6 custom = 7 total = 2 extra (100c).
- *
- * Post NEW_META §6: free tier runs through this helper too (no special case).
- * Output is clamped to BOMBERMAN_PRICING.minPrice so even the cheapest rolls
- * are never sold for less than the configured floor.
- */
-function computeBombermanPrice(
-  maxCustomSlots: number,
-  stackSize: number,
-  inventory: BombInventory,
-): number {
-  const totalSlots = maxCustomSlots + 1; // +1 for Rock
-  const slotExtras = Math.max(0, totalSlots - BOMBERMAN_PRICING.slotThreshold);
-  const stackExtras = Math.max(0, stackSize - BOMBERMAN_PRICING.stackThreshold);
-
-  const slotCost = slotExtras * BOMBERMAN_PRICING.coinPerExtraSlot;
-  const stackCost = stackExtras * BOMBERMAN_PRICING.coinPerExtraStack;
-
-  let bombValue = 0;
-  for (const slot of inventory.slots) {
-    if (!slot) continue;
-    bombValue += slot.count * BOMB_CATALOG[slot.type].price;
-  }
-  const bombCost = bombValue * BOMBERMAN_PRICING.bombCostRatio;
-
-  const multiplier = BOMBERMAN_PRICING.priceMultiplier;
-  const raw = (slotCost + stackCost + bombCost) * multiplier;
-  const step = Math.max(1, BOMBERMAN_PRICING.roundToNearest);
-  const rounded = Math.round(raw / step) * step;
-  return Math.max(BOMBERMAN_PRICING.minPrice * multiplier, rounded);
+/** Seeded pick of one element from a non-empty array. */
+function pick<T>(arr: readonly T[], rng: () => number): T {
+  return arr[Math.floor(rng() * arr.length)];
 }
 
 function cloneInventory(inv: BombInventory): BombInventory {

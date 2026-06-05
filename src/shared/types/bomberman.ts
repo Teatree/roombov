@@ -56,6 +56,13 @@ export interface BombermanShopCycle {
   /** Template ids the player has already bought during this cycle. The
    *  client filters these out so the bought card stays animated-out. */
   boughtTemplateIds: string[];
+  /**
+   * A bonus FREE Bomberman that is only offered (appended to the client-facing
+   * `bombermen`) once every template in `bombermen` has been bought and the
+   * cycle hasn't refreshed yet. Optional for back-compat with cycles persisted
+   * before this field existed (they simply offer no bonus until they refresh).
+   */
+  freeBonus?: BombermanTemplate;
 }
 
 /** Cosmetic random palette generated per Bomberman in the shop cycle. */

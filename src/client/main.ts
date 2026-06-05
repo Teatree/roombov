@@ -10,7 +10,8 @@ import { TutorialEndScene } from './scenes/TutorialEndScene.ts';
 import { TutorialOverlayScene } from './scenes/TutorialOverlayScene.ts';
 import { TooltipScene } from './scenes/TooltipScene.ts';
 import { FactoryScene } from './scenes/FactoryScene.ts';
-import { BombermanUpgradeScene } from './scenes/BombermanUpgradeScene.ts';
+// BombermanUpgradeScene (modal popup) removed 2026-06-06 — the upgrade UI is now
+// an inline panel in BombermanShopScene (see systems/BombermanUpgradePanel.ts).
 import { installMobileViewport } from './util/mobileViewport.ts';
 // GamblerStreetScene unregistered post-NEW_META §8. File preserved for revival.
 // import { GamblerStreetScene } from './scenes/GamblerStreetScene.ts';
@@ -32,7 +33,7 @@ const config: Phaser.Types.Core.GameConfig = {
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
   fps: { target: 30, forceSetTimeOut: true },
-  scene: [BootScene, MainMenuScene, LobbyScene, BombermanShopScene, BombsShopScene, FactoryScene, MatchScene, ResultsScene, TutorialEndScene, TutorialOverlayScene, TooltipScene, BombermanUpgradeScene],
+  scene: [BootScene, MainMenuScene, LobbyScene, BombermanShopScene, BombsShopScene, FactoryScene, MatchScene, ResultsScene, TutorialEndScene, TutorialOverlayScene, TooltipScene],
 };
 
 const game = new Phaser.Game(config);

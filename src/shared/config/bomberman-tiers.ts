@@ -153,6 +153,55 @@ export const SHOP_CYCLE_COMPOSITION: { tier: BombermanTier; count: number }[] = 
   { tier: 'paid_expensive', count: 1 },
 ];
 
+// ───────────────────────────────────────────────────────────────────────────
+// Reworked offer model (2026-06-06). The shop offers 3 identical-template
+// Bombermen, all tier-1 ("blue"/`paid` visual): 4 custom slots, stack 5, 2 HP
+// (HP is the global base `BALANCE.match.bombermanMaxHp`). Each rolls one
+// offensive bomb, one escape, and one flare from the pools below; price is set
+// purely by the escape. A bonus FREE Bomberman is offered once all three are
+// bought (lighter loadout). See BombermanShopService.
+// ───────────────────────────────────────────────────────────────────────────
+
+/** Number of (paid) Bombermen offered per cycle. */
+export const SHOP_OFFER_COUNT = 3;
+
+/** Bomb pools each offered Bomberman draws one of. */
+export const OFFER_BOMB_POOLS: {
+  offensive: BombType[];
+  escape: BombType[];
+  flare: BombType[];
+} = {
+  offensive: ['bomb', 'delay_tricky'],        // simple + / diagonal
+  escape: ['fart_escape', 'ender_pearl', 'shield'],
+  flare: ['flare', 'motion_detector_flare'],  // regular / mine flare
+};
+
+/** Fixed price per escape — the offered Bomberman's price ignores its
+ *  offensive/flare and is driven entirely by which escape it rolled. */
+export const ESCAPE_PRICES: Partial<Record<BombType, number>> = {
+  ender_pearl: 600,
+  fart_escape: 550,
+  shield: 500,
+};
+
+/** Stats + loadout counts shared by every offered (paid) Bomberman. */
+export const OFFER_STATS = {
+  maxCustomSlots: 4,   // excludes Rock; 4th slot left empty
+  stackSize: 5,
+  offensiveCount: 5,
+  escapeCount: 2,
+  flareCount: 2,
+} as const;
+
+/** The bonus FREE Bomberman: same stats, lighter loadout. */
+export const FREE_BONUS_STATS = {
+  maxCustomSlots: 4,
+  stackSize: 5,
+  offensiveCount: 3,
+  escapeCount: 1,
+  flareCount: 1,
+} as const;
+
 /** 2-minute per-player cycle. Each profile carries its own shop state and
  *  ticks forward on wall-clock time, so the carousel feels live regardless
  *  of how long the player was away. */

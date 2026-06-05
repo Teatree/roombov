@@ -88,7 +88,7 @@ export class MainMenuScene extends Phaser.Scene {
     // Buttons
     const buttons: Array<[string, () => void]> = [
       ['[ PLAY ]', () => this.scene.start('LobbyScene')],
-      ['[ BOMBERMAN SHOP ]', () => this.scene.start('BombermanShopScene')],
+      ['[ BOMBERMAN ]', () => this.scene.start('BombermanShopScene')],
       ['[ BOMBS SHOP ]', () => this.scene.start('BombsShopScene')],
       ['[ FACTORY ]', () => this.scene.start('FactoryScene')],
       ['[ TUTORIAL ]', () => this.scene.start('MatchScene', { mode: 'tutorial' })],
@@ -221,7 +221,8 @@ export class MainMenuScene extends Phaser.Scene {
     if (!equipped) {
       const msg = this.add.text(0, 0, 'No Bomberman equipped', {
         fontSize: '14px', color: '#888', fontFamily: 'monospace',
-      }).setOrigin(0.5);
+      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+      msg.on('pointerdown', () => this.scene.start('BombermanShopScene'));
       this.equippedContainer.add(msg);
       return;
     }
@@ -247,6 +248,18 @@ export class MainMenuScene extends Phaser.Scene {
       fontSize: '14px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5);
     this.equippedContainer.add(label);
+
+    // Clicking the equipped Bomberman opens the Bomberman Shop (which hosts the
+    // inline Upgrade panel — the standalone popup was removed).
+    const hint = this.add.text(0, 90, '▸ upgrade / manage', {
+      fontSize: '11px', color: '#88aacc', fontFamily: 'monospace',
+    }).setOrigin(0.5);
+    this.equippedContainer.add(hint);
+    const zone = this.add.zone(0, 20, 130, 150).setInteractive({ useHandCursor: true });
+    zone.on('pointerover', () => hint.setColor('#cce4ff'));
+    zone.on('pointerout', () => hint.setColor('#88aacc'));
+    zone.on('pointerdown', () => this.scene.start('BombermanShopScene'));
+    this.equippedContainer.add(zone);
   }
 }
 

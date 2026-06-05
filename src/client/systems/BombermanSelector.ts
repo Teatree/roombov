@@ -15,21 +15,33 @@ import { bombIconFrame } from './BombIcons.ts';
 import type { OwnedBomberman } from '@shared/types/bomberman.ts';
 import { attachTierInfoBadge } from './TierInfoBadge.ts';
 import { BALANCE } from '@shared/config/balance.ts';
-import { tiersRemaining, isFullyUpgraded, effectiveMaxCustomSlots, effectiveStackSize } from '@shared/utils/bomberman-stats.ts';
+import { tiersRemaining, effectiveMaxCustomSlots, effectiveStackSize } from '@shared/utils/bomberman-stats.ts';
 
 const SELECTOR_CARD_W = 140;
 const SELECTOR_CARD_H = 180;
 const SELECTOR_GAP = 12;
+
+export interface BombermanSelectorOptions {
+  /**
+   * Called when a roster card is clicked. If omitted, the click navigates to
+   * the Bomberman Shop (which hosts the inline Upgrade panel). The Bomberman
+   * Shop passes a handler that equips the clicked Bomberman instead (so its
+   * Upgrade panel retargets without leaving the screen).
+   */
+  onCardClick?: (ownedId: string) => void;
+}
 
 export class BombermanSelector {
   private scene: Phaser.Scene;
   private containers: Phaser.GameObjects.Container[] = [];
   private y: number;
   private unsub: (() => void) | null = null;
+  private opts: BombermanSelectorOptions;
 
-  constructor(scene: Phaser.Scene, y: number) {
+  constructor(scene: Phaser.Scene, y: number, opts: BombermanSelectorOptions = {}) {
     this.scene = scene;
     this.y = y;
+    this.opts = opts;
   }
 
   create(): void {
@@ -137,10 +149,16 @@ export class BombermanSelector {
     });
     cardZone.on('pointerout', () => cardHover.clear());
     cardZone.on('pointerdown', () => {
-      // Don't open the Upgrade popup if the card is fully maxed —
-      // there's nothing actionable. Click is a no-op in that case.
-      if (isFullyUpgraded(owned)) return;
-      this.scene.scene.launch('BombermanUpgradeScene', { ownedId: owned.id });
+      if (this.opts.onCardClick) {
+        this.opts.onCardClick(owned.id);
+      } else {
+        // Default: open the Bomberman Shop, which hosts the Upgrade panel
+        // (the standalone upgrade popup was removed). Equips this Bomberman
+        // first so the panel targets the one the player clicked.
+        NetworkManager.track('equip_bomberman', 'profile');
+        NetworkManager.getSocket().emit('equip_bomberman', { ownedId: owned.id });
+        this.scene.scene.start('BombermanShopScene');
+      }
     });
     container.add(cardZone);
 

@@ -319,7 +319,10 @@ export class ResultsScene extends Phaser.Scene {
       upgradeBtn.on('pointerdown', () => {
         const p = ProfileStore.get();
         if (!p || !p.equippedBombermanId) return;
-        this.scene.launch('BombermanUpgradeScene', { ownedId: p.equippedBombermanId });
+        // The upgrade popup was removed — the Bomberman Shop now hosts the
+        // inline Upgrade panel (targets the equipped Bomberman).
+        NetworkManager.getSocket().emit('leave_match');
+        this.scene.start('BombermanShopScene');
       });
 
       // Breadcrumb pip — green dot, shown when any upgrade track is
