@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import type { BombermanState, CharacterVariant } from '@shared/types/bomberman.ts';
+import type { BombermanState, CharacterVariant, IdleAction } from '@shared/types/bomberman.ts';
 import type { MatchState } from '@shared/types/match.ts';
 import { BALANCE } from '@shared/config/balance.ts';
 
@@ -75,6 +75,17 @@ const HP_BAR_OUTLINE = 0x222222;  // really dark gray border
 const HP_GHOST_FALL_MULT = 4;     // ghost travels this many × its own height
 const HP_GHOST_MS = 600;
 
+/**
+ * Idle-action progress hourglass colors (the radial ring under heal/disguise
+ * Bombermen, matching the escape-hatch ready indicator's look). Green is the
+ * old escape color, now freed up for Heal; Disguise uses yellow. The escape
+ * hatch itself was recolored purple (see MapRenderer / MatchScene).
+ */
+const HEAL_HOURGLASS_COLOR = 0x44ff88;
+const DISGUISE_HOURGLASS_COLOR = 0xffcc44;
+/** Heal aura / rising cross VFX color. */
+const HEAL_VFX_COLOR = 0x66ff99;
+
 export function deathAnimationDurationMs(): number {
   return Math.round((DEATH_FRAMES / DEATH_FPS) * 1000);
 }
@@ -132,6 +143,24 @@ interface BombermanSpriteEntry {
   ambushFading: boolean;
   /** Whether this bomberman is currently in Melee Trap Mode (mirror of state). */
   meleeTrapMode: boolean;
+  /** Idle Action "class" — fixed for the match. Drives which under-feet shape
+   *  is drawn and whether the heal/disguise idle visuals apply. */
+  idleAction: IdleAction;
+  /** Whether a Heal/Disguise-class bomberman is currently sitting idle (mirror
+   *  of `idleStillTurns >= 1`). Latches the crouch/shape enter+exit. */
+  idleSitting: boolean;
+  /** Mirror of BombermanState.idleStillTurns — drives the hourglass fill. */
+  idleStillTurns: number;
+  /** Radial progress ring under heal/disguise Bombermen (lazy-shown). */
+  idleHourglass: Phaser.GameObjects.Graphics;
+  /** Hourglass fill [0,1], pushed each frame by MatchScene (phase-timed, smooth). */
+  idleHgProgress: number;
+  /** Whether the hourglass should currently render (LOS + class + not disguised). */
+  idleHgShown: boolean;
+  /** The disguise object sprite (lazy-created), shown while disguised. */
+  disguiseSprite: Phaser.GameObjects.Sprite | null;
+  /** Mirror of BombermanState.disguiseFrame — undefined when not disguised. */
+  disguiseFrame: number | undefined;
   /** Floating bomberman-name label above the head. Created only for
    *  real-player Bombermen (non-bot, non-scav) outside tutorial mode;
    *  null otherwise. Visible to everyone with LOS. */
@@ -290,44 +319,69 @@ export class BombermanSpriteSystem {
       // resolution phase — the walk/throw events this turn are scheduled
       // AFTER SWORD_FADE_MS in MatchScene so this animation reads before
       // the bomberman starts moving.
-      const wasTrap = entry.meleeTrapMode;
-      const nowTrap = !!b.meleeTrapMode;
-      entry.meleeTrapMode = nowTrap;
       const baseAlpha = BombermanSpriteSystem.SWORD_BASE_ALPHA;
-      if (nowTrap && !wasTrap) {
-        // Just entered — swap anim to crouch idle; star appears at base scale.
-        this.setAnim(entry, 'crouch');
-        entry.ambushFading = false;
-        entry.ambushStar.setAlpha(baseAlpha);
-        entry.ambushStar.setScale(1);
-      } else if (!nowTrap && wasTrap) {
-        // Just exited — grow + fade over the full ambush-fade duration.
-        if (entry.animState === 'crouch') this.setAnim(entry, 'idle');
-        entry.ambushFading = true;
-        entry.ambushStar.setScale(1);
-        entry.ambushStar.setAlpha(baseAlpha);
-        this.scene.tweens.add({
-          targets: entry.ambushStar,
-          alpha: 0,
-          scale: 1.8,
-          duration: BombermanSpriteSystem.SWORD_FADE_MS,
-          ease: 'Cubic.easeOut',
-          onComplete: () => {
-            // Hide the star AND reset its transform so the next trap-entry
-            // finds it at a clean baseline.
-            entry.ambushFading = false;
-            entry.ambushStar.setVisible(false);
-            entry.ambushStar.setAlpha(baseAlpha);
-            entry.ambushStar.setScale(1);
-          },
-        });
-      }
-      // Star visibility — same tile as the bomberman, so re-use the
-      // bomberman's own LOS gate.
-      const starShown = (nowTrap || entry.ambushFading) && visible && !dimmed;
-      entry.ambushStar.setVisible(starShown);
-      if (!entry.ambushFading) {
-        entry.ambushStar.setAlpha(dimmed ? CORPSE_SEEN_DIM_ALPHA * baseAlpha : baseAlpha);
+      if (entry.idleAction === 'attack') {
+        const wasTrap = entry.meleeTrapMode;
+        const nowTrap = !!b.meleeTrapMode;
+        entry.meleeTrapMode = nowTrap;
+        if (nowTrap && !wasTrap) {
+          // Just entered — swap anim to crouch idle; star appears at base scale.
+          this.setAnim(entry, 'crouch');
+          entry.ambushFading = false;
+          entry.ambushStar.setAlpha(baseAlpha);
+          entry.ambushStar.setScale(1);
+        } else if (!nowTrap && wasTrap) {
+          // Just exited — grow + fade over the full ambush-fade duration.
+          if (entry.animState === 'crouch') this.setAnim(entry, 'idle');
+          this.startShapeFadeOut(entry, baseAlpha);
+        }
+        // Star visibility — same tile as the bomberman, so re-use the
+        // bomberman's own LOS gate.
+        const starShown = (nowTrap || entry.ambushFading) && visible && !dimmed;
+        entry.ambushStar.setVisible(starShown);
+        if (!entry.ambushFading) {
+          entry.ambushStar.setAlpha(dimmed ? CORPSE_SEEN_DIM_ALPHA * baseAlpha : baseAlpha);
+        }
+      } else {
+        // --- Heal / Disguise idle action handling ---
+        // These classes sit and show their under-feet shape from the first
+        // idle turn (mirrors Attack's crouch), telegraphing progress with the
+        // hourglass below. The shape hides once fully disguised.
+        const wasSitting = entry.idleSitting;
+        const nowSitting = (b.idleStillTurns ?? 0) >= 1;
+        entry.idleSitting = nowSitting;
+        entry.idleStillTurns = b.idleStillTurns ?? 0;
+        const disguised = b.disguiseFrame !== undefined;
+        if (nowSitting && !wasSitting) {
+          this.setAnim(entry, 'crouch');
+          entry.ambushFading = false;
+          entry.ambushStar.setAlpha(baseAlpha);
+          entry.ambushStar.setScale(1);
+        } else if (!nowSitting && wasSitting) {
+          if (entry.animState === 'crouch') this.setAnim(entry, 'idle');
+          this.startShapeFadeOut(entry, baseAlpha);
+        }
+        // Heal effects are a deliberate giveaway — the cross + hourglass (and
+        // the heal VFX burst) render through fog of war, so the bomberman's
+        // SPRITE stays LOS-gated but the green medical glow leaks. Disguise
+        // visuals stay LOS-gated (it's a hiding mechanic).
+        const healLeak = entry.idleAction === 'heal';
+        const losOk = healLeak || (visible && !dimmed);
+        const shapeShown = (nowSitting || entry.ambushFading) && losOk && !disguised;
+        entry.ambushStar.setVisible(shapeShown);
+        if (!entry.ambushFading) {
+          const dim = !healLeak && dimmed;
+          entry.ambushStar.setAlpha(dim ? CORPSE_SEEN_DIM_ALPHA * baseAlpha : baseAlpha);
+        }
+
+        // Progress hourglass: shown while sitting (heal: idleStillTurns stays 0
+        // when at full HP / on a hatch, so 0 means "nothing to show"). The
+        // smooth fill value is pushed each frame by MatchScene.
+        entry.idleHgShown = entry.idleStillTurns > 0 && nowSitting && !disguised && losOk;
+        entry.idleHourglass.setVisible(entry.idleHgShown);
+
+        // Disguise sprite crossfade, driven by the disguiseFrame state diff.
+        this.updateDisguise(entry, b, visible, dimmed, alpha);
       }
 
       // Name label — real players only, never in tutorial, only when the
@@ -496,6 +550,10 @@ export class BombermanSpriteSystem {
       if (entry.ambushStar.visible) {
         entry.ambushStar.rotation += 0.6 * (1 / 30); // ~radians/frame at 30fps
       }
+      // Idle-action progress hourglass — redraw from the smooth, phase-timed
+      // progress MatchScene pushes via setIdleHourglassProgress (same model as
+      // the escape-hatch ready ring).
+      if (entry.idleHgShown) this.drawIdleHourglass(entry);
       // Delayed HP value swap: a damage this turn scheduled a deferred
       // swap of displayedHp so the HUD bar doesn't drop before the
       // hurt/death animation finishes. Apply when the scheduled time arrives.
@@ -574,11 +632,19 @@ export class BombermanSpriteSystem {
     // Ambush star — drawn FIRST so it sits below the sprite (z-order within
     // this layer follows insertion order). Static polygon at origin (0,0);
     // positioning + rotation are handled by applyVisualPosition / tick.
+    const idleAction: IdleAction = b.idleAction ?? 'attack';
     const ambushStar = this.scene.add.graphics();
-    drawAmbushStar(ambushStar, this.tileSize);
+    drawIdleShape(ambushStar, this.tileSize, idleAction);
     ambushStar.setPosition(cx, cy);
     ambushStar.setVisible(false);
     this.layer.add(ambushStar);
+
+    // Heal/Disguise progress hourglass (radial ring), drawn each frame in tick.
+    // Same look as the escape-hatch ready indicator. Hidden until sitting.
+    const idleHourglass = this.scene.add.graphics();
+    idleHourglass.setPosition(cx, cy);
+    idleHourglass.setVisible(false);
+    this.layer.add(idleHourglass);
 
     const sprite = this.scene.add.sprite(cx, cy, `bomber_idle_${character}`);
     sprite.setOrigin(SPRITE_ORIGIN_X, SPRITE_ORIGIN_Y);
@@ -639,13 +705,21 @@ export class BombermanSpriteSystem {
       ambushStar,
       ambushFading: false,
       meleeTrapMode: b.meleeTrapMode ?? false,
+      idleAction,
+      idleSitting: false,
+      idleStillTurns: b.idleStillTurns ?? 0,
+      idleHourglass,
+      idleHgProgress: 0,
+      idleHgShown: false,
+      disguiseSprite: null,
+      disguiseFrame: b.disguiseFrame,
       facing: 'down',
       animState: 'idle',
       tint: b.tint,
       hp: b.hp,
       displayedHp: b.hp,
       hpDisplayUpdateAt: 0,
-      maxHp: BALANCE.match.bombermanMaxHp,
+      maxHp: b.maxHp ?? BALANCE.match.bombermanMaxHp,
       visualX: cx,
       visualY: cy,
       lerpFromPx: cx,
@@ -768,6 +842,29 @@ export class BombermanSpriteSystem {
     return connectAtMs;
   }
 
+  /**
+   * Draw the radial progress ring for a heal/disguise Bomberman (same look as
+   * the escape-hatch ready indicator): faint backing circle + a clockwise arc
+   * filling from the top by `idleHgProgress`. Geometry is centered at (0,0);
+   * applyVisualPosition keeps the Graphics on the bomberman's tile.
+   */
+  private drawIdleHourglass(entry: BombermanSpriteEntry): void {
+    const g = entry.idleHourglass;
+    const radius = this.tileSize * 0.55;
+    const color = entry.idleAction === 'heal' ? HEAL_HOURGLASS_COLOR : DISGUISE_HOURGLASS_COLOR;
+    g.clear();
+    g.lineStyle(2, 0x000000, 0.4);
+    g.strokeCircle(0, 0, radius);
+    const progress = Math.max(0, Math.min(1, entry.idleHgProgress));
+    if (progress > 0) {
+      g.lineStyle(3, color, 1);
+      g.beginPath();
+      const start = -Math.PI / 2;
+      g.arc(0, 0, radius, start, start + progress * Math.PI * 2, false);
+      g.strokePath();
+    }
+  }
+
   /** Convert an (x, y) pixel delta into the nearest 8-way facing. */
   private facingFromDelta(dx: number, dy: number): Facing {
     const angle = Math.atan2(dy, dx); // -PI..PI, 0 = right
@@ -785,8 +882,165 @@ export class BombermanSpriteSystem {
     entry.aimShadow?.destroy();
     entry.stunIcon.destroy();
     entry.ambushStar.destroy();
+    entry.idleHourglass.destroy();
+    entry.disguiseSprite?.destroy();
     entry.nameLabel?.destroy();
     entry.hpBar.destroy();
+  }
+
+  /**
+   * Grow + fade the under-feet shape (ambush star / heal cross / disguise
+   * square) on idle-action exit. Shared by all three classes. Sets
+   * `ambushFading` so syncFromState keeps it visible through the tween.
+   */
+  private startShapeFadeOut(entry: BombermanSpriteEntry, baseAlpha: number): void {
+    entry.ambushFading = true;
+    entry.ambushStar.setScale(1);
+    entry.ambushStar.setAlpha(baseAlpha);
+    this.scene.tweens.add({
+      targets: entry.ambushStar,
+      alpha: 0,
+      scale: 1.8,
+      duration: BombermanSpriteSystem.SWORD_FADE_MS,
+      ease: 'Cubic.easeOut',
+      onComplete: () => {
+        entry.ambushFading = false;
+        entry.ambushStar.setVisible(false);
+        entry.ambushStar.setAlpha(baseAlpha);
+        entry.ambushStar.setScale(1);
+      },
+    });
+  }
+
+  /**
+   * Crossfade between the Bomberman sprite and its disguise object as the
+   * `disguiseFrame` state field appears/disappears. While disguised the sprite
+   * is fully transparent and the object shows in its place (LOS-gated); on
+   * removal the object fades out and the sprite fades back in. Called every
+   * sync for Disguise-class entries, so it also re-enforces the disguised
+   * alpha that the per-sync sprite alpha set would otherwise clobber.
+   */
+  private updateDisguise(
+    entry: BombermanSpriteEntry,
+    b: BombermanState,
+    visible: boolean,
+    dimmed: boolean,
+    spriteAlpha: number,
+  ): void {
+    const ts = this.tileSize;
+    const was = entry.disguiseFrame;
+    const now = b.disguiseFrame;
+    entry.disguiseFrame = now;
+
+    // Lazily create the object sprite the first time we need it.
+    if (now !== undefined && !entry.disguiseSprite) {
+      const ds = this.scene.add.sprite(entry.visualX, entry.visualY, 'disguise_objects', now);
+      ds.setOrigin(0.5, 0.5);
+      ds.setDisplaySize(ts, ts);
+      ds.setAlpha(0);
+      this.layer.add(ds);
+      entry.disguiseSprite = ds;
+    }
+    const ds = entry.disguiseSprite;
+    const disDimAlpha = dimmed ? CORPSE_SEEN_DIM_ALPHA : 1;
+
+    if (now !== undefined) {
+      if (ds) ds.setFrame(now);
+      if (was === undefined) {
+        // Just disguised — fade the sprite out, fade the object in.
+        this.scene.tweens.killTweensOf(entry.sprite);
+        this.scene.tweens.add({ targets: entry.sprite, alpha: 0, duration: 220, ease: 'Cubic.easeOut' });
+        if (ds) {
+          ds.setVisible(visible);
+          this.scene.tweens.killTweensOf(ds);
+          this.scene.tweens.add({ targets: ds, alpha: visible ? disDimAlpha : 0, duration: 220, ease: 'Cubic.easeOut' });
+        }
+      } else {
+        // Holding the disguise — enforce hidden sprite / shown object each sync.
+        entry.sprite.setAlpha(0);
+        if (ds) { ds.setVisible(visible); ds.setAlpha(visible ? disDimAlpha : 0); }
+      }
+    } else if (was !== undefined) {
+      // Just un-disguised — fade the object out, fade the sprite back in.
+      if (ds) {
+        this.scene.tweens.killTweensOf(ds);
+        this.scene.tweens.add({
+          targets: ds, alpha: 0, duration: 220, ease: 'Cubic.easeOut',
+          onComplete: () => ds.setVisible(false),
+        });
+      }
+      entry.sprite.setAlpha(0);
+      this.scene.tweens.killTweensOf(entry.sprite);
+      this.scene.tweens.add({
+        targets: entry.sprite,
+        alpha: visible ? spriteAlpha : 0,
+        duration: 220,
+        ease: 'Cubic.easeOut',
+      });
+    }
+  }
+
+  /**
+   * Push the smooth, phase-timed hourglass fill for a heal/disguise Bomberman.
+   * MatchScene computes this each frame using the same model as the escape-hatch
+   * ready ring; the value is drawn in tick() when the ring is shown.
+   */
+  setIdleHourglassProgress(playerId: string, progress: number): void {
+    const entry = this.entries.get(playerId);
+    if (entry) entry.idleHgProgress = Math.max(0, Math.min(1, progress));
+  }
+
+  /**
+   * One-shot Heal-on-idle VFX: a green aura column rising from the Bomberman
+   * plus a few green crosses of varying size floating up (hospital-sign motif).
+   * Driven by the `heal_applied` turn event (MatchScene).
+   */
+  playHealEffect(playerId: string): void {
+    const entry = this.entries.get(playerId);
+    if (!entry) return;
+    const ts = this.tileSize;
+    const x = entry.visualX;
+    const y = entry.visualY;
+
+    // Rising aura: a soft vertical ellipse that grows up + fades.
+    const aura = this.scene.add.graphics();
+    aura.fillStyle(HEAL_VFX_COLOR, 0.35);
+    aura.fillEllipse(0, 0, ts * 0.8, ts * 1.3);
+    aura.setPosition(x, y);
+    this.layer.add(aura);
+    this.scene.tweens.add({
+      targets: aura,
+      y: y - ts * 1.1,
+      scaleX: 1.3,
+      scaleY: 1.6,
+      alpha: 0,
+      duration: 900,
+      ease: 'Cubic.easeOut',
+      onComplete: () => aura.destroy(),
+    });
+
+    // A handful of rising crosses of varying size.
+    const COUNT = 4;
+    for (let i = 0; i < COUNT; i++) {
+      const cross = this.scene.add.graphics();
+      const scale = 0.5 + (i / COUNT) * 0.7;
+      const arm = ts * 0.18 * scale;
+      const half = ts * 0.06 * scale;
+      cross.fillStyle(HEAL_VFX_COLOR, 1);
+      cross.fillRect(-half, -arm, half * 2, arm * 2);
+      cross.fillRect(-arm, -half, arm * 2, half * 2);
+      const jitterX = (i - (COUNT - 1) / 2) * (ts * 0.22);
+      cross.setPosition(x + jitterX, y - ts * 0.2);
+      this.layer.add(cross);
+      this.scene.tweens.add({
+        targets: cross,
+        y: y - ts * (1.0 + (i % 2) * 0.4),
+        alpha: 0,
+        duration: 700 + i * 90,
+        ease: 'Sine.easeOut',
+        onComplete: () => cross.destroy(),
+      });
+    }
   }
 
   /**
@@ -815,6 +1069,16 @@ export class BombermanSpriteSystem {
     // changes; rotation is driven by tick().
     entry.ambushStar.x = visualX;
     entry.ambushStar.y = visualY;
+
+    // Idle-action progress hourglass sits on the same tile (geometry redrawn
+    // in tick from the lerped progress).
+    entry.idleHourglass.x = visualX;
+    entry.idleHourglass.y = visualY;
+
+    // Disguise object sprite sits on the bomberman's tile when present.
+    if (entry.disguiseSprite) {
+      entry.disguiseSprite.setPosition(visualX, visualY);
+    }
 
     // Stun icon floats slightly above the head, bobbing gently via time.
     const bob = Math.sin(this.scene.time.now / 220) * 2;
@@ -915,6 +1179,43 @@ export class BombermanSpriteSystem {
  * solid floor decal under the bomberman. Light-red single tone with a
  * thin white core for the "white-red" identity the user asked for.
  */
+/**
+ * Draw the rotating under-feet shape for a Bomberman's Idle Action class:
+ *   attack   → light-red 12-point star (Ambush Mode, original look)
+ *   heal     → light-green cross (hospital sign)
+ *   disguise → square
+ * All share the same rotation/visibility/pulse lifecycle as the old ambush star.
+ */
+function drawIdleShape(g: Phaser.GameObjects.Graphics, tileSize: number, idleAction: IdleAction): void {
+  if (idleAction === 'heal') drawHealCross(g, tileSize);
+  else if (idleAction === 'disguise') drawDisguiseSquare(g, tileSize);
+  else drawAmbushStar(g, tileSize);
+}
+
+/** Light-green plus/cross (hospital sign) under Heal-on-idle Bombermen. */
+function drawHealCross(g: Phaser.GameObjects.Graphics, tileSize: number): void {
+  const arm = tileSize * 0.42;   // tip-to-tip half-length
+  const half = tileSize * 0.14;  // half-thickness of each bar
+  g.clear();
+  g.fillStyle(0x66ff99, 1);
+  // Vertical bar then horizontal bar (overlap forms the plus).
+  g.fillRect(-half, -arm, half * 2, arm * 2);
+  g.fillRect(-arm, -half, arm * 2, half * 2);
+  // Soft white core so it reads as a sign rather than a solid blob.
+  g.fillStyle(0xffffff, 0.5);
+  g.fillRect(-half * 0.55, -half * 0.55, half * 1.1, half * 1.1);
+}
+
+/** Square under Disguise-on-idle Bombermen. */
+function drawDisguiseSquare(g: Phaser.GameObjects.Graphics, tileSize: number): void {
+  const s = tileSize * 0.36; // half-side
+  g.clear();
+  g.fillStyle(0xffcc44, 0.9);
+  g.fillRect(-s, -s, s * 2, s * 2);
+  g.fillStyle(0xffffff, 0.45);
+  g.fillRect(-s * 0.45, -s * 0.45, s * 0.9, s * 0.9);
+}
+
 function drawAmbushStar(g: Phaser.GameObjects.Graphics, tileSize: number): void {
   const outerR = tileSize * 0.45;
   const innerR = tileSize * 0.22;

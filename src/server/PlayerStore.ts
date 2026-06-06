@@ -276,6 +276,11 @@ function migrateProfile(raw: Partial<PlayerProfile>): PlayerProfile {
     if (typeof b.stackSize !== 'number' || b.stackSize <= 0) {
       b.stackSize = defaults.stackSize;
     }
+    // Idle Action "class" backfill — Bombermen bought before classes existed
+    // default to Attack-on-idle (the original Ambush Mode behavior).
+    if (b.idleAction !== 'attack' && b.idleAction !== 'heal' && b.idleAction !== 'disguise') {
+      b.idleAction = 'attack';
+    }
     // SP + upgrades backfill for profiles created before the upgrade system.
     if (typeof b.sp !== 'number' || b.sp < 0) b.sp = 0;
     // Lifetime SP backfill — defaults to current banked SP since old profiles

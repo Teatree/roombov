@@ -14,7 +14,7 @@
  */
 
 import type { BombType } from '../types/bombs.ts';
-import type { BombermanTier } from '../types/bomberman.ts';
+import type { BombermanTier, IdleAction } from '../types/bomberman.ts';
 
 export interface TierConfig {
   /** How many custom inventory slots this tier carries (excludes the fixed
@@ -164,6 +164,14 @@ export const SHOP_CYCLE_COMPOSITION: { tier: BombermanTier; count: number }[] = 
 
 /** Number of (paid) Bombermen offered per cycle. */
 export const SHOP_OFFER_COUNT = 3;
+
+/**
+ * Idle Action "class" assigned to the three offered Bombermen — one of each per
+ * cycle (the shop service shuffles this with the seeded RNG so slot order
+ * varies). Class is independent of the escape-driven price. The bonus FREE
+ * Bomberman is always `attack`.
+ */
+export const OFFER_CLASSES: readonly IdleAction[] = ['attack', 'heal', 'disguise'];
 
 /** Bomb pools each offered Bomberman draws one of. */
 export const OFFER_BOMB_POOLS: {

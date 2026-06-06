@@ -9,6 +9,7 @@ import { BOMB_CATALOG } from '@shared/config/bombs.ts';
 import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
 import { BombermanSelector } from '../systems/BombermanSelector.ts';
 import { attachTierInfoBadge } from '../systems/TierInfoBadge.ts';
+import { createIdleActionBadge } from '../systems/IdleActionBadge.ts';
 import { BombermanUpgradePanel } from '../systems/BombermanUpgradePanel.ts';
 import { TreasureListWidget } from '../systems/TreasureListWidget.ts';
 import { preloadTreasureIcons } from '../systems/TreasureIcons.ts';
@@ -386,6 +387,9 @@ export class BombermanShopScene extends Phaser.Scene {
     container.add(this.add.text(0, -CARD_HEIGHT / 2 + 30, template.name, {
       fontSize: '14px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5));
+
+    // Idle Action "class" badge under the name.
+    container.add(createIdleActionBadge(this, 0, -CARD_HEIGHT / 2 + 42, template.idleAction ?? 'attack', '10px'));
 
     // Character sprite
     const anim = pickRandomUiAnimation();

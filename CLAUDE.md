@@ -52,7 +52,7 @@ Path aliases (configured in `vite.config.ts` and `tsconfig.json`): `@shared/*`, 
 
 `src/server/index.ts` boots `PlayerStore` (persistent player profiles), then `GameServer`, which owns:
 
-- `MatchScheduler` — lobby carousel of joinable matches with auto-start countdowns
+- `MatchScheduler` — lobby carousel of joinable matches with auto-start countdowns. Alternates match types via a module-global `nextMatchSeq` counter: even sequence → **Normal** (`allowBots: true`), odd → **No Bots or Scavs** (`allowBots: false`). `MatchConfig.allowBots` (`src/shared/types/match.ts`) gates two independent spawn points — `MatchRoom.createBots()` (bots) and `scavNextSpawnTurn` in `buildInitialState` (scavs); `LobbyScene.buildCard()` renders the mode label per card
 - `MatchRoom` instances — one per active match, owns per-match state and runs `resolveTurn` each turn
 - `BombermanShopService` / `BombsShopService` / `FactoryService` — meta-progression shops and crafting
 - `BombermanUpgradeService` — spends per-Bomberman SP on CAP/STACK/HP tracks (`upgrade_bomberman` event → `shop_result`)

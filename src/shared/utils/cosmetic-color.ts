@@ -4,7 +4,7 @@
  * dungeon" palette — same recipe drives both bomberman cards and scav tints.
  */
 
-import type { CosmeticColors } from '../types/bomberman.ts';
+import type { CosmeticColors, IdleAction } from '../types/bomberman.ts';
 
 /** HSL → 0xRRGGBB. h in [0,360), s/l in [0,1]. */
 export function hslToRgb(h: number, s: number, l: number): number {
@@ -41,6 +41,37 @@ export function rollColors(rng: () => number): CosmeticColors {
  */
 export function rollTint(rng: () => number): number {
   const hue = rng() * 360;
+  const sat = 0.55 + rng() * 0.3;
+  const light = 0.62 + rng() * 0.18;
+  return hslToRgb(hue, sat, light);
+}
+
+/**
+ * Per-class hue bands for the Idle Action "class" color-coding. The bands stay
+ * in the same vivid-pastel sat/light range as `rollTint` (so the tint stays
+ * subtle — only the hue is biased), but constrain hue so a class reads at a
+ * glance:
+ *   attack   → red / orange / brown tones
+ *   heal     → green / blue / cyan tones
+ *   disguise → yellow / purple tones
+ * Each band is a list of [minHue, maxHue) arcs; a random arc is picked first,
+ * then a random hue within it. Tunable.
+ */
+const CLASS_HUE_BANDS: Record<IdleAction, Array<[number, number]>> = {
+  attack: [[0, 45], [340, 360]],
+  heal: [[150, 230]],
+  disguise: [[48, 62], [275, 300]],
+};
+
+/**
+ * Class-biased single-channel sprite tint. Same intensity range as `rollTint`,
+ * but the hue is constrained to the Idle Action class's band so the three
+ * classes are visually distinguishable.
+ */
+export function rollTintForClass(rng: () => number, idleAction: IdleAction): number {
+  const bands = CLASS_HUE_BANDS[idleAction];
+  const [lo, hi] = bands[Math.floor(rng() * bands.length)];
+  const hue = lo + rng() * (hi - lo);
   const sat = 0.55 + rng() * 0.3;
   const light = 0.62 + rng() * 0.18;
   return hslToRgb(hue, sat, light);

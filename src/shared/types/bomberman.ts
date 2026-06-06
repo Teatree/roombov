@@ -16,6 +16,26 @@ import type { TreasureBundle } from '../config/treasures.ts';
 export type BombermanTier = 'free' | 'paid' | 'paid_expensive';
 
 /**
+ * Idle Action — what a Bomberman does when it stands still (submits `idle`)
+ * for long enough. Defines the three purchasable Bomberman "classes":
+ *  - `attack`  — Ambush Mode: crouch and melee any passing Bomberman (enters
+ *                on the first idle turn). The original/default behavior.
+ *  - `heal`    — after `BALANCE.idleActions.healIdleTurns` idle turns in place,
+ *                recover HP (only when hurt and not standing on an escape hatch).
+ *  - `disguise`— after `BALANCE.idleActions.disguiseIdleTurns` idle turns, turn
+ *                into a random world object until the Bomberman moves or is hit.
+ * Legacy Bombermen and all AI (bots/scavs) default to `attack`.
+ */
+export type IdleAction = 'attack' | 'heal' | 'disguise';
+
+/** Human-facing label for an Idle Action class (UI badges + analytics). */
+export const IDLE_ACTION_LABEL: Record<IdleAction, string> = {
+  attack: 'Attack',
+  heal: 'Heal',
+  disguise: 'Disguise',
+};
+
+/**
  * Sprite-sheet variant a Bomberman is rendered with. Each character has its
  * own set of per-direction animation frames under
  * `public/sprites/char{N}_*.png`. Picked randomly per Bomberman at roll
@@ -130,6 +150,8 @@ export interface BombermanTemplate {
   maxCustomSlots: number;
   /** Per-slot stacking cap. Tier-rolled in `TIER_CONFIG[tier].stackSizeRange`. */
   stackSize: number;
+  /** Idle Action "class" — assigned one-of-each across the cycle's offers. */
+  idleAction: IdleAction;
   /** Starting bomb inventory generated at cycle time from tier weights. */
   inventory: BombInventory;
 }
@@ -149,6 +171,10 @@ export interface OwnedBomberman {
    *  purchase). */
   maxCustomSlots: number;
   stackSize: number;
+  /** Idle Action "class" — inherited from the source template, stable for the
+   *  life of this owned Bomberman. Optional for back-compat with profiles
+   *  persisted before classes existed; PlayerStore backfills it to `attack`. */
+  idleAction: IdleAction;
   /** Live inventory — mutated by the Bombs Shop equip flow. */
   inventory: BombInventory;
   /** Unix ms when the player bought this Bomberman. */
@@ -200,10 +226,16 @@ export interface BombermanState {
   tint: number;
   /** Sprite-sheet variant copied from the equipped OwnedBomberman. */
   character: CharacterVariant;
+  /** Idle Action "class" copied from the equipped OwnedBomberman. AI defaults
+   *  to `attack`. Drives idle behavior (ambush / heal / disguise). */
+  idleAction: IdleAction;
   /** Tile coordinates. */
   x: number;
   y: number;
   hp: number;
+  /** Max HP captured at spawn (= starting HP after upgrades). Heal-on-idle
+   *  caps healing at this value. */
+  maxHp: number;
   alive: boolean;
   /** Treasures picked up during this match (dropped on death, kept on escape). */
   treasures: TreasureBundle;
@@ -260,6 +292,19 @@ export interface BombermanState {
    * Taking damage does NOT exit this mode.
    */
   meleeTrapMode: boolean;
+  /**
+   * Consecutive turns this bomberman has stood still (submitted `idle` with
+   * unchanged position, not stunned/smoked). Shared progress counter for the
+   * Heal and Disguise idle actions. Resets to 0 on move/throw/stun/smoke or on
+   * taking any damage. Attack-class uses `meleeTrapMode` instead and ignores it.
+   */
+  idleStillTurns: number;
+  /**
+   * Index (0-5) into the `disguise_objects` sprite sheet while a Disguise-class
+   * bomberman is disguised; `undefined` when not disguised. Set once the idle
+   * threshold is reached; cleared when the bomberman moves, throws, or is hit.
+   */
+  disguiseFrame?: number;
   /**
    * Queued movement waypoints set by Fart Escape. If the player submits no
    * new move next turn, the server consumes one waypoint; if they submit a

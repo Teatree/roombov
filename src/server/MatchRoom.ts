@@ -16,8 +16,8 @@ import type { Server } from 'socket.io';
 import type { ClientToServerEvents, ServerToClientEvents } from '../shared/types/messages.ts';
 import type { MatchConfig, MatchState, PlayerAction, Chest, DroppedBody } from '../shared/types/match.ts';
 import type { LootBombMsg } from '../shared/types/messages.ts';
-import type { BombermanState } from '../shared/types/bomberman.ts';
-import { CHARACTER_VARIANTS } from '../shared/types/bomberman.ts';
+import type { BombermanState, BombermanUpgradeState, IdleAction } from '../shared/types/bomberman.ts';
+import { CHARACTER_VARIANTS, IDLE_ACTION_LABEL } from '../shared/types/bomberman.ts';
 import type { MapData } from '../shared/types/map.ts';
 import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import { BALANCE } from '../shared/config/balance.ts';
@@ -28,7 +28,7 @@ import { ScavPlayer } from './ScavPlayer.ts';
 import { rollBombermanName } from '../shared/config/bomberman-names.ts';
 import { TIER_CONFIG, defaultStatsForTier } from '../shared/config/bomberman-tiers.ts';
 import { effectiveMaxCustomSlots, effectiveMaxHp, effectiveStackSize } from '../shared/utils/bomberman-stats.ts';
-import { resolveTurn } from '../shared/systems/TurnResolver.ts';
+import { resolveTurn, type TurnEvent } from '../shared/systems/TurnResolver.ts';
 import { createSeededRandom, seededRandInt, seededShuffle } from '../shared/utils/seeded-random.ts';
 import { rollBombLoot, rollTreasureLoot } from '../shared/utils/loot-roll.ts';
 import { mergeTreasures, type TreasureBundle } from '../shared/config/treasures.ts';
@@ -40,6 +40,22 @@ import type { PlayerStore } from './PlayerStore.ts';
 import { logMatchResult, logProfileSnapshot, type MatchOutcome } from './Analytics.ts';
 
 type TypedServer = Server<ClientToServerEvents, ServerToClientEvents>;
+
+/**
+ * Build the `bombermanName` string logged to analytics. Folds the Idle Action
+ * class and total upgrade count into the display name (no new column), e.g.
+ * "Foley - Class: Heal - Upg: 1". `Upg` is 1 + total upgrade tiers, so an
+ * un-upgraded Bomberman reads "Upg: 1".
+ */
+function analyticsBombermanName(
+  displayName: string,
+  idleAction: IdleAction,
+  upgrades?: BombermanUpgradeState,
+): string {
+  const cls = IDLE_ACTION_LABEL[idleAction] ?? IDLE_ACTION_LABEL.attack;
+  const upg = 1 + (upgrades?.cap ?? 0) + (upgrades?.stack ?? 0) + (upgrades?.hp ?? 0);
+  return `${displayName} - Class: ${cls} - Upg: ${upg}`;
+}
 
 export interface MatchRoomParticipant {
   playerId: string;
@@ -251,6 +267,7 @@ export class MatchRoom {
             character: CHARACTER_VARIANTS[Math.floor(rng() * CHARACTER_VARIANTS.length)],
             maxCustomSlots,
             stackSize,
+            idleAction: 'attack',
             inventory: { slots },
             purchasedAt: Date.now(),
             sourceTemplateId: 'bot',
@@ -268,6 +285,46 @@ export class MatchRoom {
       });
     }
     console.log(`[MatchRoom] Created ${slotsToFill} bots for match ${this.config.id}`);
+  }
+
+  /**
+   * Heal-on-idle giveaway → bot reaction. For each heal that fired this turn,
+   * every alive bot independently rolls `healNoticeChance` to "notice" the
+   * green flash. If anyone notices, a hunting party (the noticers plus the
+   * nearest bots, sized BALANCE.bots.healHuntParty{Min,Max}) is sent to
+   * investigate the heal tile. Bots already in a fight/escape ignore the goal —
+   * it only steers exploration (see BotPlayer.exploreAction).
+   */
+  private applyBotHealNotice(events: TurnEvent[]): void {
+    if (this.bots.length === 0) return;
+    const cfg = BALANCE.bots;
+    for (const ev of events) {
+      if (ev.kind !== 'heal_applied') continue;
+      const aliveBots = this.bots.filter(bot => {
+        const bm = this.state.bombermen.find(b => b.playerId === bot.playerId);
+        return !!bm && bm.alive && !bm.escaped;
+      });
+      if (aliveBots.length === 0) continue;
+
+      const noticed = aliveBots.filter(() => Math.random() < cfg.healNoticeChance);
+      if (noticed.length === 0) continue;
+
+      const distTo = (bot: BotPlayer): number => {
+        const bm = this.state.bombermen.find(b => b.playerId === bot.playerId)!;
+        return Math.max(Math.abs(bm.x - ev.x), Math.abs(bm.y - ev.y));
+      };
+      const partySize = Math.min(
+        aliveBots.length,
+        cfg.healHuntPartyMin + Math.floor(Math.random() * (cfg.healHuntPartyMax - cfg.healHuntPartyMin + 1)),
+      );
+      // Party = the noticers, then nearest bots until we reach partySize.
+      const party = new Set<BotPlayer>(noticed);
+      for (const bot of [...aliveBots].sort((a, b) => distTo(a) - distTo(b))) {
+        if (party.size >= partySize) break;
+        party.add(bot);
+      }
+      for (const bot of party) bot.investigate(ev.x, ev.y, cfg.healHuntTurns);
+    }
   }
 
 
@@ -315,9 +372,11 @@ export class MatchRoom {
         colors: equipped?.colors ?? { shirt: 0x888888, pants: 0x444444, hair: 0x222222 },
         tint: equipped?.tint ?? 0xffffff,
         character: equipped?.character ?? 'char1',
+        idleAction: equipped?.idleAction ?? 'attack',
         x: spawn.x,
         y: spawn.y,
         hp: maxHp,
+        maxHp,
         alive: true,
         treasures: {},
         coins: 0,
@@ -343,6 +402,7 @@ export class MatchRoom {
         onHatchIdleTurns: 0,
         statusEffects: [],
         meleeTrapMode: false,
+        idleStillTurns: 0,
         sp: 0,
       };
     });
@@ -593,6 +653,9 @@ export class MatchRoom {
 
     this.state = nextState;
 
+    // Bots may "notice" a Heal-on-idle effect and form a hunting party.
+    this.applyBotHealNotice(events);
+
     // Per-match analytics counter updates from this turn's events. We derive
     // chestsOpened, kills, and bombsUsed from events emitted by TurnResolver
     // so the resolver itself (and BombermanState) stays untouched.
@@ -722,7 +785,10 @@ export class MatchRoom {
       // Capture name + tier BEFORE stripping the OwnedBomberman from the
       // profile — used in the analytics row. b.name carries the display
       // name independently, but tier only lives on OwnedBomberman.
-      const bombermanName = bm.name ?? (idx >= 0 ? profile.ownedBombermen[idx].name : '');
+      const baseName = bm.name ?? (idx >= 0 ? profile.ownedBombermen[idx].name : '');
+      const bombermanName = analyticsBombermanName(
+        baseName, bm.idleAction, idx >= 0 ? profile.ownedBombermen[idx].upgrades : undefined,
+      );
       const bombermanTier = idx >= 0 ? profile.ownedBombermen[idx].tier : 'free';
       // Snapshot lifetime SP BEFORE removing the OwnedBomberman so the
       // Results screen can show what this Bomberman accumulated across its
@@ -811,7 +877,9 @@ export class MatchRoom {
         if (sock) sock.emit('profile', { profile });
       }
       const tier = ownedBomberman?.tier ?? 'free';
-      const name = bm.name ?? ownedBomberman?.name ?? '';
+      const name = analyticsBombermanName(
+        bm.name ?? ownedBomberman?.name ?? '', bm.idleAction, ownedBomberman?.upgrades,
+      );
       this.emitMatchAnalytics(participant, bm, 'escaped', name, tier);
       this.analyticsEmitted.add(escapedPlayerId);
     }
@@ -935,7 +1003,9 @@ export class MatchRoom {
       // Capture name+tier BEFORE the dead branch strips the OwnedBomberman.
       // BombermanState carries `name` already (copied at match start) but
       // tier only lives on the OwnedBomberman; fall back if it's gone.
-      const bombermanName = b.name ?? ownedBomberman?.name ?? '';
+      const bombermanName = analyticsBombermanName(
+        b.name ?? ownedBomberman?.name ?? '', b.idleAction, ownedBomberman?.upgrades,
+      );
       const bombermanTier = ownedBomberman?.tier ?? 'free';
       const outcome: MatchOutcome = b.escaped
         ? 'escaped'

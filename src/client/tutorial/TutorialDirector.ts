@@ -403,9 +403,11 @@ export class TutorialDirector {
             colors: { shirt: 0x884444, pants: 0x442222, hair: 0x221111 },
             tint: step.tint ?? 0xffffff,
             character: step.character ?? 'char1',
+            idleAction: 'attack',
             x: step.x,
             y: step.y,
             hp: step.hp ?? 2,
+            maxHp: step.hp ?? 2,
             alive: true,
             treasures: {},
             coins: 0,
@@ -421,6 +423,7 @@ export class TutorialDirector {
             onHatchIdleTurns: 0,
             statusEffects: [],
             meleeTrapMode: false,
+            idleStillTurns: 0,
             sp: 0,
           });
         });

@@ -458,9 +458,11 @@ export class TutorialMatchBackend implements MatchBackend {
       colors: { shirt: 0xffffff, pants: 0xffffff, hair: 0xffffff },
       tint: 0xffffff, // uncolored char4 per brief
       character: 'char4',
+      idleAction: 'attack',
       x: spawn.x,
       y: spawn.y,
       hp: BALANCE.match.bombermanMaxHp,
+      maxHp: BALANCE.match.bombermanMaxHp,
       alive: true,
       treasures: {},
       coins: 0,
@@ -476,6 +478,7 @@ export class TutorialMatchBackend implements MatchBackend {
       onHatchIdleTurns: 0,
       statusEffects: [],
       meleeTrapMode: false,
+      idleStillTurns: 0,
       sp: 0,
     };
 

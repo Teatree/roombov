@@ -51,6 +51,24 @@ export class BotPlayer {
    *  picked-clean chests when seeking keys post-NEW_META §5. */
   private lootedChestIds = new Set<string>();
 
+  /**
+   * Disguise perception memory. A Disguise-on-idle bomberman is invisible to
+   * bots (they see only the world object) UNLESS this bot watched it disguise.
+   * `prevVisibleEnemyState` records, for each enemy whose tile the bot could
+   * see last turn, its position + disguised flag; `knownDisguisedIds` holds the
+   * enemies this bot caught in the act and therefore still recognizes.
+   */
+  private prevVisibleEnemyState = new Map<string, { x: number; y: number; disguised: boolean }>();
+  private knownDisguisedIds = new Set<string>();
+
+  /**
+   * Heal-hunt goal. Set by MatchRoom when this bot "notices" a Heal-on-idle
+   * effect (see BALANCE.bots.healNoticeChance). While exploring, the bot paths
+   * toward this tile; cleared on arrival, timeout, or when a real target/danger
+   * takes over. */
+  private investigateTarget: { x: number; y: number } | null = null;
+  private investigateTurnsLeft = 0;
+
   constructor(playerId: string) {
     this.playerId = playerId;
   }
@@ -70,6 +88,17 @@ export class BotPlayer {
     // Update visibility
     const visible = this.computeVisibleTiles(me, state, map);
     for (const key of visible) this.seenTiles.add(key);
+
+    // Update disguise perception (who we caught disguising) + tick down any
+    // active heal-hunt goal.
+    this.updateDisguiseMemory(state, visible);
+    if (this.investigateTarget) {
+      this.investigateTurnsLeft--;
+      if (this.investigateTurnsLeft <= 0
+          || (me.x === this.investigateTarget.x && me.y === this.investigateTarget.y)) {
+        this.investigateTarget = null;
+      }
+    }
 
     // Try to loot before deciding action
     this.tryLoot(me, state, onLoot);
@@ -129,6 +158,55 @@ export class BotPlayer {
     return visible.has(`${x},${y}`);
   }
 
+  /**
+   * Send this bot to investigate a tile (used by the Heal-on-idle hunt). Only
+   * influences behavior while exploring — fight/escape always take priority.
+   */
+  investigate(x: number, y: number, turns: number): void {
+    this.investigateTarget = { x, y };
+    this.investigateTurnsLeft = turns;
+  }
+
+  /**
+   * Whether this bot perceives `b` as an attackable enemy bomberman this turn.
+   * A disguised bomberman reads as a harmless world object UNLESS this bot
+   * witnessed it disguise (tracked in `knownDisguisedIds`).
+   */
+  private perceivesEnemy(b: BombermanState, state: MatchState, visible: Set<string>): boolean {
+    if (b.playerId === this.playerId || !b.alive || b.escaped) return false;
+    if (!this.canSee(b.x, b.y, visible)) return false;
+    if (isInsideSmoke(state, b.x, b.y)) return false;
+    if (b.disguiseFrame !== undefined && !this.knownDisguisedIds.has(b.playerId)) return false;
+    return true;
+  }
+
+  /**
+   * Track which enemies this bot caught in the act of disguising. A bot that has
+   * LoS on an enemy the turn it becomes disguised (same tile, undisguised the
+   * turn before) "knows" it's a bomberman and keeps recognizing it until the
+   * disguise drops. Bots that merely walk up to an already-disguised object are
+   * fooled.
+   */
+  private updateDisguiseMemory(state: MatchState, visible: Set<string>): void {
+    const nextPrev = new Map<string, { x: number; y: number; disguised: boolean }>();
+    for (const b of state.bombermen) {
+      if (b.playerId === this.playerId || !b.alive) continue;
+      const disguised = b.disguiseFrame !== undefined;
+      const sees = this.canSee(b.x, b.y, visible) && !isInsideSmoke(state, b.x, b.y);
+      if (!disguised) {
+        // No longer disguised → forget — a fresh disguise must be re-witnessed.
+        this.knownDisguisedIds.delete(b.playerId);
+      } else if (sees) {
+        const prev = this.prevVisibleEnemyState.get(b.playerId);
+        if (prev && !prev.disguised && prev.x === b.x && prev.y === b.y) {
+          this.knownDisguisedIds.add(b.playerId);
+        }
+      }
+      if (sees) nextPrev.set(b.playerId, { x: b.x, y: b.y, disguised });
+    }
+    this.prevVisibleEnemyState = nextPrev;
+  }
+
   // ---- State transitions ----
 
   private updateAiState(
@@ -145,11 +223,7 @@ export class BotPlayer {
     // Check for visible enemies. Bombermen inside a smoke cloud are hidden
     // to bots — same rule as the player's fog override, just enforced
     // server-side here since bots bypass the client renderer.
-    const enemies = state.bombermen.filter(b =>
-      b.playerId !== this.playerId && b.alive && !b.escaped &&
-      this.canSee(b.x, b.y, visible) &&
-      !isInsideSmoke(state, b.x, b.y),
-    );
+    const enemies = state.bombermen.filter(b => this.perceivesEnemy(b, state, visible));
 
     if (enemies.length > 0) {
       this.turnsEnemyVisible++;
@@ -255,8 +329,7 @@ export class BotPlayer {
     // Target lookup (reused for multiple decisions below).
     const targetBm = state.bombermen.find(b => b.playerId === this.targetEnemyId) ?? null;
     const targetVisible = !!targetBm
-      && this.canSee(targetBm.x, targetBm.y, visible)
-      && !isInsideSmoke(state, targetBm.x, targetBm.y);
+      && this.perceivesEnemy(targetBm, state, visible);
 
     // Retreat with Fart Escape when hurt and the target has equal-or-more
     // HP than us — same motivation as Ender Pearl but newer, so prefer
@@ -342,6 +415,15 @@ export class BotPlayer {
     // Avoid bombs first
     const dangerAction = this.avoidBombs(me, state, map);
     if (dangerAction) return dangerAction;
+
+    // Heal-hunt: if we noticed a Heal-on-idle effect, converge on its tile.
+    // Takes priority over chest-seeking / random exploration (but not over
+    // danger above, or a clear enemy which would have switched us to 'fight').
+    if (this.investigateTarget) {
+      const path = findPath(me.x, me.y, this.investigateTarget.x, this.investigateTarget.y, map);
+      if (path.length > 0) return this.pathStep(me, path, state);
+      this.investigateTarget = null; // unreachable — drop it
+    }
 
     // Occasionally throw a flare into the dark
     if (Math.random() < cfg.flareChance) {

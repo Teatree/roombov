@@ -274,6 +274,14 @@ export type TurnEvent =
   | { kind: 'stunned'; playerId: string; turnsRemaining: number }
   | { kind: 'stun_expired'; playerId: string }
   | { kind: 'melee_trap_changed'; playerId: string; active: boolean }
+  /** Heal-class idle action applied +amount HP this turn (drives the green
+   *  aura + rising-cross VFX). `hpRemaining` is the post-heal HP. */
+  | { kind: 'heal_applied'; playerId: string; amount: number; hpRemaining: number; x: number; y: number }
+  /** A Disguise-class bomberman finished disguising into a world object.
+   *  `frame` indexes the `disguise_objects` sprite sheet. */
+  | { kind: 'disguise_applied'; playerId: string; frame: number; x: number; y: number }
+  /** A disguise dropped (the bomberman moved, threw, or was hit). */
+  | { kind: 'disguise_removed'; playerId: string; x: number; y: number }
   /**
    * A melee counter-attack fired by a Melee-Trap-Mode bomberman.
    *   attackerId = the trap-mode defender throwing the strike
@@ -322,6 +330,18 @@ export function resolveTurn(
   // extract same-turn — the player must stay on the hatch into the next turn.
   for (const b of state.bombermen) {
     b.teleportedThisTurn = false;
+  }
+
+  // Defensive backfill for the Idle Action fields. Real persisted/spawned
+  // states always carry these, but legacy snapshots and lean test factories
+  // may omit them — normalize so the idle-action gates below behave (a missing
+  // class reads as the original Attack-on-idle behavior).
+  for (const b of state.bombermen) {
+    if (b.idleAction !== 'attack' && b.idleAction !== 'heal' && b.idleAction !== 'disguise') {
+      b.idleAction = 'attack';
+    }
+    if (typeof b.idleStillTurns !== 'number') b.idleStillTurns = 0;
+    if (typeof b.maxHp !== 'number' || b.maxHp <= 0) b.maxHp = b.hp;
   }
 
   // Only alive, non-escaped Bombermen can act
@@ -1696,9 +1716,11 @@ export function resolveTurn(
         colors: { shirt: tint, pants: tint, hair: tint },
         tint,
         character: SCAV_CHARACTER,
+        idleAction: 'attack',
         x: tile.x,
         y: tile.y,
         hp: BALANCE.match.bombermanMaxHp,
+        maxHp: BALANCE.match.bombermanMaxHp,
         alive: true,
         treasures: {},
         coins: 0,
@@ -1721,6 +1743,7 @@ export function resolveTurn(
         onHatchIdleTurns: 0,
         statusEffects: [],
         meleeTrapMode: false,
+        idleStillTurns: 0,
         sp: 0,
       };
       state.bombermen.push(scav);
@@ -1902,6 +1925,7 @@ export function resolveTurn(
   // walks into their Chebyshev-1 range next turn.
   for (const b of state.bombermen) {
     if (!b.alive || b.escaped) continue;
+    if (b.idleAction !== 'attack') continue; // only Attack-class arms a melee trap
     if (b.meleeTrapMode) continue; // already in — stay
     if (exitedTrapThisTurn.has(b.playerId)) continue; // just exited, can't re-enter same turn
     if (isStunned(b)) continue;
@@ -1942,6 +1966,72 @@ export function resolveTurn(
       }
     } else {
       b.onHatchIdleTurns = 0;
+    }
+  }
+
+  // --- 9.55. Idle Action progress (Heal / Disguise classes) ---
+  // Attack-class bombermen arm a melee trap (step 9.25); Heal and Disguise
+  // classes instead accumulate `idleStillTurns` while standing still and fire
+  // once their per-class threshold is reached. Moving, throwing, being stunned,
+  // standing in smoke, or taking damage this turn all reset the counter (and
+  // drop any active disguise) — the spec's "if attacked, the waiting resets".
+  const damagedThisTurnIds = new Set<string>();
+  for (const e of events) {
+    if (e.kind === 'damaged') damagedThisTurnIds.add(e.playerId);
+    else if (e.kind === 'melee_attack') damagedThisTurnIds.add(e.victimId);
+  }
+  for (const b of state.bombermen) {
+    if (!b.alive || b.escaped) continue;
+    if (b.idleAction === 'attack') continue; // handled by Melee Trap Mode
+
+    const action = effectiveActions.get(b.playerId) ?? { kind: 'idle' as const };
+    const stillIdle =
+      action.kind === 'idle' &&
+      !isStunned(b) &&
+      !isInsideSmoke(state, b.x, b.y) &&
+      !damagedThisTurnIds.has(b.playerId);
+
+    if (!stillIdle) {
+      b.idleStillTurns = 0;
+      if (b.disguiseFrame !== undefined) {
+        b.disguiseFrame = undefined;
+        events.push({ kind: 'disguise_removed', playerId: b.playerId, x: b.x, y: b.y });
+      }
+      continue;
+    }
+
+    if (b.idleAction === 'heal') {
+      const onHatch = state.escapeTiles.some(t => t.x === b.x && t.y === b.y);
+      // Healing never starts at full HP or while parked on an escape hatch
+      // (the hatch has its own ready indicator — avoid a visual clash). No
+      // progress accrues, so the client shows no heal hourglass.
+      if (onHatch || b.hp >= b.maxHp) {
+        b.idleStillTurns = 0;
+        continue;
+      }
+      b.idleStillTurns += 1;
+      if (b.idleStillTurns >= BALANCE.idleActions.healIdleTurns) {
+        b.hp = Math.min(b.maxHp, b.hp + BALANCE.idleActions.healAmount);
+        b.idleStillTurns = 0; // restart the cycle so it can keep healing
+        events.push({
+          kind: 'heal_applied',
+          playerId: b.playerId,
+          amount: BALANCE.idleActions.healAmount,
+          hpRemaining: b.hp,
+          x: b.x,
+          y: b.y,
+        });
+      }
+    } else {
+      // Disguise class.
+      b.idleStillTurns += 1;
+      if (b.disguiseFrame === undefined && b.idleStillTurns >= BALANCE.idleActions.disguiseIdleTurns) {
+        const seedBase = hashString(`${state.matchId}:${state.turnNumber}:${b.playerId}:disguise`);
+        const dRng = createSeededRandom(seedBase);
+        const frame = Math.floor(dRng() * BALANCE.idleActions.disguiseObjectCount);
+        b.disguiseFrame = frame;
+        events.push({ kind: 'disguise_applied', playerId: b.playerId, frame, x: b.x, y: b.y });
+      }
     }
   }
 

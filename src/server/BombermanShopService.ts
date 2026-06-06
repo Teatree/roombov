@@ -33,13 +33,15 @@ import {
   SHOP_CYCLE_DURATION_MS,
   SHOP_OFFER_COUNT,
   OFFER_BOMB_POOLS,
+  OFFER_CLASSES,
   ESCAPE_PRICES,
   OFFER_STATS,
   FREE_BONUS_STATS,
 } from '../shared/config/bomberman-tiers.ts';
+import type { IdleAction } from '../shared/types/bomberman.ts';
 import { BALANCE } from '../shared/config/balance.ts';
 import { createSeededRandom } from '../shared/utils/seeded-random.ts';
-import { rollColors, rollTint } from '../shared/utils/cosmetic-color.ts';
+import { rollColors, rollTintForClass } from '../shared/utils/cosmetic-color.ts';
 import type { PlayerStore } from './PlayerStore.ts';
 
 export class BombermanShopService {
@@ -106,9 +108,11 @@ export class BombermanShopService {
     const cycleId = `cycle_${playerId}_${now.toString(36)}`;
     const rng = createSeededRandom(hashString(cycleId));
 
+    // One of each Idle Action class per cycle, in a seeded-shuffled slot order.
+    const classes = shuffle([...OFFER_CLASSES].slice(0, SHOP_OFFER_COUNT), rng);
     const bombermen: BombermanTemplate[] = [];
     for (let i = 0; i < SHOP_OFFER_COUNT; i++) {
-      bombermen.push(this.rollOffer(rng, `${cycleId}_${i}`));
+      bombermen.push(this.rollOffer(rng, `${cycleId}_${i}`, classes[i] ?? 'attack'));
     }
     // Pre-roll the bonus free Bomberman now (deterministic); it's only shown
     // once all the paid offers are bought (see shouldOfferFreeBonus).
@@ -129,7 +133,7 @@ export class BombermanShopService {
    * loadout = one offensive ×5, one escape ×2, one flare ×2, 4th slot empty.
    * Price is set purely by the escape (see ESCAPE_PRICES).
    */
-  private rollOffer(rng: () => number, idPrefix: string): BombermanTemplate {
+  private rollOffer(rng: () => number, idPrefix: string, idleAction: IdleAction): BombermanTemplate {
     const offensive = pick(OFFER_BOMB_POOLS.offensive, rng);
     const escape = pick(OFFER_BOMB_POOLS.escape, rng);
     const flare = pick(OFFER_BOMB_POOLS.flare, rng);
@@ -148,10 +152,11 @@ export class BombermanShopService {
       tier: 'paid', // blue visual
       price: ESCAPE_PRICES[escape] ?? 500,
       colors: rollColors(rng),
-      tint: rollTint(rng),
+      tint: rollTintForClass(rng, idleAction),
       character: CHARACTER_VARIANTS[Math.floor(rng() * CHARACTER_VARIANTS.length)],
       maxCustomSlots: OFFER_STATS.maxCustomSlots,
       stackSize: OFFER_STATS.stackSize,
+      idleAction,
       inventory,
     };
   }
@@ -178,10 +183,11 @@ export class BombermanShopService {
       tier: 'free',
       price: 0,
       colors: rollColors(rng),
-      tint: rollTint(rng),
+      tint: rollTintForClass(rng, 'attack'),
       character: CHARACTER_VARIANTS[Math.floor(rng() * CHARACTER_VARIANTS.length)],
       maxCustomSlots: FREE_BONUS_STATS.maxCustomSlots,
       stackSize: FREE_BONUS_STATS.stackSize,
+      idleAction: 'attack', // bonus free Bomberman is always Attack-on-idle
       inventory: { slots },
     };
   }
@@ -227,6 +233,7 @@ export class BombermanShopService {
       character: template.character,
       maxCustomSlots: template.maxCustomSlots,
       stackSize: template.stackSize,
+      idleAction: template.idleAction ?? 'attack',
       inventory: cloneInventory(template.inventory),
       purchasedAt: Date.now(),
       sourceTemplateId: templateId,
@@ -276,6 +283,15 @@ function hashString(s: string): number {
 /** Seeded pick of one element from a non-empty array. */
 function pick<T>(arr: readonly T[], rng: () => number): T {
   return arr[Math.floor(rng() * arr.length)];
+}
+
+/** Seeded in-place Fisher-Yates shuffle; returns the same array for chaining. */
+function shuffle<T>(arr: T[], rng: () => number): T[] {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
 }
 
 function cloneInventory(inv: BombInventory): BombInventory {

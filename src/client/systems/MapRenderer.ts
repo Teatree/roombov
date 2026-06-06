@@ -391,7 +391,9 @@ export class MapRenderer {
 
   renderEscapeTiles(scene: Phaser.Scene, tiles: EscapeTile[]): void {
     const { tileSize } = this.mapData;
-    const color = 0x44ff88;
+    // Purple — recolored from green so green now reads exclusively as the
+    // Heal-on-idle progress hourglass (see BombermanSpriteSystem).
+    const color = 0xbb44ff;
     for (const tile of tiles) {
       const cx = tile.x * tileSize + tileSize / 2;
       const cy = tile.y * tileSize + tileSize / 2;

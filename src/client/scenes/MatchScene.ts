@@ -509,6 +509,8 @@ export class MatchScene extends Phaser.Scene {
     this.load.spritesheet('chest_1', 'sprites/chest_1.png', { frameWidth: 16, frameHeight: 32 });
     this.load.spritesheet('chest_2', 'sprites/chest_2.png', { frameWidth: 16, frameHeight: 32 });
     this.load.spritesheet('chest_3', 'sprites/chest_3.png', { frameWidth: 16, frameHeight: 32 });
+    // Disguise objects: 96x16 sheet, 6 frames of 16x16 — Disguise-on-idle class.
+    this.load.spritesheet('disguise_objects', 'sprites/disguise_objects.png', { frameWidth: 16, frameHeight: 16 });
     // Doors: loaded as a plain image, frames added manually in create()
     this.load.image('double_doors', 'sprites/double_doors.png');
     // Sword icon — Melee Trap Mode indicator (HUD + above-head overlay).
@@ -1002,6 +1004,10 @@ export class MatchScene extends Phaser.Scene {
 
     // Update ready-to-escape feedback (banner above head + progress ring)
     this.updateEscapeReadyIndicator();
+
+    // Update heal/disguise idle-action progress rings (smooth, phase-timed —
+    // same model as the escape ring).
+    this.updateIdleActionIndicators();
 
     // Mobile: refresh the drag selector + preview (path for move, aim tile for
     // attack). Runs before the ghost/path draws below so they pick up the
@@ -1634,6 +1640,18 @@ export class MatchScene extends Phaser.Scene {
       }
     }
 
+    // Heal-on-idle VFX — green aura + rising crosses when a Heal-class
+    // Bomberman recovers HP. Fired around the transition midpoint so it reads
+    // alongside the HP bar refill.
+    for (const ev of events) {
+      if (ev.kind !== 'heal_applied') continue;
+      const healId = ev.playerId as string;
+      const delay = Math.round((BALANCE.match.transitionPhaseSeconds * 1000) * 0.5);
+      this.time.delayedCall(delay, () => {
+        this.bombermanSpriteSystem?.playHealEffect(healId);
+      });
+    }
+
     // Hurt animations on damage events — Beat 3 ("Action Reaction"). Fires
     // 2/3 of the way through the transition so the victim visibly reacts
     // AFTER the explosion (beat 2) connects, not at the start of the turn.
@@ -2241,6 +2259,37 @@ export class MatchScene extends Phaser.Scene {
     });
   }
 
+  /**
+   * Per-frame driver for the Heal / Disguise idle-action progress rings. Uses
+   * the SAME continuous phase-timed model as the escape-hatch ready ring so the
+   * ring fills smoothly across input + transition phases (not in stages). The
+   * resolver increments `idleStillTurns` at turn resolution (completed turns),
+   * so progress = elapsed / (required turns' worth of input+transition).
+   * BombermanSpriteSystem owns the per-bomberman ring graphic + its LOS gating;
+   * here we only feed it the fill value.
+   */
+  private updateIdleActionIndicators(): void {
+    if (!this.state || !this.bombermanSpriteSystem) return;
+    const inputMs = BALANCE.match.inputPhaseSeconds * 1000;
+    const transitionMs = BALANCE.match.transitionPhaseSeconds * 1000;
+    const phaseRemaining = Math.max(0, this.state.phaseEndsAt - Date.now());
+    for (const b of this.state.bombermen) {
+      if (b.idleAction !== 'heal' && b.idleAction !== 'disguise') continue;
+      const required = b.idleAction === 'heal'
+        ? BALANCE.idleActions.healIdleTurns
+        : BALANCE.idleActions.disguiseIdleTurns;
+      const completed = b.idleStillTurns ?? 0;
+      const totalMs = required * inputMs + (required - 1) * transitionMs;
+      let elapsed: number;
+      if (this.state.phase === 'input') {
+        elapsed = completed * (inputMs + transitionMs) + (inputMs - phaseRemaining);
+      } else {
+        elapsed = (completed - 1) * (inputMs + transitionMs) + inputMs + (transitionMs - phaseRemaining);
+      }
+      this.bombermanSpriteSystem.setIdleHourglassProgress(b.playerId, elapsed / totalMs);
+    }
+  }
+
   /** Per-frame driver for the ready-to-escape feedback: a clockwise-filling
    *  progress ring at the local player's feet. Spans the full wait window
    *  from step-on to escape (both input AND transition phases of every wait
@@ -2315,10 +2364,11 @@ export class MatchScene extends Phaser.Scene {
     g.clear();
     const radius = ts * 0.55;
     // Faint backing ring so the partially-filled arc still reads as a circle.
-    g.lineStyle(2, 0x224422, 0.55);
+    // Purple to match the recolored escape-hatch tile (green is now Heal-only).
+    g.lineStyle(2, 0x3a2244, 0.55);
     g.strokeCircle(cx, cy, radius);
     if (progress > 0) {
-      g.lineStyle(3, 0x44ff88, 1);
+      g.lineStyle(3, 0xbb44ff, 1);
       g.beginPath();
       const start = -Math.PI / 2;
       g.arc(cx, cy, radius, start, start + progress * Math.PI * 2, false);

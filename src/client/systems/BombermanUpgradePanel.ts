@@ -18,6 +18,7 @@ import { ProfileStore } from '../ClientState.ts';
 import { BALANCE } from '@shared/config/balance.ts';
 import { createShopBombermanSprite } from './BombermanAnimations.ts';
 import { attachTierInfoBadge } from './TierInfoBadge.ts';
+import { createIdleActionBadge } from './IdleActionBadge.ts';
 import { TREASURE_TEXTURE_KEY, treasureIconFrame } from './TreasureIcons.ts';
 import {
   effectiveMaxCustomSlots, effectiveMaxHp, effectiveStackSize, tiersRemaining,
@@ -123,6 +124,8 @@ export class BombermanUpgradePanel {
     c.add(this.scene.add.text(width / 2, heroTop + 18, owned.name ?? '???', {
       fontSize: '20px', color: TEXT_DEFAULT, fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5, 0));
+
+    c.add(createIdleActionBadge(this.scene, width / 2, heroTop + 42, owned.idleAction ?? 'attack'));
 
     const sprite = createShopBombermanSprite(this.scene, width / 2, heroTop + 84, owned.tint, owned.character, 'idle', 0.8);
     c.add(sprite);

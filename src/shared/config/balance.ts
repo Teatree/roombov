@@ -63,6 +63,23 @@ export const BALANCE = {
       cooldownTurns: 3,
     },
   },
+  /**
+   * Idle Actions — what a Bomberman does when it stands still long enough.
+   * Drives the three Bomberman classes (see IdleAction in types/bomberman.ts).
+   * Attack-on-idle (Ambush Mode) enters on the first idle turn and is governed
+   * by the melee-trap logic, not these knobs.
+   */
+  idleActions: {
+    /** Heal class: consecutive idle turns in place before +HP is applied. */
+    healIdleTurns: 3,
+    /** Heal class: HP restored each time the heal threshold is reached. */
+    healAmount: 1,
+    /** Disguise class: consecutive idle turns before turning into an object. */
+    disguiseIdleTurns: 3,
+    /** Number of frames in public/sprites/disguise_objects.png — the disguise
+     *  picks a random frame in [0, disguiseObjectCount). */
+    disguiseObjectCount: 6,
+  },
   player: {
     /** Coins granted to a brand-new profile. */
     startingCoins: 500,
@@ -150,6 +167,16 @@ export const BALANCE = {
     predictChance: 0.33,
     /** Turns to chase / guess after target leaves LOS. */
     chaseTurns: 3,
+    /** Per-bot chance to "notice" a Heal-on-idle effect when it fires. If any
+     *  bot notices, a small hunting party converges on the heal location. */
+    healNoticeChance: 0.15,
+    /** Min/max size of the hunting party recruited (nearest bots to the heal,
+     *  including the noticers). Clamped to the number of alive bots. */
+    healHuntPartyMin: 2,
+    healHuntPartyMax: 4,
+    /** How many turns a recruited bot investigates the heal area before giving
+     *  up (cleared early if it reaches the spot or finds a real target/danger). */
+    healHuntTurns: 6,
   },
   /**
    * Per-Bomberman SP (Skill Points) economy + upgrade costs.
