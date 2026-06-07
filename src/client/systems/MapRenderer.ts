@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import { TileType } from '@shared/types/map.ts';
 import type { MapData, EscapeTile, SpawnPoint } from '@shared/types/map.ts';
+import { BALANCE } from '@shared/config/balance.ts';
+import { createSeededRandom, seededShuffle } from '@shared/utils/seeded-random.ts';
 
 /**
  * Map renderer with two modes:
@@ -205,8 +207,17 @@ export class MapRenderer {
   private contourLayer: Phaser.Tilemaps.TilemapLayer | null = null;
   /** Non-empty Contour tiles captured at render time, for the proximity reveal. */
   private contourTiles: Phaser.Tilemaps.Tile[] = [];
+  /** Depth at which decorative objects render — set just above the topmost
+   *  visual tile layer (so decor sits on the map) but kept below the fog. */
+  private decorDepth = 1;
 
-  constructor(scene: Phaser.Scene, mapData: MapData, baseDepth = 0, tiledInfo?: { tilemapKey: string; tilesets: TilesetInfo[] } | null) {
+  constructor(
+    scene: Phaser.Scene,
+    mapData: MapData,
+    baseDepth = 0,
+    tiledInfo?: { tilemapKey: string; tilesets: TilesetInfo[] } | null,
+    decorSeed = 0,
+  ) {
     this.scene = scene;
     this.mapData = mapData;
     this.baseDepth = baseDepth;
@@ -216,6 +227,8 @@ export class MapRenderer {
     } else {
       this.renderProcedural(scene);
     }
+
+    this.renderDecor(decorSeed);
   }
 
   /**
@@ -290,7 +303,9 @@ export class MapRenderer {
     let layerDepth = this.baseDepth;
     for (const layerData of tilemap.layers) {
       const ln = layerData.name.toLowerCase();
-      if (ln === 'collision' || ln === 'doors') continue;
+      // `objects2` is a marker-only layer (decor candidates) — the exporter
+      // strips it, but guard here too in case an older .tmj is still cached.
+      if (ln === 'collision' || ln === 'doors' || ln === 'objects2') continue;
       const layer = tilemap.createLayer(layerData.name, phaserTilesets);
       if (!layer) continue;
       this.tilemapLayers.push(layer);
@@ -309,6 +324,10 @@ export class MapRenderer {
         layerDepth++;
       }
     }
+
+    // Decor sits just above the topmost visual tile layer, but never above the
+    // fog (depth 50) — it must read as scenery, occluded by fog like the rest.
+    this.decorDepth = Math.min(layerDepth, 49);
 
     // Scan each rendered layer for animated tiles and register them.
     // Tiled stores animation data on the tileset; Phaser doesn't tick these
@@ -362,6 +381,7 @@ export class MapRenderer {
     const { grid, tileSize } = this.mapData;
     const g = scene.add.graphics();
     g.setDepth(this.baseDepth);
+    this.decorDepth = this.baseDepth + 1;
     this.proceduralGraphics = g;
 
     for (let row = 0; row < grid.length; row++) {
@@ -374,6 +394,40 @@ export class MapRenderer {
         g.strokeRect(col * tileSize, row * tileSize, tileSize, tileSize);
       }
     }
+  }
+
+  /**
+   * Spawn the per-match decorative objects from the map's `decorSpots` (the
+   * Tiled `Objects2` candidates). Picks `BALANCE.decor.spawnFraction` of the
+   * candidates at random — seeded by `seed` (the match id hash) so every client
+   * in the match sees the same scatter — and renders each as a random frame of
+   * `disguise_objects`, the same sheet a Disguise-on-Idle Bomberman uses. Sits
+   * below the fog so it reads as ordinary scenery; in clear view it's
+   * indistinguishable from a disguised player. Purely visual; non-colliding.
+   */
+  private renderDecor(seed: number): void {
+    const scene = this.scene;
+    if (!scene) return;
+    const spots = this.mapData.decorSpots ?? [];
+    if (spots.length === 0) return;
+
+    const count = Math.round(spots.length * BALANCE.decor.spawnFraction);
+    if (count <= 0) return;
+
+    const rng = createSeededRandom(seed);
+    const chosen = seededShuffle(rng, spots).slice(0, count);
+    const ts = this.mapData.tileSize;
+    const frameCount = BALANCE.idleActions.disguiseObjectCount;
+
+    for (const spot of chosen) {
+      const frame = Math.floor(rng() * frameCount);
+      const sprite = scene.add.sprite(spot.x * ts + ts / 2, spot.y * ts + ts / 2, 'disguise_objects', frame);
+      sprite.setOrigin(0.5, 0.5);
+      sprite.setDisplaySize(ts, ts);
+      sprite.setDepth(this.decorDepth);
+      this.extraGraphics.push(sprite);
+    }
+    console.log(`[MapRenderer] decor: ${chosen.length}/${spots.length} objects (depth ${this.decorDepth})`);
   }
 
   renderSpawn(scene: Phaser.Scene, spawn: SpawnPoint): void {

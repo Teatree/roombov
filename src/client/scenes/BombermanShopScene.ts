@@ -77,6 +77,14 @@ export class BombermanShopScene extends Phaser.Scene {
   private activity: ActivityIndicator | null = null;
   private selector: BombermanSelector | null = null;
   private upgradePanel: BombermanUpgradePanel | null = null;
+  /** Whether the left Upgrade column is present. False until the player owns a
+   *  Bomberman; flips to true (with a slide-in animation) on the first buy. */
+  private twoColumn = false;
+  /** Left (Upgrade) column origin X and right (shop) column origin X. */
+  private panelX = 0;
+  private rightColLeft = 0;
+  private shopHeader!: Phaser.GameObjects.Text;
+  private upgradeHeader: Phaser.GameObjects.Text | null = null;
   /** Card-row centre X for the right (shop) column — set in create(). */
   private rightCardsCx = 0;
   /** Cached cycleId of the most recent render — used to detect cycle rollover
@@ -100,13 +108,21 @@ export class BombermanShopScene extends Phaser.Scene {
     ensureBombermanAnims(this);
     const { layoutH } = designViewport(this, DESIGN_W, DESIGN_H);
 
-    // Horizontal content is laid out symmetric around the live viewport centre
-    // (see header comment). The column block spans [centreX-CONTENT_W/2, +].
+    // Layout adapts to ownership: with no Bombermen owned there's nothing to
+    // upgrade, so the left column is omitted and the shop is centred on screen.
+    // The first purchase expands to the two-column layout (see maybeExpandLayout).
     const centerX = this.scale.width / 2;
-    const blockLeft = centerX - CONTENT_W / 2;
-    const panelX = blockLeft;                       // left (Upgrade) column
-    const rightColLeft = blockLeft + LEFT_W + COL_GAP;
-    this.rightCardsCx = rightColLeft + RIGHT_W / 2; // shop cards centre
+    const ownedCount = ProfileStore.get()?.ownedBombermen.length ?? 0;
+    this.twoColumn = ownedCount > 0;
+
+    const a = this.computeAnchors(this.twoColumn);
+    this.panelX = a.panelX;
+    this.rightColLeft = a.rightColLeft;
+    this.rightCardsCx = a.rightCardsCx;
+    // Currency always lives in the top-right corner (the two-column right edge)
+    // so it doesn't jump when the layout expands on the first purchase.
+    const rightEdge = this.computeAnchors(true).rightEdge;
+    this.walletRightEdge = rightEdge;
 
     // Screen title — the screen is the "Bomberman" hub (its two sections are
     // the SHOP and UPGRADE, headered consistently below).
@@ -114,21 +130,24 @@ export class BombermanShopScene extends Phaser.Scene {
       fontSize: '26px', color: '#e0e0e0', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5, 0);
 
-    // Consistent section headers over each column.
+    // Consistent section headers over each column. UPGRADE only exists in the
+    // two-column layout.
     const sectionHeaderStyle = {
       fontSize: '20px', color: '#cfd6e6', fontFamily: 'monospace', fontStyle: 'bold' as const,
     };
-    this.add.text(panelX + LEFT_W / 2, 62, 'UPGRADE', sectionHeaderStyle).setOrigin(0.5, 0);
-    this.add.text(this.rightCardsCx, 62, 'SHOP', sectionHeaderStyle).setOrigin(0.5, 0);
+    if (this.twoColumn) {
+      this.upgradeHeader = this.add.text(this.panelX + LEFT_W / 2, 62, 'UPGRADE', sectionHeaderStyle).setOrigin(0.5, 0);
+    }
+    this.shopHeader = this.add.text(this.rightCardsCx, 62, 'SHOP', sectionHeaderStyle).setOrigin(0.5, 0);
 
-    // --- Left column: Upgrade panel ---
-    this.upgradePanel = new BombermanUpgradePanel(this, { x: panelX, y: COLUMNS_TOP, width: LEFT_W });
-    this.upgradePanel.create();
+    // --- Left column: Upgrade panel (only when something is owned) ---
+    if (this.twoColumn) {
+      this.upgradePanel = new BombermanUpgradePanel(this, { x: this.panelX, y: COLUMNS_TOP, width: LEFT_W });
+      this.upgradePanel.create();
+    }
 
     // --- Currency row (top-right): coins + SP + treasure, all of which the
     //     shop/upgrades spend. SP is the equipped Bomberman's. ---
-    const rightEdge = rightColLeft + RIGHT_W;
-    this.walletRightEdge = rightEdge;
     this.coinsText = this.add.text(rightEdge, 8, '', {
       fontSize: '18px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(1, 0);
@@ -172,6 +191,7 @@ export class BombermanShopScene extends Phaser.Scene {
 
     this.unsubProfile = ProfileStore.subscribe(() => {
       this.renderHeader();
+      this.maybeExpandLayout();
     });
     this.unsubShop = BombermanShopStore.subscribe(() => this.renderCards());
 
@@ -239,6 +259,62 @@ export class BombermanShopScene extends Phaser.Scene {
     this.spText.setText(`SP ${equipped?.sp ?? 0}`);
     this.wallet?.setBundle(profile.treasures ?? {});
     this.wallet?.rightAlignTo(this.walletRightEdge);
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Adaptive layout — shop centred until the first Bomberman is owned
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /** Column anchor X's for the two layouts. `twoColumn` = upgrade panel on the
+   *  left + shop on the right; otherwise the shop is centred on screen. */
+  private computeAnchors(twoColumn: boolean): { panelX: number; rightColLeft: number; rightCardsCx: number; rightEdge: number } {
+    const centerX = this.scale.width / 2;
+    const blockLeft = centerX - CONTENT_W / 2;
+    const panelX = blockLeft;
+    if (twoColumn) {
+      const rightColLeft = blockLeft + LEFT_W + COL_GAP;
+      return { panelX, rightColLeft, rightCardsCx: rightColLeft + RIGHT_W / 2, rightEdge: rightColLeft + RIGHT_W };
+    }
+    const rightColLeft = centerX - RIGHT_W / 2;
+    return { panelX, rightColLeft, rightCardsCx: centerX, rightEdge: rightColLeft + RIGHT_W };
+  }
+
+  /** On the player's first purchase (owned 0 → 1) expand from the centred-shop
+   *  layout to the two-column layout: the shop slides right and the Upgrade
+   *  column rides in from the left. No-op once already two-column. */
+  private maybeExpandLayout(): void {
+    if (this.twoColumn) return;
+    const count = ProfileStore.get()?.ownedBombermen.length ?? 0;
+    if (count <= 0) return;
+    this.twoColumn = true;
+
+    const a = this.computeAnchors(true);
+    this.panelX = a.panelX;
+    this.rightColLeft = a.rightColLeft;
+    this.rightCardsCx = a.rightCardsCx;
+
+    // Slide the shop column (header + timer + cards) to the right.
+    this.tweens.add({ targets: this.shopHeader, x: this.rightCardsCx, duration: REFLOW_MS, ease: 'Quad.easeOut' });
+    this.tweens.add({ targets: this.timerText, x: this.rightCardsCx, duration: REFLOW_MS, ease: 'Quad.easeOut' });
+    this.renderCards(); // reflow surviving cards toward the new centre
+
+    // Fade the UPGRADE header in over its column.
+    const sectionHeaderStyle = {
+      fontSize: '20px', color: '#cfd6e6', fontFamily: 'monospace', fontStyle: 'bold' as const,
+    };
+    this.upgradeHeader = this.add.text(this.panelX + LEFT_W / 2, 62, 'UPGRADE', sectionHeaderStyle)
+      .setOrigin(0.5, 0).setAlpha(0);
+    this.tweens.add({ targets: this.upgradeHeader, alpha: 1, duration: REFLOW_MS });
+
+    // Build + slide in the Upgrade panel on the next tick: it subscribes to
+    // ProfileStore, and creating it while we're inside a ProfileStore
+    // notification could re-enter this callback / reset the slide.
+    this.time.delayedCall(0, () => {
+      if (this.upgradePanel) return;
+      this.upgradePanel = new BombermanUpgradePanel(this, { x: this.panelX, y: COLUMNS_TOP, width: LEFT_W });
+      this.upgradePanel.create();
+      this.upgradePanel.animateInFromLeft(140, REFLOW_MS);
+    });
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -400,6 +476,7 @@ export class BombermanShopScene extends Phaser.Scene {
     attachTierInfoBadge(this, container, {
       x: 64, y: -CARD_HEIGHT / 2 + 14,
       tier: template.tier,
+      level: 1, // shop templates are always level 1 (no upgrades yet)
       maxCustomSlots: template.maxCustomSlots,
       stackSize: template.stackSize,
       tooltipSide: 'below',

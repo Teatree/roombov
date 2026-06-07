@@ -2023,7 +2023,15 @@ export function resolveTurn(
         });
       }
     } else {
-      // Disguise class.
+      // Disguise class. A bomberman standing on a chest tile can't melt into
+      // furniture they're looting — the chest must stay visibly interactable.
+      // Reset progress (mirrors the heal-on-hatch guard) so disguising only
+      // resumes once they step off the chest.
+      const onChest = state.chests.some(c => c.x === b.x && c.y === b.y);
+      if (onChest) {
+        b.idleStillTurns = 0;
+        continue;
+      }
       b.idleStillTurns += 1;
       if (b.disguiseFrame === undefined && b.idleStillTurns >= BALANCE.idleActions.disguiseIdleTurns) {
         const seedBase = hashString(`${state.matchId}:${state.turnNumber}:${b.playerId}:disguise`);

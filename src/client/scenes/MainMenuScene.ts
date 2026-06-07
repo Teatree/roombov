@@ -7,7 +7,8 @@ import { ensureBombermanAnims, createShopBombermanSprite, preloadBombermanSprite
 import { TreasureListWidget } from '../systems/TreasureListWidget.ts';
 import { preloadTreasureIcons } from '../systems/TreasureIcons.ts';
 import { attachTierInfoBadge } from '../systems/TierInfoBadge.ts';
-import { effectiveMaxCustomSlots, effectiveStackSize } from '@shared/utils/bomberman-stats.ts';
+import { createIdleActionBadge } from '../systems/IdleActionBadge.ts';
+import { effectiveMaxCustomSlots, effectiveStackSize, upgradeLevel } from '@shared/utils/bomberman-stats.ts';
 import { NotificationBadge } from '../systems/NotificationBadge.ts';
 import { FACTORY_IDS, projectedClaimable } from '@shared/types/factory.ts';
 import { FACTORIES } from '@shared/config/factories.ts';
@@ -240,6 +241,7 @@ export class MainMenuScene extends Phaser.Scene {
     attachTierInfoBadge(this, this.equippedContainer, {
       x: 38, y: -36,
       tier: equipped.tier,
+      level: upgradeLevel(equipped),
       maxCustomSlots: effectiveMaxCustomSlots(equipped),
       stackSize: effectiveStackSize(equipped),
     });
@@ -248,6 +250,11 @@ export class MainMenuScene extends Phaser.Scene {
       fontSize: '14px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5);
     this.equippedContainer.add(label);
+
+    // Class label (Attack / Heal / Disguise on Idle) between sprite and name.
+    this.equippedContainer.add(
+      createIdleActionBadge(this, 0, 44, equipped.idleAction ?? 'attack', '10px'),
+    );
 
     // Clicking the equipped Bomberman opens the Bomberman Shop (which hosts the
     // inline Upgrade panel — the standalone popup was removed).

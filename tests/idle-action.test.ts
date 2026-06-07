@@ -245,6 +245,45 @@ describe('Idle Action — Disguise on Idle', () => {
     expect(after.state.bombermen[0].hp).toBe(1);
     expect(after.state.bombermen[0].disguiseFrame).toBeUndefined();
   });
+
+  it('test_disguiseOnIdle_standingOnChest_neverDisguises', () => {
+    // Arrange — disguise-class bomberman idling on top of a chest tile.
+    const map = floorMap();
+    const bm = makeBomberman('p1', 4, 4, { idleAction: 'disguise' });
+    const state = makeState([bm]);
+    state.chests = [{
+      id: 'c1', tier: 1, x: 4, y: 4,
+      treasures: {}, coins: 0, keys: 0, bombs: [], opened: true,
+    }];
+
+    // Act — idle well past the disguise threshold while parked on the chest.
+    const after = idleTurns(state, map, 'p1', BALANCE.idleActions.disguiseIdleTurns + 2);
+
+    // Assert — progress never accrues and no disguise is applied.
+    expect(after.state.bombermen[0].idleStillTurns).toBe(0);
+    expect(after.state.bombermen[0].disguiseFrame).toBeUndefined();
+    expect(after.events.filter(e => e.kind === 'disguise_applied')).toHaveLength(0);
+  });
+
+  it('test_disguiseOnIdle_steppingOffChest_resumesDisguising', () => {
+    // Arrange — disguise-class bomberman on a chest, with open floor beside it.
+    const map = floorMap();
+    const bm = makeBomberman('p1', 4, 4, { idleAction: 'disguise' });
+    const state = makeState([bm]);
+    state.chests = [{
+      id: 'c1', tier: 1, x: 4, y: 4,
+      treasures: {}, coins: 0, keys: 0, bombs: [], opened: true,
+    }];
+
+    // Act — idle on the chest (no progress), step off, then idle to threshold.
+    const onChest = idleTurns(state, map, 'p1', 3);
+    expect(onChest.state.bombermen[0].disguiseFrame).toBeUndefined();
+    const moved = resolveTurn(onChest.state, new Map([['p1', { kind: 'move', x: 5, y: 4 }]]), map);
+    const after = idleTurns(moved.state, map, 'p1', BALANCE.idleActions.disguiseIdleTurns);
+
+    // Assert — off the chest, the disguise resumes and fires.
+    expect(after.state.bombermen[0].disguiseFrame).toBeDefined();
+  });
 });
 
 describe('Idle Action — Attack class + defaults', () => {

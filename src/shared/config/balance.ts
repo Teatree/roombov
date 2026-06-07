@@ -80,6 +80,16 @@ export const BALANCE = {
      *  picks a random frame in [0, disguiseObjectCount). */
     disguiseObjectCount: 6,
   },
+  /**
+   * Decorative map objects (the Tiled `Objects2` candidate layer). Purely
+   * visual — rendered client-side from disguise_objects.png so a Disguise-class
+   * Bomberman blends in among them. See `MapData.decorSpots`.
+   */
+  decor: {
+    /** Fraction of the map's `decorSpots` candidates that actually spawn each
+     *  match (rounded). Selection is seeded by matchId, so all clients agree. */
+    spawnFraction: 0.3,
+  },
   player: {
     /** Coins granted to a brand-new profile. */
     startingCoins: 500,

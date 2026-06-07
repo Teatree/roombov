@@ -21,7 +21,7 @@ import { attachTierInfoBadge } from './TierInfoBadge.ts';
 import { createIdleActionBadge } from './IdleActionBadge.ts';
 import { TREASURE_TEXTURE_KEY, treasureIconFrame } from './TreasureIcons.ts';
 import {
-  effectiveMaxCustomSlots, effectiveMaxHp, effectiveStackSize, tiersRemaining,
+  effectiveMaxCustomSlots, effectiveMaxHp, effectiveStackSize, tiersRemaining, upgradeLevel,
 } from '@shared/utils/bomberman-stats.ts';
 import type { OwnedBomberman, BombermanUpgradeState } from '@shared/types/bomberman.ts';
 
@@ -75,6 +75,21 @@ export class BombermanUpgradePanel {
     return HERO_BLOCK + (ROW_H + ROW_GAP) * 3 - ROW_GAP + PAD * 2;
   }
 
+  /**
+   * Slide the whole panel in from `dx` px to the left while fading up. Used by
+   * the Bomberman Shop to reveal the upgrade column on the player's first
+   * purchase. Call right after `create()`.
+   */
+  animateInFromLeft(dx: number, ms: number): void {
+    for (const c of [this.chrome, this.content]) {
+      if (!c) continue;
+      const restX = c.x;
+      c.x = restX - dx;
+      c.setAlpha(0);
+      this.scene.tweens.add({ targets: c, x: restX, alpha: 1, duration: ms, ease: 'Quad.easeOut' });
+    }
+  }
+
   create(): void {
     const { x, y, width } = this.opts;
     const h = this.height;
@@ -117,6 +132,7 @@ export class BombermanUpgradePanel {
       x: width / 2,
       y: heroTop,
       tier: owned.tier,
+      level: upgradeLevel(owned),
       maxCustomSlots: effectiveMaxCustomSlots(owned),
       stackSize: effectiveStackSize(owned),
     });

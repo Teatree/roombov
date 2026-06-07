@@ -60,6 +60,15 @@ export function tiersRemaining(
   return Math.max(0, Math.min(BALANCE.upgrades.hp.maxTiers, hpHeadroom) - applied);
 }
 
+/** Bomberman "level" shown on the info badge: 1 + the total number of upgrade
+ *  tiers bought across all tracks. A freshly-bought Bomberman is level 1; each
+ *  upgrade bumps it by one (max 1 + sum of per-track maxTiers). Unowned shop
+ *  templates have no `upgrades`, so they read as level 1. */
+export function upgradeLevel(bm: Pick<OwnedBomberman, 'upgrades'>): number {
+  const u = bm.upgrades ?? EMPTY_UPGRADES;
+  return 1 + (u.cap ?? 0) + (u.stack ?? 0) + (u.hp ?? 0);
+}
+
 /** True when every upgrade track is at cap. Used for the FULLY UPGRADED banner
  *  and the breadcrumb pip suppressor. */
 export function isFullyUpgraded(bm: Pick<OwnedBomberman, 'maxCustomSlots' | 'stackSize' | 'upgrades'>): boolean {

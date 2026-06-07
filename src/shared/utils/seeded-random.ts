@@ -9,6 +9,17 @@ export function createSeededRandom(seed: number): () => number {
   };
 }
 
+/** FNV-1a string hash → unsigned 32-bit int, suitable as a `createSeededRandom`
+ *  seed. Deterministic across client and server for a given string. */
+export function hashStringToInt(s: string): number {
+  let h = 0x811c9dc5 | 0;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
 /** Seeded integer in range [min, max) */
 export function seededRandInt(rng: () => number, min: number, max: number): number {
   return min + Math.floor(rng() * (max - min));

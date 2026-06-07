@@ -75,7 +75,17 @@ export class BombermanShopService {
    * enough coins or buy a Bomberman.
    */
   async getCycleForClient(profile: PlayerProfile, now = Date.now()): Promise<BombermanShopCycle> {
-    const cycle = await this.getOrGenerateCycle(profile, now);
+    let cycle = await this.getOrGenerateCycle(profile, now);
+
+    // Safety net: a player who owns no Bombermen, can't afford any remaining
+    // offer, and has already bought out the whole cycle (including the bonus
+    // free one) would be stranded with no way to get back into a match. Force
+    // a fresh cycle so the hardship discount below always has a card to free.
+    if (this.isStranded(profile, cycle)) {
+      cycle = this.generateCycle(profile.id, now);
+      profile.bombermanShop = cycle;
+      await this.playerStore.save(profile);
+    }
 
     // Apply the hardship discount (cheapest still-buyable → free for a broke,
     // Bomberman-less player) to the three paid offers.
@@ -92,6 +102,23 @@ export class BombermanShopService {
       : base;
 
     return { ...cycle, bombermen };
+  }
+
+  /**
+   * True when the player has no path to a Bomberman in the current cycle:
+   * they own none, every regular offer is bought out (so the hardship
+   * discount has nothing to free), and the bonus free Bomberman is gone too.
+   * When this holds, `getCycleForClient` regenerates the cycle. Note a cycle
+   * with any unbought regular offer is never stranded — the hardship discount
+   * frees the cheapest one for a broke player.
+   */
+  private isStranded(profile: PlayerProfile, cycle: BombermanShopCycle): boolean {
+    if (profile.ownedBombermen.length > 0) return false;
+    const bought = new Set(cycle.boughtTemplateIds);
+    const buyable = cycle.bombermen.filter(b => !bought.has(b.id));
+    if (buyable.length > 0) return false;        // hardship discount frees the cheapest
+    if (this.shouldOfferFreeBonus(cycle)) return false; // bonus free still grabbable
+    return true;                                 // nothing left to buy or free
   }
 
   /** True when every paid offer is bought and the bonus free one is available. */

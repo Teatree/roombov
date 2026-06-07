@@ -22,6 +22,7 @@ import { defaultStatsForTier } from '@shared/config/bomberman-tiers.ts';
 import type { BombType } from '@shared/types/bombs.ts';
 import { BOMB_CATALOG } from '@shared/config/bombs.ts';
 import { BALANCE } from '@shared/config/balance.ts';
+import { hashStringToInt } from '@shared/utils/seeded-random.ts';
 import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
 import { BombShopTooltip, bombTooltipInfoFor, type BombTooltipInfo } from '../systems/BombShopTooltip.ts';
 import { preloadTreasureIcons, TREASURE_TEXTURE_KEY, treasureIconFrame } from '../systems/TreasureIcons.ts';
@@ -1096,7 +1097,9 @@ export class MatchScene extends Phaser.Scene {
         this.mapData = await loadMapById(state.mapId);
         console.log(`[MatchScene] map loaded: ${this.mapData.width}x${this.mapData.height}`);
         this.mapRenderer?.destroy();
-        this.mapRenderer = new MapRenderer(this, this.mapData, 0, this.tiledInfo);
+        // Seed decorative-object placement by matchId so every client in the
+        // match sees the same scatter (and it varies match-to-match).
+        this.mapRenderer = new MapRenderer(this, this.mapData, 0, this.tiledInfo, hashStringToInt(state.matchId));
         // Create one animated hatch sprite per escape tile. The sprite is
         // rendered at native 48x32 pixel size and centered on the escape
         // tile's world position. No setDisplaySize() — let the art render

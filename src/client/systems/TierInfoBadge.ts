@@ -1,6 +1,9 @@
 /**
- * Tier Info Badge — small Roman-numeral circle that attaches to the corner
- * of a Bomberman preview. Hover reveals a tooltip with HP / Slots / Stack.
+ * Bomberman Info Badge — small numbered circle that attaches to the corner of
+ * a Bomberman preview. The number is the Bomberman's LEVEL (1 + total upgrade
+ * tiers bought), not its shop tier: a fresh Bomberman shows 1 and each upgrade
+ * bumps it up. The circle/number color ramps with the level (extending the old
+ * green→blue→magenta tier sequence). Hover reveals a tooltip with HP/Slots/Stack.
  *
  * Used on:
  *   - MainMenuScene equipped preview
@@ -9,10 +12,8 @@
  *   - BombermanShopScene shop cards (different placement: alongside the
  *     stats square; same component for consistency)
  *
- * Tier mapping:
- *   free → I (green)
- *   paid → II (blue)
- *   paid_expensive → III (magenta)
+ * `tier` is still passed through — it drives only the hover tooltip's headline
+ * ("Paid Bomberman") and border, never the badge number/color.
  */
 
 import Phaser from 'phaser';
@@ -25,6 +26,9 @@ export interface TierInfoBadgeOptions {
   /** Local y relative to the parent container. */
   y: number;
   tier: BombermanTier;
+  /** Bomberman level (1 + total upgrade tiers). Drives the badge number and
+   *  its color ramp. Shop templates pass 1. */
+  level: number;
   maxCustomSlots: number;
   stackSize: number;
   /** Radius in px. Default 12. */
@@ -37,23 +41,41 @@ export interface TierInfoBadgeOptions {
   tooltipSide?: 'auto' | 'left' | 'right' | 'below';
 }
 
-const TIER_LABEL: Record<BombermanTier, string> = {
-  free: 'I',
-  paid: 'II',
-  paid_expensive: 'III',
-};
-
 const TIER_COLOR: Record<BombermanTier, number> = {
   free: 0x44aa66,           // green
   paid: 0x4477cc,           // blue
   paid_expensive: 0xcc4477, // magenta
 };
 
-const TIER_COLOR_DARK: Record<BombermanTier, number> = {
-  free: 0x113322,
-  paid: 0x111844,
-  paid_expensive: 0x331a26,
-};
+/** Badge color ramp by Bomberman level (1..N). Extends the old per-tier
+ *  green→blue→magenta sequence; levels past the array clamp to the last. */
+const LEVEL_COLORS: number[] = [
+  0x44aa66, // 1  green
+  0x4477cc, // 2  blue
+  0xcc4477, // 3  magenta
+  0xdd8a33, // 4  orange
+  0xdd4040, // 5  red
+  0xe0c93a, // 6  gold
+  0x44d6d6, // 7  cyan
+];
+
+function levelColor(level: number): number {
+  const i = Math.min(Math.max(1, level), LEVEL_COLORS.length) - 1;
+  return LEVEL_COLORS[i];
+}
+
+/** Darken a color toward black — used for the badge fill behind the number. */
+function darkenColor(hex: number, f = 0.22): number {
+  const r = Math.round(((hex >> 16) & 0xff) * f);
+  const g = Math.round(((hex >> 8) & 0xff) * f);
+  const b = Math.round((hex & 0xff) * f);
+  return (r << 16) | (g << 8) | b;
+}
+
+/** `0xrrggbb` → '#rrggbb' for Phaser text colors. */
+function colorToHexStr(hex: number): string {
+  return '#' + (hex & 0xffffff).toString(16).padStart(6, '0');
+}
 
 const TIER_NAME: Record<BombermanTier, string> = {
   free: 'Free',
@@ -75,16 +97,16 @@ export function attachTierInfoBadge(
 ): Phaser.GameObjects.Container {
   const radius = opts.radius ?? 12;
   const hp = opts.hp ?? BALANCE.match.bombermanMaxHp;
+  const level = Math.max(1, Math.round(opts.level));
   const badge = scene.add.container(opts.x, opts.y);
 
-  const fill = TIER_COLOR_DARK[opts.tier];
-  const stroke = TIER_COLOR[opts.tier];
-  const circle = scene.add.circle(0, 0, radius, fill, 1).setStrokeStyle(2, stroke, 1);
+  const ramp = levelColor(level);
+  const circle = scene.add.circle(0, 0, radius, darkenColor(ramp), 1).setStrokeStyle(2, ramp, 1);
   badge.add(circle);
 
-  const label = scene.add.text(0, 0, TIER_LABEL[opts.tier], {
+  const label = scene.add.text(0, 0, String(level), {
     fontSize: `${Math.max(10, Math.round(radius * 1.05))}px`,
-    color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
+    color: colorToHexStr(ramp), fontFamily: 'monospace', fontStyle: 'bold',
   }).setOrigin(0.5);
   badge.add(label);
 

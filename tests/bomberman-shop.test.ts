@@ -97,3 +97,41 @@ describe('BombermanShopService — reworked 3-offer model', () => {
     expect(late.ok).toBe(true);
   });
 });
+
+describe('BombermanShopService — never strands a broke, Bomberman-less player', () => {
+  it('test_bombermanShop_brokePlayerWithUnboughtOffers_discountsCheapestNotRegenerates', async () => {
+    // Arrange — owns nothing, has no coins, all offers still available.
+    const svc = new BombermanShopService(stubStore);
+    const profile = mkProfile(0);
+    const now = Date.now();
+    const cycle = await svc.getOrGenerateCycle(profile, now);
+
+    // Act — fetch the client view.
+    const view = await svc.getCycleForClient(profile, now);
+
+    // Assert — same cycle (no premature regen) and the cheapest offer is freed
+    // by the hardship discount so the player can still get a Bomberman.
+    expect(view.cycleId).toBe(cycle.cycleId);
+    expect(view.bombermen.some(b => b.price === 0)).toBe(true);
+  });
+
+  it('test_bombermanShop_strandedPlayer_forcesFreshCycleWithFreeOption', async () => {
+    // Arrange — owns nothing, no coins, and has bought out the ENTIRE cycle
+    // including the bonus free Bomberman (e.g. bought a free one, then died).
+    const svc = new BombermanShopService(stubStore);
+    const profile = mkProfile(0);
+    const now = Date.now();
+    const cycle = await svc.getOrGenerateCycle(profile, now);
+    const originalId = cycle.cycleId;
+    cycle.boughtTemplateIds = [...cycle.bombermen.map(b => b.id), cycle.freeBonus!.id];
+
+    // Act — fetch the client view a moment later (still within the cycle window).
+    const view = await svc.getCycleForClient(profile, now + 1000);
+
+    // Assert — a fresh cycle was forced (new id, nothing bought yet) and the
+    // hardship discount frees the cheapest offer so a free option is reachable.
+    expect(view.cycleId).not.toBe(originalId);
+    expect(view.boughtTemplateIds.length).toBe(0);
+    expect(view.bombermen.some(b => b.price === 0)).toBe(true);
+  });
+});

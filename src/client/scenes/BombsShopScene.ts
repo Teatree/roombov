@@ -13,7 +13,8 @@ import type { PlayerProfile } from '@shared/types/player-profile.ts';
 import { attachTierInfoBadge } from '../systems/TierInfoBadge.ts';
 import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
 import { BombShopTooltip } from '../systems/BombShopTooltip.ts';
-import { effectiveMaxCustomSlots, effectiveStackSize } from '@shared/utils/bomberman-stats.ts';
+import { effectiveMaxCustomSlots, effectiveStackSize, upgradeLevel } from '@shared/utils/bomberman-stats.ts';
+import { createIdleActionBadge } from '../systems/IdleActionBadge.ts';
 import { designViewport, fitSceneToViewport } from '../util/responsiveScene.ts';
 
 /** Design box this three-panel shop is authored against; the main camera scales
@@ -642,6 +643,7 @@ export class BombsShopScene extends Phaser.Scene {
     attachTierInfoBadge(this, previewContainer, {
       x: 30, y: -28,
       tier: equipped.tier,
+      level: upgradeLevel(equipped),
       maxCustomSlots: effSlots,
       stackSize: effStack,
       tooltipSide: 'left',
@@ -671,6 +673,10 @@ export class BombsShopScene extends Phaser.Scene {
       meter.fillRoundedRect(textX, meterY, Math.max(2, meterW * fillRatio), meterH, 2);
     }
     container.add(meter);
+
+    // Class label (Attack / Heal / Disguise on Idle), tucked under the meter.
+    container.add(createIdleActionBadge(this, textX, 60, equipped.idleAction ?? 'attack', '10px')
+      .setOrigin(0, 0));
 
     const divider = this.add.graphics();
     divider.lineStyle(1, PANEL_BORDER, 0.6);

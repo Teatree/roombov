@@ -121,6 +121,10 @@ interface BombermanMap {
   escapeTiles: { id: number; x: number; y: number }[];
   chestZones: { x: number; y: number; w: number; h: number }[];
   keySpawns: { x: number; y: number }[];
+  /** Candidate tiles for random decorative objects, from the `Objects2` tile
+   *  layer. The game spawns a fraction of these per match (rendered from
+   *  disguise_objects.png). */
+  decorSpots: { x: number; y: number }[];
   doors: { id: number; tiles: { x: number; y: number }[]; orientation: 'horizontal' | 'vertical' }[];
   tutorial?: {
     bot1: { x: number; y: number };
@@ -497,6 +501,25 @@ console.log(`ChestZones: ${chestZones.length}`);
 const keySpawns = ellipseLayerToTiles(findObjectLayer('Keys'));
 console.log(`Keys: ${keySpawns.length}${keySpawns.length > 0 ? ' → ' + keySpawns.map(k => `(${k.x},${k.y})`).join(', ') : ''}`);
 
+// Scan the "Objects2" tile layer — every painted tile is a candidate spot for
+// a random decorative object. The game spawns a fraction of these per match,
+// rendered from disguise_objects.png just like a disguised Bomberman. Only the
+// candidate positions matter here; which object (frame) appears is rolled at
+// runtime. The layer itself is stripped from the public visual .tmj below so
+// the raw marker tiles never render.
+const decorLayer = tileLayers.find(l => l.name.toLowerCase() === 'objects2');
+const decorSpots: { x: number; y: number }[] = [];
+if (decorLayer) {
+  for (let row = 0; row < finalH; row++) {
+    for (let col = 0; col < finalW; col++) {
+      if (readGid(decorLayer, col, row) !== 0) decorSpots.push({ x: col, y: row });
+    }
+  }
+  console.log(`Decor spots (Objects2): ${decorSpots.length}`);
+} else {
+  console.log('Decor spots: 0 (no "Objects2" tile layer found)');
+}
+
 // Scan "Doors" tile layer — find connected groups of door tiles
 const doorLayer = tileLayers.find(l => l.name.toLowerCase() === 'doors');
 const doors: BombermanMap['doors'] = [];
@@ -592,6 +615,7 @@ const output: BombermanMap = {
   escapeTiles,
   chestZones,
   keySpawns,
+  decorSpots,
   doors,
   ...(tutorial ? { tutorial } : {}),
 };
@@ -684,7 +708,9 @@ if (existsSync(join(publicMapsDir, '..'))) {
       for (let i = layers.length - 1; i >= 0; i--) {
         const l = layers[i];
         const ln = (l.name ?? '').toLowerCase();
-        if (l.type === 'tilelayer' && (ln === 'doors')) {
+        // `Objects2` is a marker-only layer (decor candidate spots); the game
+        // spawns its own random subset at runtime, so it must not render here.
+        if (l.type === 'tilelayer' && (ln === 'doors' || ln === 'objects2')) {
           console.log(`  stripping data-only tile layer: ${l.name}`);
           layers.splice(i, 1);
         } else if (l.type === 'group' && l.layers) {

@@ -14,8 +14,9 @@ import { createShopBombermanSprite, pickRandomUiAnimation } from './BombermanAni
 import { bombIconFrame } from './BombIcons.ts';
 import type { OwnedBomberman } from '@shared/types/bomberman.ts';
 import { attachTierInfoBadge } from './TierInfoBadge.ts';
+import { createIdleActionBadge } from './IdleActionBadge.ts';
 import { BALANCE } from '@shared/config/balance.ts';
-import { tiersRemaining, effectiveMaxCustomSlots, effectiveStackSize } from '@shared/utils/bomberman-stats.ts';
+import { tiersRemaining, effectiveMaxCustomSlots, effectiveStackSize, upgradeLevel } from '@shared/utils/bomberman-stats.ts';
 
 const SELECTOR_CARD_W = 140;
 const SELECTOR_CARD_H = 180;
@@ -174,9 +175,15 @@ export class BombermanSelector {
       x: SELECTOR_CARD_W / 2 - 14,
       y: -SELECTOR_CARD_H / 2 + 14,
       tier: owned.tier,
+      level: upgradeLevel(owned),
       maxCustomSlots: effectiveMaxCustomSlots(owned),
       stackSize: effectiveStackSize(owned),
     });
+
+    // Class label (Attack / Heal / Disguise on Idle) across the top.
+    container.add(createIdleActionBadge(
+      this.scene, 0, -SELECTOR_CARD_H / 2 + 4, owned.idleAction ?? 'attack', '8px',
+    ));
 
     // Name
     container.add(this.scene.add.text(0, -4, owned.name ?? '???', {

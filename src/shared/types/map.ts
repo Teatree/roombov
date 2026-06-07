@@ -71,6 +71,14 @@ export interface MapData {
    * MatchRoom shuffles these and takes BALANCE.keys.totalOnMap at match start.
    */
   keySpawns: TileCoord[];
+  /**
+   * Candidate tiles for random decorative objects, from the Tiled `Objects2`
+   * tile layer. Purely visual: the client spawns `BALANCE.decor.spawnFraction`
+   * of these per match (seeded by matchId) and renders them from
+   * disguise_objects.png — the same sheet a Disguise-on-Idle Bomberman uses, so
+   * a disguised player blends in. Optional for back-compat with older maps.
+   */
+  decorSpots?: TileCoord[];
   /** Double doors detected from the Doors tile layer. */
   doors: DoorDef[];
   /** Optional tutorial-specific point references parsed from the Tutorial object layer. */
