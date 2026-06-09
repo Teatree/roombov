@@ -45,7 +45,7 @@
 | Canvas sizing | Phaser `Scale.RESIZE` to `#game` (`100vh`) | `#game` pinned to **`visualViewport`** px so the URL bar can't clip the bottom HUD (§4) |
 | Menu/shop scaling | native size | scene **main-camera zoom** fits a fixed design box (`responsiveScene.ts`) |
 | In-match HUD size | `hudScale = 1` | `hudScale = 0.5` — tray, icons, fonts, HP bar, loot panel all halved (§6) |
-| Move/attack input | click tile to move; click slot then click tile to throw | **drag MOVE/ATTACK button onto map, release to commit**; or **press-hold a tile** for an urgent move (§7) |
+| Move/attack input | click tile to move; click slot then click tile to throw | **drag MOVE/ATTACK button onto map, release to commit**; **drag a bomb out of the tray** to throw that bomb; or **press-hold a tile** for an urgent move (§7) |
 | Bomb selection | click a tray slot to arm (toggle) | tray is **always-armed** (`mobileArmedSlot`, Rock default); tap a slot to change it (§7) |
 | Camera control | follows player; (no manual pan) | one-finger **drag pans**, two-finger **pinch zooms** (§7) |
 | Confirm/Cancel | n/a | **none** — releasing the drag *is* the commit (§7) |
@@ -171,6 +171,19 @@ This is the biggest divergence. On mobile, `MatchScene` instantiates
 - Distinct from the desktop `selectedSlot` (which is only set transiently while
   aiming, so ghosts don't show when idle).
 
+### Drag a bomb out of the tray = throw that bomb
+- Press a **non-empty** tray slot (Rock slot 0 included) and, in the same gesture,
+  drag onto the map → the gesture **promotes into the ATTACK drag** aiming that
+  bomb (ghost + trajectory follow the finger); **releasing on the map commits**
+  the throw.
+- The press **arms the slot immediately** (identical end-state to a tap), but
+  the throw only happens after the finger travels past `SLOT_DRAG_THRESHOLD`
+  *and* is released off the tray — so **a plain tap can never throw**, and
+  sliding a thumb across the tray (released over it) just arms.
+- Gesture roles: `slotCandidate` (pressed, undecided) → `slotDrag` (promoted).
+  Eligibility via the `hitTraySlot` hook: empty custom slots and presses while a
+  loot swap is pending (`lootPendingSwap`) fall through to the plain tap path.
+
 ### Loot swap
 - Tap a loot item, then tap an inventory slot to swap — same as PC. On mobile this
   is wired through `mobileHandleHudTap` → `executeLootSwap` when a swap is staged
@@ -182,6 +195,7 @@ This is the biggest divergence. On mobile, `MatchScene` instantiates
 | `URGENT_HOLD_MS` | 500 | hold duration to commit an urgent move |
 | `URGENT_MOVE_TOLERANCE` | 22px | finger travel allowed before a hold becomes a pan |
 | `BTN_DRAG_THRESHOLD` | 20px | drag distance for a button press to count as "on map" |
+| `SLOT_DRAG_THRESHOLD` | 24px | finger travel before a tray-slot press promotes into a bomb drag (more forgiving than the button threshold — slots are half-scale, taps must stay taps) |
 | `HOURGLASS_R` | 46px | hourglass radius (sized to read around a fingertip) |
 | `FLASH_MS` | 260 | commit-confirmation flash duration |
 | `BTN_W` / `BTN_H` | 82 / 42 | MOVE/ATTACK button size (≥42 stays a comfortable touch target) |

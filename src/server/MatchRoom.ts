@@ -22,6 +22,7 @@ import type { MapData } from '../shared/types/map.ts';
 import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import { BALANCE } from '../shared/config/balance.ts';
 import { CHEST_CONFIG, CHEST_SPAWN_TABLE } from '../shared/config/chests.ts';
+import { HIDDEN_FEATURES } from '../shared/config/features.ts';
 import type { BombType } from '../shared/types/bombs.ts';
 import { BotPlayer } from './BotPlayer.ts';
 import { ScavPlayer } from './ScavPlayer.ts';
@@ -440,7 +441,12 @@ export class MatchRoom {
       const slots = seededRandInt(rng, cfg.slotCount[0], cfg.slotCount[1] + 1);
       const bombs = rollBombLoot(cfg.weights, cfg.totalBombs, slots, rng);
       const treasureSlots = seededRandInt(rng, cfg.treasureSlotCount[0], cfg.treasureSlotCount[1] + 1);
-      const treasures = rollTreasureLoot(cfg.treasureWeights, cfg.totalTreasures, treasureSlots, rng);
+      // Treasure economy hidden: chests yield zero treasures (skipping the
+      // roll shifts later RNG draws vs. a non-hidden build with the same
+      // seed — fine, determinism only matters within one build).
+      const treasures = HIDDEN_FEATURES.treasures
+        ? {}
+        : rollTreasureLoot(cfg.treasureWeights, cfg.totalTreasures, treasureSlots, rng);
       const coins = seededRandInt(rng, cfg.coinRange[0], cfg.coinRange[1] + 1);
       chests.push({ id: `chest_${chests.length}`, tier, x: pick.x, y: pick.y, treasures, coins, keys: 0, bombs, opened: false });
     }

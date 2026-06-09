@@ -1,0 +1,54 @@
+{
+  "id": "p_d8ffa4e6e420",
+  "createdAt": 1781039356699,
+  "updatedAt": 1781039356699,
+  "coins": 2000,
+  "treasures": {},
+  "ownedBombermen": [],
+  "equippedBombermanId": null,
+  "bombStockpile": {},
+  "gamblerStreet": {
+    "gamblers": [],
+    "pendingArrivals": [
+      1781039356699,
+      1781039356699,
+      1781039356699,
+      1781039356699,
+      1781039356699
+    ],
+    "lastTickedAt": 1781039356699,
+    "nextGamblerSerial": 1
+  },
+  "bombermanShop": null,
+  "factories": {
+    "1": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "2": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "3": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "4": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    }
+  },
+  "totalMatchesPlayed": 0
+}

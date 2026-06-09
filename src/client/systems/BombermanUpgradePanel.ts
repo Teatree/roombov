@@ -16,6 +16,7 @@ import Phaser from 'phaser';
 import { NetworkManager } from '../NetworkManager.ts';
 import { ProfileStore } from '../ClientState.ts';
 import { BALANCE } from '@shared/config/balance.ts';
+import { HIDDEN_FEATURES } from '@shared/config/features.ts';
 import { createShopBombermanSprite } from './BombermanAnimations.ts';
 import { attachTierInfoBadge } from './TierInfoBadge.ts';
 import { createIdleActionBadge } from './IdleActionBadge.ts';
@@ -239,7 +240,7 @@ export class BombermanUpgradePanel {
     const treasureHave = (treasures[treasureType] ?? 0) as number;
     const spShort = owned.sp < tier.sp;
     const coinShort = coins < tier.coins;
-    const treasureShort = treasureHave < tier.treasure;
+    const treasureShort = !HIDDEN_FEATURES.treasures && treasureHave < tier.treasure;
     const affordable = !spShort && !coinShort && !treasureShort;
 
     // Cost line — label stays canonical color; only the AMOUNT flips red.
@@ -257,11 +258,13 @@ export class BombermanUpgradePanel {
     parent.add(this.scene.add.text(col3x + 56 + coinNumW, costY, 'c', {
       fontSize: '13px', color: '#ffc83a', fontFamily: 'monospace',
     }).setOrigin(0, 0));
-    parent.add(this.scene.add.text(col3x + 108, costY, `${tier.treasure}`, {
-      fontSize: '13px', color: treasureShort ? '#ff5a4a' : TEXT_DEFAULT, fontFamily: 'monospace',
-    }).setOrigin(0, 0));
-    parent.add(this.scene.add.image(col3x + 138, costY + 7, TREASURE_TEXTURE_KEY, treasureIconFrame(treasureType))
-      .setDisplaySize(13, 13).setAlpha(treasureShort ? 0.5 : 1));
+    if (!HIDDEN_FEATURES.treasures) {
+      parent.add(this.scene.add.text(col3x + 108, costY, `${tier.treasure}`, {
+        fontSize: '13px', color: treasureShort ? '#ff5a4a' : TEXT_DEFAULT, fontFamily: 'monospace',
+      }).setOrigin(0, 0));
+      parent.add(this.scene.add.image(col3x + 138, costY + 7, TREASURE_TEXTURE_KEY, treasureIconFrame(treasureType))
+        .setDisplaySize(13, 13).setAlpha(treasureShort ? 0.5 : 1));
+    }
 
     // Button.
     const btnH = 24;

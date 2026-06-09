@@ -34,6 +34,7 @@ import {
   TREASURE_TYPES,
 } from '@shared/config/treasures.ts';
 import { TREASURE_TEXTURE_KEY, treasureIconFrame, TREASURE_FRAME_SIZE } from './TreasureIcons.ts';
+import { HIDDEN_FEATURES } from '@shared/config/features.ts';
 
 export type TreasureListAnchor = 'top-left' | 'top-right';
 export type TreasureListDirection = 'vertical' | 'horizontal';
@@ -112,6 +113,10 @@ export class TreasureListWidget {
       pulsePeriodMs: options.pulsePeriodMs ?? 700,
     };
     this.container = scene.add.container(this.opts.x, this.opts.y).setDepth(this.opts.depth);
+    // Treasure economy hidden (HIDDEN_FEATURES.treasures): keep the full
+    // widget API alive for every call site, but render nothing. This single
+    // gate hides the wallet in all scenes at once.
+    if (HIDDEN_FEATURES.treasures) this.container.setVisible(false);
   }
 
   /**

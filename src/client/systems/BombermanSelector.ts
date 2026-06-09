@@ -16,6 +16,7 @@ import type { OwnedBomberman } from '@shared/types/bomberman.ts';
 import { attachTierInfoBadge } from './TierInfoBadge.ts';
 import { createIdleActionBadge } from './IdleActionBadge.ts';
 import { BALANCE } from '@shared/config/balance.ts';
+import { HIDDEN_FEATURES } from '@shared/config/features.ts';
 import { tiersRemaining, effectiveMaxCustomSlots, effectiveStackSize, upgradeLevel } from '@shared/utils/bomberman-stats.ts';
 
 const SELECTOR_CARD_W = 140;
@@ -114,8 +115,9 @@ export class BombermanSelector {
       if (!tier) continue;
       if ((owned.sp ?? 0) < tier.sp) continue;
       if (coins < tier.coins) continue;
+      // Treasure component waived while the treasure economy is hidden.
       const treasureType = BALANCE.upgrades[track].treasure;
-      if ((treasures[treasureType] ?? 0) < tier.treasure) continue;
+      if (!HIDDEN_FEATURES.treasures && (treasures[treasureType] ?? 0) < tier.treasure) continue;
       return true;
     }
     return false;

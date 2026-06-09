@@ -9,6 +9,7 @@ import { NotificationBadge } from '../systems/NotificationBadge.ts';
 import { ProfileStore, UiAnimLock } from '../ClientState.ts';
 import { FACTORY_IDS, projectedClaimable } from '@shared/types/factory.ts';
 import { FACTORIES } from '@shared/config/factories.ts';
+import { HIDDEN_FEATURES } from '@shared/config/features.ts';
 import type { BombType } from '@shared/types/bombs.ts';
 import { BALANCE } from '@shared/config/balance.ts';
 import { tiersRemaining } from '@shared/utils/bomberman-stats.ts';
@@ -164,7 +165,9 @@ export class ResultsScene extends Phaser.Scene {
 
       // Treasures earned this match — horizontal row with the same pulse as
       // the in-match HUD so a fat haul "thrums" on the results screen too.
-      if (hasAnyTreasure(r.treasuresEarned)) {
+      // Skipped entirely while the treasure economy is hidden (income is 0
+      // anyway, but a stale in-flight match could still report a haul).
+      if (!HIDDEN_FEATURES.treasures && hasAnyTreasure(r.treasuresEarned)) {
         this.add.text(width / 2, subtitleY, 'Treasures Gathered', headerStyle).setOrigin(0.5);
         subtitleY += 32;
 
@@ -283,16 +286,17 @@ export class ResultsScene extends Phaser.Scene {
       fontSize: '16px', color: '#44aaff', fontFamily: 'monospace',
       backgroundColor: '#1a1a2a', padding: { x: 14, y: 6 },
     };
-    const factoryBtn = this.add.text(0, 0, '[ FACTORY ]', shortcutStyle).setOrigin(0.5);
+    const factoryBtn = HIDDEN_FEATURES.factory
+      ? null
+      : this.add.text(0, 0, '[ FACTORY ]', shortcutStyle).setOrigin(0.5);
     const bombsBtn = this.add.text(0, 0, '[ BOMBS SHOP ]', shortcutStyle).setOrigin(0.5);
     const upgradeBtn = r.outcome === 'escaped'
       ? this.add.text(0, 0, '[ UPGRADE BOMBERMAN ]', shortcutStyle).setOrigin(0.5)
       : null;
 
     // Lay the row out left-to-right with gaps, centered on screen.
-    const rowItems: Phaser.GameObjects.Text[] = upgradeBtn
-      ? [factoryBtn, bombsBtn, upgradeBtn]
-      : [factoryBtn, bombsBtn];
+    const rowItems: Phaser.GameObjects.Text[] = [factoryBtn, bombsBtn, upgradeBtn]
+      .filter((b): b is Phaser.GameObjects.Text => b !== null);
     const totalW = rowItems.reduce((sum, b) => sum + b.width, 0)
       + shortcutGap * (rowItems.length - 1);
     let cursor = width / 2 - totalW / 2;
@@ -302,6 +306,7 @@ export class ResultsScene extends Phaser.Scene {
     }
 
     for (const [btn, target] of [[factoryBtn, 'FactoryScene'], [bombsBtn, 'BombsShopScene']] as const) {
+      if (!btn) continue;
       btn.setInteractive({ useHandCursor: true });
       btn.on('pointerover', () => btn.setColor('#88ccff'));
       btn.on('pointerout', () => btn.setColor('#44aaff'));
@@ -336,7 +341,7 @@ export class ResultsScene extends Phaser.Scene {
     // Factory claim badge — only shown when claimable bombs > 0. The results
     // screen is short-lived so a one-shot compute is enough (no timer).
     const profile = ProfileStore.get();
-    if (profile) {
+    if (profile && factoryBtn) {
       const now = Date.now();
       let claimable = 0;
       for (const id of FACTORY_IDS) {
@@ -581,8 +586,9 @@ export class ResultsScene extends Phaser.Scene {
       if (!tier) continue;
       if ((owned.sp ?? 0) < tier.sp) continue;
       if (coins < tier.coins) continue;
+      // Treasure component waived while the treasure economy is hidden.
       const treasureType = BALANCE.upgrades[track].treasure;
-      if ((treasures[treasureType] ?? 0) < tier.treasure) continue;
+      if (!HIDDEN_FEATURES.treasures && (treasures[treasureType] ?? 0) < tier.treasure) continue;
       return true;
     }
     return false;

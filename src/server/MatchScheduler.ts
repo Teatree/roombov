@@ -33,24 +33,19 @@ let nextId = 0;
 function genMatchId(): string { return `match_${Date.now()}_${nextId++}`; }
 
 /**
- * Round-robin index into `MAP_MANIFEST`. Bumps every time a new MatchConfig
- * is generated, so the lobby carousel cycles Main → Desert → Main → Desert
- * instead of picking randomly. Process-lifetime state — restarts of the
- * server resume from index 0 (acceptable: every restart-batch starts on
- * Main Map).
- */
-let nextMapIndex = 0;
-
-/**
- * Sequence counter for the bots/scavs toggle. Every second listing is a
- * "No Bots or Scavs" match: even sequence numbers → Normal (allowBots), odd →
- * no AI. Process-lifetime state, like `nextMapIndex` (restarts begin Normal).
+ * Sequence counter driving BOTH the map round-robin and the bots/scavs
+ * toggle, so the carousel cycles through every map+mode pair:
+ *   Main (Normal) → Main (No Bots) → Desert (Normal) → Desert (No Bots) → …
+ * Mode flips every listing (even → Normal/allowBots, odd → no AI); the map
+ * advances every TWO listings. Deriving both from one counter is what keeps
+ * the pairs aligned — two independent counters incrementing in lock-step
+ * pinned Desert to No-Bots forever. Process-lifetime state (restarts begin
+ * at Main/Normal).
  */
 let nextMatchSeq = 0;
 
 function generateMatchConfig(): MatchConfig {
-  const mapEntry = MAP_MANIFEST[nextMapIndex % MAP_MANIFEST.length];
-  nextMapIndex += 1;
+  const mapEntry = MAP_MANIFEST[Math.floor(nextMatchSeq / 2) % MAP_MANIFEST.length];
   const allowBots = nextMatchSeq % 2 === 0;
   nextMatchSeq += 1;
   return {

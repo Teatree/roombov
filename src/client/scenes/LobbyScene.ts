@@ -7,6 +7,7 @@ import { BombermanSelector } from '../systems/BombermanSelector.ts';
 import { preloadBombIcons } from '../systems/BombIcons.ts';
 import { preloadBombermanSpritesheets, ensureBombermanAnims } from '../systems/BombermanAnimations.ts';
 import { designViewport, fitSceneToViewport } from '../util/responsiveScene.ts';
+import { effectiveMaxCustomSlots, effectiveStackSize } from '@shared/utils/bomberman-stats.ts';
 import type { MatchListing } from '@shared/types/match.ts';
 
 const CARD_WIDTH = 260;
@@ -67,6 +68,10 @@ export class LobbyScene extends Phaser.Scene {
   private warnText!: Phaser.GameObjects.Text;
   private activity: ActivityIndicator | null = null;
   private selector: BombermanSelector | null = null;
+  /** "Equip Bombs" shortcut under the card row — see buildEquipBombsButton. */
+  private equipBombsBtn: Phaser.GameObjects.Text | null = null;
+  private equipBombsTween: Phaser.Tweens.Tween | null = null;
+  private profileUnsub: (() => void) | null = null;
   /** True until the first `match_listings` arrives, used to stagger the
    *  initial roll-in cascade. */
   private firstRender = true;
@@ -177,8 +182,83 @@ export class LobbyScene extends Phaser.Scene {
     this.selector = new BombermanSelector(this, layoutH - 130);
     this.selector.create();
 
+    // "Equip Bombs" shortcut — sits in the band between the card row's
+    // bottom (≈ cardY + 140) and the selector's header label.
+    this.buildEquipBombsButton(layoutH);
+
     fitSceneToViewport(this, DESIGN_W, DESIGN_H);
     this.scale.on('resize', this.onResize, this);
+  }
+
+  /**
+   * Shortcut button under the conveyor belt: shows how many bombs the
+   * player's stockpile holds and how many loadout slots the equipped
+   * Bomberman has free, and jumps to the Bombs Shop with back/Esc wired to
+   * return HERE (BombsShopScene honors `backScene` init data). Pulses
+   * (alpha yoyo) while the loadout is under 25% of total bomb capacity so
+   * an under-equipped player notices it before queueing. Refreshed from
+   * ProfileStore — the selector's equip roundtrip ends in a `profile`
+   * push, so switching Bombermen retargets the counts automatically.
+   */
+  private buildEquipBombsButton(layoutH: number): void {
+    const { width } = this.scale;
+    const btnY = layoutH * 0.4 + CARD_HEIGHT / 2 + 28;
+    this.equipBombsBtn = this.add.text(width / 2, btnY, '', {
+      fontSize: '15px', color: '#44aaff', fontFamily: 'monospace',
+      backgroundColor: '#222244', padding: { x: 14, y: 6 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    this.equipBombsBtn.on('pointerover', () => this.equipBombsBtn?.setColor('#88ccff'));
+    this.equipBombsBtn.on('pointerout', () => this.equipBombsBtn?.setColor('#44aaff'));
+    this.equipBombsBtn.on('pointerdown', () => {
+      if (this.joinedMatchId) NetworkManager.getSocket().emit('leave_match');
+      this.scene.start('BombsShopScene', { backScene: 'LobbyScene' });
+    });
+
+    this.profileUnsub = ProfileStore.subscribe(() => this.refreshEquipBombsButton());
+    this.refreshEquipBombsButton();
+  }
+
+  /** Re-derive the button label + pulse from the current profile. */
+  private refreshEquipBombsButton(): void {
+    const btn = this.equipBombsBtn;
+    if (!btn) return;
+    const profile = ProfileStore.get();
+    const bm = profile?.ownedBombermen.find(b => b.id === profile.equippedBombermanId);
+    if (!profile || !bm) {
+      btn.setVisible(false);
+      this.stopEquipBombsPulse();
+      return;
+    }
+    btn.setVisible(true);
+
+    const stockTotal = Object.values(profile.bombStockpile ?? {})
+      .reduce((sum: number, n) => sum + (n ?? 0), 0);
+    // Total free bomb space = capacity (slots × stack size) minus carried
+    // bombs — counts both unfilled slots and the headroom in partial stacks.
+    // Rock is not a custom slot so it never counts toward fill.
+    const capacity = effectiveMaxCustomSlots(bm) * effectiveStackSize(bm);
+    const fill = bm.inventory.slots.reduce((sum, s) => sum + (s?.count ?? 0), 0);
+    const freeSpace = Math.max(0, capacity - fill);
+    btn.setText(`[ EQUIP BOMBS ${stockTotal} in stock · space for ${freeSpace} ]`);
+
+    // Pulse while the loadout sits under 25% of total bomb capacity.
+    if (fill * 4 < capacity) {
+      // In-flight guard — profile pushes arrive every few seconds and must
+      // not restart (or stack) the tween.
+      if (!this.equipBombsTween) {
+        this.equipBombsTween = this.tweens.add({
+          targets: btn, alpha: 0.45, duration: 600, yoyo: true, repeat: -1,
+        });
+      }
+    } else {
+      this.stopEquipBombsPulse();
+    }
+  }
+
+  private stopEquipBombsPulse(): void {
+    this.equipBombsTween?.remove();
+    this.equipBombsTween = null;
+    this.equipBombsBtn?.setAlpha(1);
   }
 
   shutdown(): void {
@@ -193,6 +273,13 @@ export class LobbyScene extends Phaser.Scene {
     this.activity = null;
     this.selector?.destroy();
     this.selector = null;
+    // A leaked store listener would fire after shutdown and touch a
+    // destroyed Text — unsubscribe first, then drop the tween + ref.
+    this.profileUnsub?.();
+    this.profileUnsub = null;
+    this.equipBombsTween?.remove();
+    this.equipBombsTween = null;
+    this.equipBombsBtn = null;
     for (const view of this.cardViews.values()) view.container.destroy();
     this.cardViews.clear();
   }

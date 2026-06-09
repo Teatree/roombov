@@ -22,6 +22,7 @@ import { defaultStatsForTier } from '@shared/config/bomberman-tiers.ts';
 import type { BombType } from '@shared/types/bombs.ts';
 import { BOMB_CATALOG } from '@shared/config/bombs.ts';
 import { BALANCE } from '@shared/config/balance.ts';
+import { HIDDEN_FEATURES } from '@shared/config/features.ts';
 import { hashStringToInt } from '@shared/utils/seeded-random.ts';
 import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
 import { BombShopTooltip, bombTooltipInfoFor, type BombTooltipInfo } from '../systems/BombShopTooltip.ts';
@@ -2129,6 +2130,11 @@ export class MatchScene extends Phaser.Scene {
         const bm = this.state?.bombermen.find(b => b.playerId === playerId);
         if (!bm) continue;
         if (bm.playerId !== this.myPlayerId) continue;
+        // Fly-out popups suppressed while the treasure economy is hidden
+        // (server sends empty bundles, but gate the visual too so stale
+        // clients / in-flight matches can't show them). The tally above
+        // still accumulates — it is data plumbing, not presentation.
+        if (HIDDEN_FEATURES.treasures) continue;
         const baseX = bm.x * ts + ts / 2;
         const baseY = bm.y * ts + ts / 2 - ts * 0.5;
         let stagger = 0;
@@ -3091,7 +3097,9 @@ export class MatchScene extends Phaser.Scene {
         this.pathGraphics.lineStyle(1.5, 0x223344, 0.4);
         this.pathGraphics.strokeCircle(cx, cy, radius);
         if (progress > 0) {
-          this.pathGraphics.lineStyle(2.5, 0x44aaff, 0.76);
+          // Move-green (matches the 'move' click feedback + mobile urgent-move
+          // hourglass) — distinct from the blue path line/dots around it.
+          this.pathGraphics.lineStyle(2.5, 0x44ff88, 0.76);
           this.pathGraphics.beginPath();
           const start = -Math.PI / 2;
           this.pathGraphics.arc(cx, cy, radius, start, start + progress * Math.PI * 2, false);
@@ -3665,8 +3673,9 @@ export class MatchScene extends Phaser.Scene {
       if (Math.abs(screenX - W / 2) <= 100) return { kind: 'turnLimit' };
       // phase indicator + timer (right of the turn counter)
       if (screenX >= W / 2 + 100 && screenX <= W / 2 + 320) return { kind: 'turnsTicks' };
-      // treasure list + coin row (top-right column)
-      if (screenX >= W - 130 && screenX <= W - 5) return { kind: 'treasureList' };
+      // treasure list + coin row (top-right column) — tooltip suppressed
+      // while the treasure economy is hidden (the wallet renders nothing).
+      if (!HIDDEN_FEATURES.treasures && screenX >= W - 130 && screenX <= W - 5) return { kind: 'treasureList' };
     }
 
     const hudSlot = this.hitTestHud(screenX, screenY);
@@ -4136,6 +4145,9 @@ export class MatchScene extends Phaser.Scene {
         this.cameraManualOverride = true;
       },
       tryHandleHudTap: (x, y) => this.mobileHandleHudTap(x, y),
+      hitTraySlot: (x, y) => this.mobileHitTraySlot(x, y),
+      armSlot: (i) => this.mobileArmSlot(i),
+      isOverTray: (x, y) => this.mobileIsOverTray(x, y),
       haltStaged: () => {
         this.inputMode = { kind: 'idle' };
         this.flushStagedAction();
@@ -4204,6 +4216,31 @@ export class MatchScene extends Phaser.Scene {
       return true;
     }
     return false;
+  }
+
+  /**
+   * Mobile: tray slot at (x,y) if it can start a bomb drag, else -1.
+   * Ineligible: a pending loot swap (slot taps must keep completing the
+   * swap on press, untouched timing), or an empty custom slot. Slot 0
+   * (Rock) is always draggable. The loot panel is a disjoint region and
+   * never matches here, so its taps stay on the immediate path.
+   */
+  private mobileHitTraySlot(x: number, y: number): number {
+    if (this.lootPendingSwap) return -1;
+    const slot = this.hitTestHud(x, y);
+    if (slot < 0) return -1;
+    if (slot >= 1 && this.myBomberman()?.inventory.slots[slot - 1] == null) return -1;
+    return slot;
+  }
+
+  /** Mobile: whether (x,y) falls anywhere on the tray band — slots AND the
+   *  gaps between them (unlike hitTestHud, which rejects gaps). Keep the
+   *  geometry in sync with hitTestHud / rebuildSlotTrayIfNeeded. */
+  private mobileIsOverTray(x: number, y: number): boolean {
+    if (y < this.hudTrayY || y > this.hudTrayY + this.slotSize) return false;
+    const count = this.localTotalSlotCount();
+    const totalW = count * this.slotSize + (count - 1) * this.slotGap;
+    return x >= this.hudTrayX && x <= this.hudTrayX + totalW;
   }
 
   /** Mobile: select (not toggle) a tray slot as the armed bomb. No-op for an

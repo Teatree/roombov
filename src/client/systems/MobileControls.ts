@@ -16,6 +16,13 @@ import Phaser from 'phaser';
  *       · ATTACK drags the same ghost AoE + dotted trajectory the PC build
  *         shows, throwing whichever tray slot is currently armed.
  *
+ *   - **Drag a bomb out of the tray.** Pressing a non-empty tray slot arms it
+ *     (same as a tap — instant highlight); if the finger then travels past
+ *     SLOT_DRAG_THRESHOLD the gesture promotes into the ATTACK drag above,
+ *     aiming THAT bomb. Releasing on the map commits the throw; releasing
+ *     back over the tray (or never crossing the threshold) is just a tap —
+ *     the slot stays armed and nothing is thrown.
+ *
  *   - **Urgent move (press-and-hold a tile).** Pressing and holding a finger
  *     on a map tile for ~0.5s commits a move there. A radial hourglass fills
  *     under the finger to telegraph the commit. Because a one-finger press on
@@ -48,6 +55,14 @@ export interface MobileHooks {
   beginManualCamera(): void;
   /** Route a tap to the bomb tray / loot panel. True if it hit one. */
   tryHandleHudTap(x: number, y: number): boolean;
+  /** Tray slot index at (x,y) if it is drag-eligible (non-empty bomb, no
+   *  loot swap pending); -1 otherwise. Slot 0 = Rock and is eligible. */
+  hitTraySlot(x: number, y: number): number;
+  /** Arm a tray slot (same select semantics as a tap on it). */
+  armSlot(slotIndex: number): void;
+  /** True when (x,y) is anywhere over the tray band — slots AND gaps. Used
+   *  to cancel a slot drag that is released back onto the tray. */
+  isOverTray(x: number, y: number): boolean;
   /** Cancel any staged action (stop walking while the player re-decides). */
   haltStaged(): void;
   /** Arm the selected bomb for the live ghost/trajectory preview. */
@@ -62,8 +77,12 @@ export interface MobileHooks {
   commitAttack(tile: { x: number; y: number }): void;
 }
 
-/** What the active single-finger gesture is doing. */
-type DragRole = 'none' | 'btnMove' | 'btnAttack' | 'urgent' | 'pan' | 'pinch' | 'ui';
+/** What the active single-finger gesture is doing. `slotCandidate` is a
+ *  press on a tray slot that may still become either a tap (release in
+ *  place) or a bomb drag (`slotDrag` once it travels past the threshold). */
+type DragRole =
+  | 'none' | 'btnMove' | 'btnAttack' | 'urgent' | 'pan' | 'pinch' | 'ui'
+  | 'slotCandidate' | 'slotDrag';
 /** Drives selector/preview rendering; derived from the button drag. */
 type SelectState = 'idle' | 'move' | 'attack';
 type BtnKind = 'move' | 'attack';
@@ -82,6 +101,10 @@ const HOURGLASS_R = 46;            // radius — sized to read around a fingerti
 // A drag from a button must travel this far to count as "dragged onto the map"
 // (so a stray tap on the button doesn't commit a move to the player's own tile).
 const BTN_DRAG_THRESHOLD = 20;
+// A press on a tray slot must travel this far before it promotes into a
+// bomb drag (slightly more forgiving than BTN_DRAG_THRESHOLD — slots are
+// half-scale on mobile, and a jittery thumb-tap must stay a tap).
+const SLOT_DRAG_THRESHOLD = 24;
 const FLASH_MS = 260;              // commit confirmation flash duration
 
 interface Btn {
@@ -291,9 +314,11 @@ export class MobileControls {
   private onPointerDown(pointer: Phaser.Input.Pointer): void {
     this.pointers.set(pointer.id, { x: pointer.x, y: pointer.y });
 
-    // Second finger down → start pinch-zoom, abandoning any single-finger drag.
+    // Second finger down → start pinch-zoom, abandoning any single-finger drag
+    // (including an in-progress button/slot drag — clear its selector/ghost).
     if (this.pointers.size >= 2) {
       this.cancelUrgent();
+      if (this.state !== 'idle') this.exitToIdle(true);
       this.beginPinch();
       return;
     }
@@ -310,10 +335,22 @@ export class MobileControls {
       return;
     }
 
-    // 2. Bomb tray / loot panel taps (handled by the scene).
+    // 2. Drag-eligible tray slot → arm it now (a tap's end state, so a plain
+    //    tap loses nothing) and wait to see whether the finger drags out.
+    //    Only crossing SLOT_DRAG_THRESHOLD promotes this into a throw aim,
+    //    so a tap can never throw. Ineligible presses (loot panel, pending
+    //    loot swap, empty slot) fall through to the immediate tap path below.
+    const slot = this.hooks.hitTraySlot(pointer.x, pointer.y);
+    if (slot >= 0) {
+      this.hooks.armSlot(slot);
+      this.dragRole = 'slotCandidate';
+      return;
+    }
+
+    // 3. Bomb tray / loot panel taps (handled by the scene).
     if (this.hooks.tryHandleHudTap(pointer.x, pointer.y)) { this.dragRole = 'ui'; return; }
 
-    // 3. Otherwise this is a one-finger map press: ambiguous between an urgent
+    // 4. Otherwise this is a one-finger map press: ambiguous between an urgent
     //    move (hold still) and a pan (drag). Start in 'urgent' and let movement
     //    promote it to a pan. Capture pan origin now so the promotion is seamless.
     this.dragRole = 'urgent';
@@ -331,7 +368,21 @@ export class MobileControls {
       return;
     }
 
-    if (this.dragRole === 'btnMove' || this.dragRole === 'btnAttack') {
+    // Tray-slot press: promote to a bomb drag once it travels far enough.
+    // The slot is already armed, so entering the attack state aims the
+    // dragged bomb through the normal armed-slot machinery.
+    if (this.dragRole === 'slotCandidate') {
+      if (Phaser.Math.Distance.Between(this.downX, this.downY, pointer.x, pointer.y) > SLOT_DRAG_THRESHOLD) {
+        this.enterState('attack');
+        if (this.state !== 'attack') { this.dragRole = 'none'; return; } // enterState refused (can't act)
+        this.dragRole = 'slotDrag';
+        this.movedOntoMap = true;
+        this.moveSelectorToPointer(pointer);
+      }
+      return;
+    }
+
+    if (this.dragRole === 'btnMove' || this.dragRole === 'btnAttack' || this.dragRole === 'slotDrag') {
       this.moveSelectorToPointer(pointer);
       if (Phaser.Math.Distance.Between(this.downX, this.downY, pointer.x, pointer.y) > BTN_DRAG_THRESHOLD) {
         this.movedOntoMap = true;
@@ -365,6 +416,12 @@ export class MobileControls {
       // Lifting the finger is the commit — but only if it was actually dragged
       // onto the map (a stray tap on the button cancels instead).
       if (this.movedOntoMap) this.commitDrag();
+      else this.exitToIdle(true);
+    } else if (role === 'slotDrag') {
+      // Like a button drag, but releasing back over the tray must NOT throw
+      // (sliding a thumb across slots travels past the threshold) — that
+      // degrades to a tap: the slot stays armed, nothing is committed.
+      if (this.movedOntoMap && !this.hooks.isOverTray(pointer.x, pointer.y)) this.commitDrag();
       else this.exitToIdle(true);
     } else if (role === 'urgent') {
       // Released before the hold completed → a tap, which does nothing.
@@ -546,10 +603,12 @@ export class MobileControls {
 
   update(): void {
     // Bail out of any gesture if the player can no longer act (died / stunned).
-    if (!this.hooks.canAct() && (this.state !== 'idle' || this.dragRole === 'urgent')) {
+    if (!this.hooks.canAct()
+      && (this.state !== 'idle' || this.dragRole === 'urgent' || this.dragRole === 'slotCandidate')) {
       if (this.state !== 'idle') this.exitToIdle(true);
       this.cancelUrgent();
-      if (this.dragRole === 'btnMove' || this.dragRole === 'btnAttack' || this.dragRole === 'urgent') {
+      if (this.dragRole === 'btnMove' || this.dragRole === 'btnAttack' || this.dragRole === 'urgent'
+        || this.dragRole === 'slotCandidate' || this.dragRole === 'slotDrag') {
         this.dragRole = 'none';
       }
     }

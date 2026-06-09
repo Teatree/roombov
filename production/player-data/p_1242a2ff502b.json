@@ -1,0 +1,195 @@
+{
+  "id": "p_1242a2ff502b",
+  "createdAt": 1781042225680,
+  "updatedAt": 1781043708087,
+  "coins": 900,
+  "treasures": {},
+  "ownedBombermen": [],
+  "equippedBombermanId": null,
+  "bombStockpile": {},
+  "gamblerStreet": {
+    "gamblers": [],
+    "pendingArrivals": [
+      1781042225680,
+      1781042225680,
+      1781042225680,
+      1781042225680,
+      1781042225680
+    ],
+    "lastTickedAt": 1781042225680,
+    "nextGamblerSerial": 1
+  },
+  "bombermanShop": {
+    "cycleId": "cycle_p_1242a2ff502b_mq76yz2a",
+    "startedAt": 1781042923522,
+    "endsAt": 1781043043522,
+    "bombermen": [
+      {
+        "id": "cycle_p_1242a2ff502b_mq76yz2a_0_paid",
+        "name": "Calamity",
+        "tier": "paid",
+        "price": 550,
+        "colors": {
+          "shirt": 14107280,
+          "pants": 2647946,
+          "hair": 3453590
+        },
+        "tint": 10735598,
+        "character": "char7",
+        "maxCustomSlots": 4,
+        "stackSize": 5,
+        "idleAction": "heal",
+        "inventory": {
+          "slots": [
+            {
+              "type": "delay_tricky",
+              "count": 5
+            },
+            {
+              "type": "fart_escape",
+              "count": 2
+            },
+            {
+              "type": "flare",
+              "count": 2
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_1242a2ff502b_mq76yz2a_1_paid",
+        "name": "Tex",
+        "tier": "paid",
+        "price": 550,
+        "colors": {
+          "shirt": 9257687,
+          "pants": 5056650,
+          "hair": 10106034
+        },
+        "tint": 13328864,
+        "character": "char7",
+        "maxCustomSlots": 4,
+        "stackSize": 5,
+        "idleAction": "disguise",
+        "inventory": {
+          "slots": [
+            {
+              "type": "delay_tricky",
+              "count": 5
+            },
+            {
+              "type": "fart_escape",
+              "count": 2
+            },
+            {
+              "type": "flare",
+              "count": 2
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_1242a2ff502b_mq76yz2a_2_paid",
+        "name": "Little Bill",
+        "tier": "paid",
+        "price": 600,
+        "colors": {
+          "shirt": 5522135,
+          "pants": 3745930,
+          "hair": 3453519
+        },
+        "tint": 15362922,
+        "character": "char4",
+        "maxCustomSlots": 4,
+        "stackSize": 5,
+        "idleAction": "attack",
+        "inventory": {
+          "slots": [
+            {
+              "type": "bomb",
+              "count": 5
+            },
+            {
+              "type": "ender_pearl",
+              "count": 2
+            },
+            {
+              "type": "motion_detector_flare",
+              "count": 2
+            },
+            null
+          ]
+        }
+      }
+    ],
+    "boughtTemplateIds": [
+      "cycle_p_1242a2ff502b_mq76yz2a_0_paid"
+    ],
+    "freeBonus": {
+      "id": "cycle_p_1242a2ff502b_mq76yz2a_free_free",
+      "name": "Kelly",
+      "tier": "free",
+      "price": 0,
+      "colors": {
+        "shirt": 14107335,
+        "pants": 9054338,
+        "hair": 4076722
+      },
+      "tint": 15517035,
+      "character": "char4",
+      "maxCustomSlots": 4,
+      "stackSize": 5,
+      "idleAction": "attack",
+      "inventory": {
+        "slots": [
+          {
+            "type": "bomb",
+            "count": 3
+          },
+          {
+            "type": "shield",
+            "count": 1
+          },
+          {
+            "type": "motion_detector_flare",
+            "count": 1
+          },
+          null
+        ]
+      }
+    }
+  },
+  "factories": {
+    "1": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "2": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "3": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "4": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    }
+  },
+  "totalMatchesPlayed": 2
+}

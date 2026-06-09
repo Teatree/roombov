@@ -12,6 +12,7 @@
 import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import type { BombermanUpgradeState } from '../shared/types/bomberman.ts';
 import { BALANCE } from '../shared/config/balance.ts';
+import { HIDDEN_FEATURES } from '../shared/config/features.ts';
 import { tiersRemaining } from '../shared/utils/bomberman-stats.ts';
 import { PlayerStore } from './PlayerStore.ts';
 
@@ -41,7 +42,9 @@ export function nextTierCost(track: UpgradeTrack, appliedTiers: number):
   return {
     sp: entry.sp,
     coins: entry.coins,
-    treasure: entry.treasure,
+    // Treasure economy hidden: the treasure component is waived (tier coin
+    // costs were bumped to compensate — see BALANCE.upgrades).
+    treasure: HIDDEN_FEATURES.treasures ? 0 : entry.treasure,
     treasureType: cfg.treasure,
   };
 }

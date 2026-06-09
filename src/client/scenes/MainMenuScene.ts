@@ -12,6 +12,7 @@ import { effectiveMaxCustomSlots, effectiveStackSize, upgradeLevel } from '@shar
 import { NotificationBadge } from '../systems/NotificationBadge.ts';
 import { FACTORY_IDS, projectedClaimable } from '@shared/types/factory.ts';
 import { FACTORIES } from '@shared/config/factories.ts';
+import { HIDDEN_FEATURES } from '@shared/config/features.ts';
 import type { PlayerProfile } from '@shared/types/player-profile.ts';
 import { designViewport, fitSceneToViewport } from '../util/responsiveScene.ts';
 
@@ -86,14 +87,17 @@ export class MainMenuScene extends Phaser.Scene {
 
     this.equippedContainer = this.add.container(width / 2, 260);
 
-    // Buttons
-    const buttons: Array<[string, () => void]> = [
+    // Buttons. The Factory entry is filtered out while the system is hidden
+    // (HIDDEN_FEATURES.factory) — rows below shift up, no gap.
+    const buttons: Array<[string, () => void]> = ([
       ['[ PLAY ]', () => this.scene.start('LobbyScene')],
       ['[ BOMBERMAN ]', () => this.scene.start('BombermanShopScene')],
       ['[ BOMBS SHOP ]', () => this.scene.start('BombsShopScene')],
       ['[ FACTORY ]', () => this.scene.start('FactoryScene')],
       ['[ TUTORIAL ]', () => this.scene.start('MatchScene', { mode: 'tutorial' })],
-    ];
+    ] as Array<[string, () => void]>).filter(
+      ([label]) => !(HIDDEN_FEATURES.factory && label === '[ FACTORY ]'),
+    );
 
     let factoryBtn: Phaser.GameObjects.Text | null = null;
     for (let i = 0; i < buttons.length; i++) {

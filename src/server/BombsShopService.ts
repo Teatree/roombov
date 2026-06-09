@@ -18,6 +18,7 @@ import type { PlayerProfile } from '../shared/types/player-profile.ts';
 import type { OwnedBomberman } from '../shared/types/bomberman.ts';
 import type { TreasureType } from '../shared/config/treasures.ts';
 import { BOMB_CATALOG, PURCHASABLE_BOMBS } from '../shared/config/bombs.ts';
+import { HIDDEN_FEATURES } from '../shared/config/features.ts';
 import { effectiveMaxCustomSlots, effectiveStackSize } from '../shared/utils/bomberman-stats.ts';
 import type { PlayerStore } from './PlayerStore.ts';
 
@@ -61,7 +62,11 @@ export class BombsShopService {
         type,
         name: def.name,
         price: def.price,
-        ...(def.treasureCost ? { treasureCost: { ...def.treasureCost } } : {}),
+        // Treasure economy hidden: catalog entries are coin-only, so the
+        // client never renders a treasure price tag.
+        ...(def.treasureCost && !HIDDEN_FEATURES.treasures
+          ? { treasureCost: { ...def.treasureCost } }
+          : {}),
         description: def.description,
         category: def.category,
       };
@@ -77,7 +82,8 @@ export class BombsShopService {
 
     // Secondary treasure cost: validated and deducted atomically with coins.
     // Bombs only ever have one treasure type as a secondary cost by design.
-    const treasureCost = def.treasureCost;
+    // While the treasure economy is hidden, the cost is waived (coins only).
+    const treasureCost = HIDDEN_FEATURES.treasures ? undefined : def.treasureCost;
     if (treasureCost) {
       const treasureTotal = treasureCost.amount * qty;
       const owned = profile.treasures[treasureCost.type] ?? 0;

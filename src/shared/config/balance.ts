@@ -215,8 +215,18 @@ export const BALANCE = {
     },
     // Calibration:
     //   avg extraction ≈ 65 SP (2 chest opens = 10, 1 player kill = 50,
-    //   25 turns survived = 5). Cheapest tier targets ~2 extractions ≈ 130 SP;
-    //   most expensive (HP) targets ~15 extractions ≈ 975 SP.
+    //   25 turns survived = 5). First tier on every track is a cheap taster
+    //   (cap 30 / stack 50 / hp 50 SP, 2026-06-10) so a new player can buy
+    //   one upgrade within their first game; later tiers keep the original
+    //   multi-extraction targets.
+    // Coin costs bumped 2026-06-10 when the treasure cost was waived
+    // (HIDDEN_FEATURES.treasures — see features.ts + HIDDEN_STUFF.md): each
+    // tier's coins absorb its old treasure cost, valued as
+    // (treasure amount / avg per-run haul) × ~300 coins per-run income,
+    // rounded (avg hauls: mushrooms ~206, coffee ~46, grapes ~22 per run).
+    // Old coins: cap 350/800, stack 300/700/1500, hp 2200. The `treasure`
+    // fields are kept (un-charged while hidden) for an eventual un-hide —
+    // restore the old coin values if that happens.
     cap: {
       /** Per-Bomberman upgrade slots available. */
       maxTiers: 2,
@@ -225,17 +235,17 @@ export const BALANCE = {
       treasure: 'mushrooms' as const,
       /** Cost array, indexed by tier-applied count. */
       tiers: [
-        { sp: 160, coins: 350, treasure: 12 },  // ~2.5 games
-        { sp: 480, coins: 800, treasure: 25 },  // ~7.4 games
+        { sp: 30, coins: 400, treasure: 12 },   // first-upgrade taster (<1 game)
+        { sp: 480, coins: 900, treasure: 25 },  // ~7.4 games
       ] as Array<{ sp: number; coins: number; treasure: number }>,
     },
     stack: {
       maxTiers: 3,
       treasure: 'coffee' as const,
       tiers: [
-        { sp: 130, coins: 300, treasure: 8 },   // ~2 games (cheapest)
-        { sp: 340, coins: 700, treasure: 18 },  // ~5.2 games
-        { sp: 760, coins: 1500, treasure: 38 }, // ~11.7 games
+        { sp: 50, coins: 350, treasure: 8 },    // first-upgrade taster (<1 game)
+        { sp: 340, coins: 850, treasure: 18 },  // ~5.2 games
+        { sp: 760, coins: 1800, treasure: 38 }, // ~11.7 games
       ] as Array<{ sp: number; coins: number; treasure: number }>,
     },
     hp: {
@@ -244,7 +254,7 @@ export const BALANCE = {
       cap: 3,
       treasure: 'grapes' as const,
       tiers: [
-        { sp: 980, coins: 2200, treasure: 60 }, // ~15 games (most expensive)
+        { sp: 50, coins: 3000, treasure: 60 },  // first-upgrade taster SP; coins carry the gate
       ] as Array<{ sp: number; coins: number; treasure: number }>,
     },
   },
