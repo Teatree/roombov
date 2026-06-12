@@ -246,6 +246,7 @@ export class MainMenuScene extends Phaser.Scene {
       x: 38, y: -36,
       tier: equipped.tier,
       level: upgradeLevel(equipped),
+      idleAction: equipped.idleAction ?? 'attack',
       maxCustomSlots: effectiveMaxCustomSlots(equipped),
       stackSize: effectiveStackSize(equipped),
     });
@@ -255,7 +256,7 @@ export class MainMenuScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.equippedContainer.add(label);
 
-    // Class label (Attack / Heal / Disguise on Idle) between sprite and name.
+    // Class label (Ambusher / Healster / Disguiser) between sprite and name.
     this.equippedContainer.add(
       createIdleActionBadge(this, 0, 44, equipped.idleAction ?? 'attack', '10px'),
     );

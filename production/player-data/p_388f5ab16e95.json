@@ -1,0 +1,204 @@
+{
+  "id": "p_388f5ab16e95",
+  "createdAt": 1781132202744,
+  "updatedAt": 1781132343925,
+  "coins": 1400,
+  "treasures": {},
+  "ownedBombermen": [
+    {
+      "id": "owned_p_388f5ab16e95_1781132343925_ks7f",
+      "name": "Copper",
+      "tier": "paid",
+      "colors": {
+        "shirt": 14116930,
+        "pants": 9054274,
+        "hair": 7419058
+      },
+      "tint": 14914470,
+      "character": "char2",
+      "maxCustomSlots": 4,
+      "stackSize": 5,
+      "idleAction": "attack",
+      "inventory": {
+        "slots": [
+          {
+            "type": "delay_tricky",
+            "count": 5
+          },
+          {
+            "type": "ender_pearl",
+            "count": 2
+          },
+          {
+            "type": "flare",
+            "count": 2
+          },
+          null
+        ]
+      },
+      "purchasedAt": 1781132343925,
+      "sourceTemplateId": "cycle_p_388f5ab16e95_mq8o7ira_0_paid",
+      "sp": 0,
+      "lifetimeSp": 0,
+      "upgrades": {
+        "cap": 0,
+        "stack": 0,
+        "hp": 0
+      }
+    }
+  ],
+  "equippedBombermanId": "owned_p_388f5ab16e95_1781132343925_ks7f",
+  "bombStockpile": {},
+  "gamblerStreet": {
+    "gamblers": [],
+    "pendingArrivals": [
+      1781132202744,
+      1781132202744,
+      1781132202744,
+      1781132202744,
+      1781132202744
+    ],
+    "lastTickedAt": 1781132202744,
+    "nextGamblerSerial": 1
+  },
+  "bombermanShop": {
+    "cycleId": "cycle_p_388f5ab16e95_mq8o7ira",
+    "startedAt": 1781132341942,
+    "endsAt": 1781132461942,
+    "bombermen": [
+      {
+        "id": "cycle_p_388f5ab16e95_mq8o7ira_0_paid",
+        "name": "Copper",
+        "tier": "paid",
+        "price": 600,
+        "colors": {
+          "shirt": 14116930,
+          "pants": 9054274,
+          "hair": 7419058
+        },
+        "tint": 14914470,
+        "character": "char2",
+        "maxCustomSlots": 4,
+        "stackSize": 5,
+        "idleAction": "attack",
+        "inventory": {
+          "slots": [
+            {
+              "type": "delay_tricky",
+              "count": 5
+            },
+            {
+              "type": "ender_pearl",
+              "count": 2
+            },
+            {
+              "type": "flare",
+              "count": 2
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_388f5ab16e95_mq8o7ira_1_paid",
+        "name": "Slim",
+        "tier": "paid",
+        "price": 550,
+        "colors": {
+          "shirt": 14107286,
+          "pants": 9054760,
+          "hair": 9712818
+        },
+        "tint": 14803292,
+        "character": "char2",
+        "maxCustomSlots": 4,
+        "stackSize": 5,
+        "idleAction": "disguise",
+        "inventory": {
+          "slots": [
+            {
+              "type": "bomb",
+              "count": 5
+            },
+            {
+              "type": "fart_escape",
+              "count": 2
+            },
+            {
+              "type": "flare",
+              "count": 2
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_388f5ab16e95_mq8o7ira_2_paid",
+        "name": "Kid Colt",
+        "tier": "paid",
+        "price": 550,
+        "colors": {
+          "shirt": 14115906,
+          "pants": 2656848,
+          "hair": 11678894
+        },
+        "tint": 7516385,
+        "character": "char4",
+        "maxCustomSlots": 4,
+        "stackSize": 5,
+        "idleAction": "heal",
+        "inventory": {
+          "slots": [
+            {
+              "type": "delay_tricky",
+              "count": 5
+            },
+            {
+              "type": "fart_escape",
+              "count": 2
+            },
+            {
+              "type": "motion_detector_flare",
+              "count": 2
+            },
+            null
+          ]
+        }
+      }
+    ],
+    "boughtTemplateIds": [
+      "cycle_p_388f5ab16e95_mq8o7ira_0_paid"
+    ]
+  },
+  "factories": {
+    "1": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "2": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "3": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "4": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    }
+  },
+  "totalMatchesPlayed": 0
+}

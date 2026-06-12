@@ -178,11 +178,12 @@ export class BombermanSelector {
       y: -SELECTOR_CARD_H / 2 + 14,
       tier: owned.tier,
       level: upgradeLevel(owned),
+      idleAction: owned.idleAction ?? 'attack',
       maxCustomSlots: effectiveMaxCustomSlots(owned),
       stackSize: effectiveStackSize(owned),
     });
 
-    // Class label (Attack / Heal / Disguise on Idle) across the top.
+    // Class label (Ambusher / Healster / Disguiser) across the top.
     container.add(createIdleActionBadge(
       this.scene, 0, -SELECTOR_CARD_H / 2 + 4, owned.idleAction ?? 'attack', '8px',
     ));

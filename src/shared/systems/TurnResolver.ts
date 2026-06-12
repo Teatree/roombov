@@ -21,6 +21,7 @@
  */
 
 import { BALANCE } from '../config/balance.ts';
+import { HIDDEN_FEATURES } from '../config/features.ts';
 import { BOMB_CATALOG, PHOSPHORUS_FIRE_OFFSETS } from '../config/bombs.ts';
 import type {
   DroppedBody, MatchState, PlayerAction,
@@ -122,6 +123,8 @@ function cloneState(s: MatchState): MatchState {
       inventory: cloneInventory(b.inventory),
       statusEffects: (b.statusEffects ?? []).map(e => ({ ...e })),
       queuedPath: b.queuedPath ? b.queuedPath.map(t => ({ ...t })) : undefined,
+      assignedConsoles: b.assignedConsoles ? [...b.assignedConsoles] : undefined,
+      consolesUsed: b.consolesUsed ? [...b.consolesUsed] : undefined,
     })),
     chests: s.chests.map(c => ({ ...c, bombs: c.bombs.map(b => ({ ...b })) })),
     doors: (s.doors ?? []).map(d => ({ ...d, tiles: d.tiles.map(t => ({ ...t })) })),
@@ -261,6 +264,17 @@ export type TurnEvent =
   | { kind: 'died'; playerId: string; x: number; y: number; killerId: string | null }
   | { kind: 'escaped'; playerId: string; treasures: TreasureBundle; hatchX: number; hatchY: number }
   | { kind: 'key_pickup'; playerId: string; x: number; y: number; source: 'floor' | 'body' | 'chest'; newCount: number }
+  | {
+      kind: 'console_used';
+      playerId: string;
+      /** Index into map.consoleSpots of the console that was completed. */
+      consoleId: number;
+      /** Top-left tile of the console footprint. */
+      x: number;
+      y: number;
+      /** How many more consoles this bomberman still needs to escape. */
+      remaining: number;
+    }
   | { kind: 'treasures_collected'; playerId: string; treasures: TreasureBundle }
   | { kind: 'body_looted'; playerId: string; bodyId: string; treasures: TreasureBundle }
   | { kind: 'coins_picked_up'; playerId: string; amount: number; x: number; y: number; source: 'chest' | 'body' }
@@ -342,6 +356,12 @@ export function resolveTurn(
     }
     if (typeof b.idleStillTurns !== 'number') b.idleStillTurns = 0;
     if (typeof b.maxHp !== 'number' || b.maxHp <= 0) b.maxHp = b.hp;
+    // Console system fields (optional for back-compat with older snapshots
+    // and lean test factories).
+    if (!Array.isArray(b.assignedConsoles)) b.assignedConsoles = [];
+    if (!Array.isArray(b.consolesUsed)) b.consolesUsed = [];
+    if (typeof b.consoleIdleTurns !== 'number') b.consoleIdleTurns = 0;
+    if (b.consoleEngagedId === undefined) b.consoleEngagedId = null;
   }
 
   // Only alive, non-escaped Bombermen can act
@@ -1741,6 +1761,10 @@ export function resolveTurn(
         rushActive: false,
         teleportedThisTurn: false,
         onHatchIdleTurns: 0,
+        assignedConsoles: [],
+        consolesUsed: [],
+        consoleIdleTurns: 0,
+        consoleEngagedId: null,
         statusEffects: [],
         meleeTrapMode: false,
         idleStillTurns: 0,
@@ -1937,6 +1961,106 @@ export function resolveTurn(
     }
   }
 
+  // Players damaged this turn — shared by the console step (9.45) and the
+  // idle-action step (9.55); both treat "got hit" as a counter reset.
+  const damagedThisTurnIds = new Set<string>();
+  for (const e of events) {
+    if (e.kind === 'damaged') damagedThisTurnIds.add(e.playerId);
+    else if (e.kind === 'melee_attack') damagedThisTurnIds.add(e.victimId);
+  }
+
+  // --- 9.45. Console interaction (Console system — gates escape while
+  // HIDDEN_FEATURES.keys hides the keys requirement) ---
+  // A bomberman "engages" a console from any tile Chebyshev-adjacent to its
+  // footprint (consoles are solid 2×2 blocks, so you stand beside them).
+  // Engagement only counts toward consoles in the bomberman's assigned trio
+  // that they haven't used yet. Strict-idle channel: the counter increments
+  // only on consecutive idle, damage-free, un-stunned turns; moving,
+  // throwing, taking damage, or stepping out of range restarts the 3-turn
+  // wait. Completing a console flips it inactive for THIS bomberman only —
+  // trios are per-player, so two players can use the same console spot.
+  const consoleSpots = map.consoleSpots ?? [];
+  // Consoles are powered off for the first `activationDelayTurns` turns so
+  // the early game isn't a console rush — no engagement and no channel
+  // progress accrues while dark (counters held at zero).
+  const consolesPowered = state.turnNumber > BALANCE.consoles.activationDelayTurns;
+  // Players whose idle turn was spent channeling (or completing) a console —
+  // step 9.55 excludes them from Heal/Disguise progress.
+  const channeledThisTurnIds = new Set<string>();
+  for (const b of state.bombermen) {
+    if (!b.alive || b.escaped || b.isScav) continue;
+    if (!consolesPowered) {
+      b.consoleEngagedId = null;
+      b.consoleIdleTurns = 0;
+      continue;
+    }
+    const action = effectiveActions.get(b.playerId) ?? { kind: 'idle' as const };
+    const candidates = (b.assignedConsoles ?? []).filter(id => {
+      if ((b.consolesUsed ?? []).includes(id)) return false;
+      const box = consoleSpots[id];
+      if (!box) return false;
+      const dx = Math.max(box.x - b.x, b.x - (box.x + box.w - 1), 0);
+      const dy = Math.max(box.y - b.y, b.y - (box.y + box.h - 1), 0);
+      return Math.max(dx, dy) <= 1;
+    });
+    // Prefer the console already being channeled; else the lowest index.
+    const prevId = b.consoleEngagedId ?? null;
+    const engagedId = candidates.length === 0
+      ? null
+      : (prevId !== null && candidates.includes(prevId)) ? prevId : Math.min(...candidates);
+    b.consoleEngagedId = engagedId;
+    if (engagedId === null || action.kind !== 'idle' || isStunned(b)
+        || damagedThisTurnIds.has(b.playerId)) {
+      b.consoleIdleTurns = 0;
+      continue;
+    }
+    b.consoleIdleTurns = (b.consoleIdleTurns ?? 0) + 1;
+    channeledThisTurnIds.add(b.playerId);
+    if (b.consoleIdleTurns >= BALANCE.consoles.interactIdleTurns) {
+      b.consolesUsed = [...(b.consolesUsed ?? []), engagedId];
+      b.consoleIdleTurns = 0;
+      b.consoleEngagedId = null;
+      const box = consoleSpots[engagedId];
+      const required = Math.min(BALANCE.consoles.requiredToEscape, (b.assignedConsoles ?? []).length);
+      events.push({
+        kind: 'console_used',
+        playerId: b.playerId,
+        consoleId: engagedId,
+        x: box.x,
+        y: box.y,
+        remaining: Math.max(0, required - b.consolesUsed.length),
+      });
+      // Mini-flare pops out of the console's center, lighting the area at
+      // half a thrown flare's radius. Step 7 (flare aging + lightTiles
+      // derivation) already ran this turn, so derive this flare's light
+      // tiles inline — aging takes over from next turn.
+      const flareX = box.x + Math.floor(box.w / 2);
+      const flareY = box.y + Math.floor(box.h / 2);
+      const flareR = BALANCE.consoles.flareRadius;
+      state.flares.push({
+        id: `console_flare_${engagedId}_${b.playerId}`,
+        x: flareX,
+        y: flareY,
+        initialRadius: flareR,
+        turnsRemaining: BALANCE.consoles.flareTurns,
+        mini: true,
+      });
+      for (let dy = -flareR; dy <= flareR; dy++) {
+        for (let dx = -flareR; dx <= flareR; dx++) {
+          const tx = flareX + dx;
+          const ty = flareY + dy;
+          if (tx >= 0 && ty >= 0 && tx < map.width && ty < map.height) {
+            state.lightTiles.push({
+              x: tx, y: ty,
+              turnsRemaining: BALANCE.consoles.flareTurns,
+              kind: 'flare',
+            });
+          }
+        }
+      }
+    }
+  }
+
   // --- 9.5. Escape-hatch evaluation ---
   // Run after all position changes (movement in step 1, teleport in step 5)
   // and after death handling in step 9, so a bomberman killed on the hatch
@@ -1951,18 +2075,28 @@ export function resolveTurn(
     const action = effectiveActions.get(b.playerId) ?? { kind: 'idle' };
     const onHatch = state.escapeTiles.some(t => t.x === b.x && t.y === b.y);
     const onBrokenHatch = state.brokenHatches.some(t => t.x === b.x && t.y === b.y);
-    // Keys gate: requires the bomberman to be carrying the hatch unlock cost.
-    // Tutorial uses a reduced requirement (NEW_META §7) — see docs/NEW_META.md.
-    const keysCap = state.isTutorial === true
-      ? BALANCE.keys.tutorialRequiredPerHatch
-      : BALANCE.keys.requiredPerHatch;
-    const hasEnoughKeys = (b.keys ?? 0) >= keysCap;
-    if (onHatch && !onBrokenHatch && hasEnoughKeys && action.kind === 'idle') {
+    // Unlock gate. Keys hidden (Console system live): the bomberman must have
+    // used their required consoles — clamped to the assigned count, so maps
+    // without consoles (tutorial) gate nothing. Keys visible: the original
+    // carried-keys cost (tutorial reduced per NEW_META §7).
+    let requirementMet: boolean;
+    if (HIDDEN_FEATURES.keys) {
+      const consolesRequired = Math.min(
+        BALANCE.consoles.requiredToEscape, (b.assignedConsoles ?? []).length);
+      requirementMet = (b.consolesUsed ?? []).length >= consolesRequired;
+    } else {
+      const keysCap = state.isTutorial === true
+        ? BALANCE.keys.tutorialRequiredPerHatch
+        : BALANCE.keys.requiredPerHatch;
+      requirementMet = (b.keys ?? 0) >= keysCap;
+    }
+    if (onHatch && !onBrokenHatch && requirementMet && action.kind === 'idle') {
       b.onHatchIdleTurns += 1;
       if (b.onHatchIdleTurns >= BALANCE.escapeHatches.idleTurnsRequired) {
         b.escaped = true;
-        // Keys are spent on the hatch.
-        b.keys = 0;
+        // Keys are spent on the hatch (consoles are not consumed — the
+        // requirement is per-player progress, not a carried resource).
+        if (!HIDDEN_FEATURES.keys) b.keys = 0;
       }
     } else {
       b.onHatchIdleTurns = 0;
@@ -1975,11 +2109,7 @@ export function resolveTurn(
   // once their per-class threshold is reached. Moving, throwing, being stunned,
   // standing in smoke, or taking damage this turn all reset the counter (and
   // drop any active disguise) — the spec's "if attacked, the waiting resets".
-  const damagedThisTurnIds = new Set<string>();
-  for (const e of events) {
-    if (e.kind === 'damaged') damagedThisTurnIds.add(e.playerId);
-    else if (e.kind === 'melee_attack') damagedThisTurnIds.add(e.victimId);
-  }
+  // (`damagedThisTurnIds` is built above step 9.45 and shared with it.)
   for (const b of state.bombermen) {
     if (!b.alive || b.escaped) continue;
     if (b.idleAction === 'attack') continue; // handled by Melee Trap Mode
@@ -1997,6 +2127,16 @@ export function resolveTurn(
         b.disguiseFrame = undefined;
         events.push({ kind: 'disguise_removed', playerId: b.playerId, x: b.x, y: b.y });
       }
+      continue;
+    }
+
+    // Channeling a console owns this idle streak — no Heal/Disguise progress
+    // while the console hourglass runs (mirrors the heal-on-hatch guard).
+    // `channeledThisTurnIds` also covers the completion turn, where the
+    // engagement id has already been cleared by step 9.45.
+    if (channeledThisTurnIds.has(b.playerId)
+        || (b.consoleEngagedId !== null && b.consoleEngagedId !== undefined)) {
+      b.idleStillTurns = 0;
       continue;
     }
 

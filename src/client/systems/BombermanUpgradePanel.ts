@@ -134,6 +134,7 @@ export class BombermanUpgradePanel {
       y: heroTop,
       tier: owned.tier,
       level: upgradeLevel(owned),
+      idleAction: owned.idleAction ?? 'attack',
       maxCustomSlots: effectiveMaxCustomSlots(owned),
       stackSize: effectiveStackSize(owned),
     });

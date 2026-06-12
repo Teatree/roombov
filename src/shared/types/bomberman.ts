@@ -28,11 +28,12 @@ export type BombermanTier = 'free' | 'paid' | 'paid_expensive';
  */
 export type IdleAction = 'attack' | 'heal' | 'disguise';
 
-/** Human-facing label for an Idle Action class (UI badges + analytics). */
+/** Human-facing class name for an Idle Action (UI badges + analytics):
+ *  attack = "Ambusher", heal = "Healster", disguise = "Disguiser". */
 export const IDLE_ACTION_LABEL: Record<IdleAction, string> = {
-  attack: 'Attack',
-  heal: 'Heal',
-  disguise: 'Disguise',
+  attack: 'Ambusher',
+  heal: 'Healster',
+  disguise: 'Disguiser',
 };
 
 /**
@@ -283,6 +284,24 @@ export interface BombermanState {
    * Resets to 0 whenever the bomberman moves, throws, or steps off.
    */
   onHatchIdleTurns: number;
+  /**
+   * Console system (active while HIDDEN_FEATURES.keys hides the keys gate).
+   * Indices into `map.consoleSpots` assigned to this bomberman at match
+   * start — their personal trio of consoles to interact with before any
+   * escape hatch accepts them. Empty on maps without consoles (requirement
+   * derives to 0). Optional for back-compat; resolver backfills.
+   */
+  assignedConsoles?: number[];
+  /** Indices of assigned consoles this bomberman has completed. */
+  consolesUsed?: number[];
+  /**
+   * Consecutive damage-free idle turns spent engaged with the current
+   * console (Chebyshev ≤ 1). Console completes at
+   * BALANCE.consoles.interactIdleTurns. Resets on move/throw/damage/leave.
+   */
+  consoleIdleTurns?: number;
+  /** Index of the console currently being interacted with, or null. */
+  consoleEngagedId?: number | null;
   /** Active status effects (Stunned from Flash, etc.). Empty by default. */
   statusEffects: StatusEffect[];
   /**

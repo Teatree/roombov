@@ -476,6 +476,11 @@ export class TutorialMatchBackend implements MatchBackend {
       rushActive: false,
       teleportedThisTurn: false,
       onHatchIdleTurns: 0,
+      // No consoles on the tutorial map — escape requirement derives to 0.
+      assignedConsoles: [],
+      consolesUsed: [],
+      consoleIdleTurns: 0,
+      consoleEngagedId: null,
       statusEffects: [],
       meleeTrapMode: false,
       idleStillTurns: 0,

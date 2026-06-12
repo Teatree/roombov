@@ -125,6 +125,10 @@ interface BombermanMap {
    *  layer. The game spawns a fraction of these per match (rendered from
    *  disguise_objects.png). */
   decorSpots: { x: number; y: number }[];
+  /** Console footprints from the `Consoles` tile layer — each connected
+   *  cluster of marker tiles becomes one console (bounding box, tile coords).
+   *  Each bomberman is assigned a trio of these per match (by index). */
+  consoleSpots: { x: number; y: number; w: number; h: number }[];
   doors: { id: number; tiles: { x: number; y: number }[]; orientation: 'horizontal' | 'vertical' }[];
   tutorial?: {
     bot1: { x: number; y: number };
@@ -520,6 +524,63 @@ if (decorLayer) {
   console.log('Decor spots: 0 (no "Objects2" tile layer found)');
 }
 
+// Scan the "Consoles" tile layer — each connected cluster of painted marker
+// tiles (typically 2×2: a 32×32 px console on the 16 px grid) becomes ONE
+// console, emitted as its bounding box. At runtime each bomberman is
+// assigned a seeded trio of these (by index); the game renders consoles.png
+// over the footprint (frame 1 = active for that player, frame 0 = inactive).
+// The marker layer is stripped from the public visual .tmj below so raw
+// tiles never render. Footprint tiles are expected to be solid in the
+// Collision layer — players interact from the surrounding ring of tiles.
+const consoleLayer = tileLayers.find(l => l.name.toLowerCase() === 'consoles');
+const consoleSpots: { x: number; y: number; w: number; h: number }[] = [];
+if (consoleLayer) {
+  const markerTiles = new Set<string>();
+  for (let row = 0; row < finalH; row++) {
+    for (let col = 0; col < finalW; col++) {
+      if (readGid(consoleLayer, col, row) !== 0) markerTiles.add(`${col},${row}`);
+    }
+  }
+  const visitedConsoles = new Set<string>();
+  for (const key of markerTiles) {
+    if (visitedConsoles.has(key)) continue;
+    const [sx, sy] = key.split(',').map(Number);
+    const group: { x: number; y: number }[] = [];
+    const queue = [{ x: sx, y: sy }];
+    visitedConsoles.add(key);
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      group.push(cur);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nk = `${cur.x + dx},${cur.y + dy}`;
+        if (markerTiles.has(nk) && !visitedConsoles.has(nk)) {
+          visitedConsoles.add(nk);
+          queue.push({ x: cur.x + dx, y: cur.y + dy });
+        }
+      }
+    }
+    const minX = Math.min(...group.map(t => t.x));
+    const minY = Math.min(...group.map(t => t.y));
+    const maxX = Math.max(...group.map(t => t.x));
+    const maxY = Math.max(...group.map(t => t.y));
+    consoleSpots.push({ x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 });
+  }
+  // Stable order so per-match seeded assignment is deterministic across runs.
+  consoleSpots.sort((a, b) => a.y - b.y || a.x - b.x);
+  for (const c of consoleSpots) {
+    for (let yy = c.y; yy < c.y + c.h; yy++) {
+      for (let xx = c.x; xx < c.x + c.w; xx++) {
+        if (grid[yy]?.[xx] === 0) {
+          console.warn(`⚠ Console footprint tile (${xx},${yy}) is walkable — expected solid Collision under consoles.`);
+        }
+      }
+    }
+  }
+  console.log(`Consoles: ${consoleSpots.length}${consoleSpots.length > 0 ? ' → ' + consoleSpots.map(c => `(${c.x},${c.y} ${c.w}x${c.h})`).join(', ') : ''}`);
+} else {
+  console.log('Consoles: 0 (no "Consoles" tile layer found)');
+}
+
 // Scan "Doors" tile layer — find connected groups of door tiles
 const doorLayer = tileLayers.find(l => l.name.toLowerCase() === 'doors');
 const doors: BombermanMap['doors'] = [];
@@ -616,6 +677,7 @@ const output: BombermanMap = {
   chestZones,
   keySpawns,
   decorSpots,
+  consoleSpots,
   doors,
   ...(tutorial ? { tutorial } : {}),
 };
@@ -710,7 +772,8 @@ if (existsSync(join(publicMapsDir, '..'))) {
         const ln = (l.name ?? '').toLowerCase();
         // `Objects2` is a marker-only layer (decor candidate spots); the game
         // spawns its own random subset at runtime, so it must not render here.
-        if (l.type === 'tilelayer' && (ln === 'doors' || ln === 'objects2')) {
+        // `Consoles` is likewise marker-only (console candidate spots).
+        if (l.type === 'tilelayer' && (ln === 'doors' || ln === 'objects2' || ln === 'consoles')) {
           console.log(`  stripping data-only tile layer: ${l.name}`);
           layers.splice(i, 1);
         } else if (l.type === 'group' && l.layers) {

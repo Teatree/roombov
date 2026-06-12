@@ -74,8 +74,9 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   { kind: 'dialogue', portrait: 'char4', text: "Now let's find some real bomb!" },
 
   // --- Beat 3: Chest Loot ------------------------------------------------
-  // Hand-placed chest at (10, 10): 75 coins, 1 key, 1 Flare, 1 Bomb.
-  // (Treasures removed in NEW_META §7 to keep the tutorial chest focused.)
+  // Hand-placed chest at (10, 10): 75 coins, 1 Flare, 1 Bomb.
+  // (Treasures removed in NEW_META §7; the key removed when the Keys system
+  // was hidden behind HIDDEN_FEATURES.keys — see HIDDEN_STUFF.md.)
   {
     kind: 'spawnChest',
     chestId: 'tut_chest',
@@ -84,7 +85,7 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
     y: 10,
     treasures: {},
     coins: 75,
-    keys: 1,
+    keys: 0,
     bombs: [
       { type: 'flare', count: 1 },
       { type: 'bomb', count: 1 },
@@ -105,7 +106,7 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   { kind: 'waitForAction', expected: { kind: 'lootBomb', sourceKind: 'chest', bombType: 'bomb' } },
   { kind: 'clearHighlight' },
   { kind: 'dialogue', portrait: 'char4_neutral', text: 'Coins go straight to your wallet, bet you saw them fly in.' },
-  { kind: 'dialogue', portrait: 'char4_neutral', text: "That KEY is for the escape hatch. You'll need it to extract. But that's later." },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: "One more thing: in real matches you must hack 3 CONSOLES before the escape hatch lets you out. Stand next to one and wait. But that's later." },
 
   // --- Beat 4: Flare + Bomb kill (Bot1 at (17, 10)) ----------------------
   {
@@ -338,7 +339,7 @@ export const TUTORIAL_SCRIPT: TutorialStep[] = [
   // here was unreliable and left players stuck on the hatch tile.
   { kind: 'waitForAction', expected: { kind: 'reachTile', x: 25, y: 5 } },
   { kind: 'clearHighlight' },
-  { kind: 'dialogue', portrait: 'char4_neutral', text: "You don't have enough Keys to extract, but I'll spot you this one time." },
+  { kind: 'dialogue', portrait: 'char4_neutral', text: "You haven't hacked any Consoles, but I'll spot you this one time." },
 
   // --- Epilogue ----------------------------------------------------------
   { kind: 'dialogue', portrait: 'char4_neutral', text: 'Anywwaym, you learned a bunch of shit: moving, looting, throwing, dodging, ambushing, masturbating, escaping, all the things you will ever need' },

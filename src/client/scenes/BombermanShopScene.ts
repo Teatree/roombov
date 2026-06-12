@@ -477,6 +477,7 @@ export class BombermanShopScene extends Phaser.Scene {
       x: 64, y: -CARD_HEIGHT / 2 + 14,
       tier: template.tier,
       level: 1, // shop templates are always level 1 (no upgrades yet)
+      idleAction: template.idleAction ?? 'attack',
       maxCustomSlots: template.maxCustomSlots,
       stackSize: template.stackSize,
       tooltipSide: 'below',

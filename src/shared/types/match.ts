@@ -109,6 +109,9 @@ export interface ActiveFlare {
    * flash/light tile rendering.
    */
   kind?: 'flare' | 'phosphorus' | 'motion_detector';
+  /** Render the flame at half size — set on console-completion mini-flares
+   *  (their reveal radius is also halved via `initialRadius`). */
+  mini?: boolean;
 }
 
 export type TurnPhase = 'input' | 'transition' | 'ended';

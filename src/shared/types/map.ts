@@ -79,6 +79,16 @@ export interface MapData {
    * a disguised player blends in. Optional for back-compat with older maps.
    */
   decorSpots?: TileCoord[];
+  /**
+   * Console footprints from the Tiled `Consoles` tile layer. Each painted
+   * cluster of marker tiles (typically 2×2 — a 32×32 px console on the 16 px
+   * grid, solid in the Collision layer) becomes one console, stored as its
+   * bounding box in tile coords. At match start every bomberman is assigned
+   * BALANCE.consoles.perPlayer of these (by index into this array) as their
+   * personal trio to interact with — from any tile Chebyshev-adjacent to the
+   * footprint — before they can use an escape hatch. Optional for back-compat.
+   */
+  consoleSpots?: Zone[];
   /** Double doors detected from the Doors tile layer. */
   doors: DoorDef[];
   /** Optional tutorial-specific point references parsed from the Tutorial object layer. */

@@ -1,5 +1,6 @@
 import type { BombType } from '@shared/types/bombs.ts';
 import { BOMB_CATALOG } from '@shared/config/bombs.ts';
+import { HIDDEN_FEATURES } from '@shared/config/features.ts';
 
 export type TooltipIcon =
   | { kind: 'bomb'; bombType: BombType }
@@ -160,15 +161,26 @@ export function tooltipDataFor(key: TooltipKey): TooltipData {
         parts: [{ text: 'Stand on it to ' }, { text: 'loot', bold: true }, { text: '.' }],
       };
     case 'tileHatch':
+      // Keys hidden → the requirement is hacked consoles, shown with the
+      // Console system's computer emoji (the caller already feeds console
+      // counts into held/required while the flag is on).
       return {
         icon: { kind: 'shape', shape: 'hatch' },
-        parts: [
-          { text: 'Stand on it to ' },
-          { text: 'Escape', bold: true },
-          { text: '. Needs ' },
-          { text: `${key.held}/${key.required}`, bold: true },
-          { text: ' keys.' },
-        ],
+        parts: HIDDEN_FEATURES.keys
+          ? [
+              { text: 'Stand on it to ' },
+              { text: 'Escape', bold: true },
+              { text: '. Needs ' },
+              { text: `🖥 ${key.held}/${key.required}`, bold: true },
+              { text: ' consoles.' },
+            ]
+          : [
+              { text: 'Stand on it to ' },
+              { text: 'Escape', bold: true },
+              { text: '. Needs ' },
+              { text: `${key.held}/${key.required}`, bold: true },
+              { text: ' keys.' },
+            ],
       };
     case 'tileKey':
       return {

@@ -20,6 +20,7 @@ import { getSeeThroughTileSet, hasLineOfSight } from '../shared/systems/LineOfSi
 import { shapeTiles } from '../shared/systems/BombResolver.ts';
 import { BOMB_CATALOG } from '../shared/config/bombs.ts';
 import { BALANCE } from '../shared/config/balance.ts';
+import { HIDDEN_FEATURES } from '../shared/config/features.ts';
 
 type BotState = 'explore' | 'fight' | 'escape';
 
@@ -214,8 +215,17 @@ export class BotPlayer {
   ): void {
     const cfg = BALANCE.bots;
 
-    // ESCAPE overrides everything
-    if (state.turnNumber >= BALANCE.match.turnLimit * cfg.escapeThreshold) {
+    // ESCAPE overrides everything. Console system: bots start working their
+    // console trio once botStartFraction of the match has elapsed (earlier
+    // than the legacy escapeThreshold, since the trio takes time), and head
+    // for a hatch via escapeAction once it's done.
+    const consolesRequired = Math.min(
+      BALANCE.consoles.requiredToEscape, (me.assignedConsoles ?? []).length);
+    const consolesPending = HIDDEN_FEATURES.keys
+      && (me.consolesUsed ?? []).length < consolesRequired;
+    if (state.turnNumber >= BALANCE.match.turnLimit * cfg.escapeThreshold
+        || (consolesPending
+            && state.turnNumber >= BALANCE.match.turnLimit * BALANCE.consoles.botStartFraction)) {
       this.aiState = 'escape';
       return;
     }
@@ -274,18 +284,36 @@ export class BotPlayer {
   // ---- Actions ----
 
   private escapeAction(me: BombermanState, state: MatchState, map: MapData): PlayerAction {
-    // Hatches require BALANCE.keys.requiredPerHatch keys before they'll
-    // accept us. Post-NEW_META §5: keys live inside chests, so if we're
-    // short, divert to the nearest known unlooted chest first.
-    const cap = BALANCE.keys.requiredPerHatch;
-    if ((me.keys ?? 0) < cap) {
-      const chestTarget = this.findNearestUnlootedChest(me, state, map);
-      if (chestTarget) {
-        const path = findPath(me.x, me.y, chestTarget.x, chestTarget.y, map);
-        if (path.length > 0) return this.pathStep(me, path, state);
+    if (HIDDEN_FEATURES.keys) {
+      // Console system: work through the assigned trio before heading to a
+      // hatch. Stand beside the nearest pending console and idle — the
+      // resolver counts the channel turns (step 9.45).
+      const required = Math.min(
+        BALANCE.consoles.requiredToEscape, (me.assignedConsoles ?? []).length);
+      if ((me.consolesUsed ?? []).length < required) {
+        const approach = this.findNearestConsoleApproach(me, map);
+        if (approach) {
+          if (approach.x === me.x && approach.y === me.y) return { kind: 'idle' };
+          const path = findPath(me.x, me.y, approach.x, approach.y, map);
+          if (path.length > 0) return this.pathStep(me, path, state);
+        }
+        // No reachable pending console — explore (doors may need opening).
+        return this.exploreAction(me, state, map, new Set());
       }
-      // No reachable known chest — fall through to exploration to find more.
-      return this.exploreAction(me, state, map, new Set());
+    } else {
+      // Hatches require BALANCE.keys.requiredPerHatch keys before they'll
+      // accept us. Post-NEW_META §5: keys live inside chests, so if we're
+      // short, divert to the nearest known unlooted chest first.
+      const cap = BALANCE.keys.requiredPerHatch;
+      if ((me.keys ?? 0) < cap) {
+        const chestTarget = this.findNearestUnlootedChest(me, state, map);
+        if (chestTarget) {
+          const path = findPath(me.x, me.y, chestTarget.x, chestTarget.y, map);
+          if (path.length > 0) return this.pathStep(me, path, state);
+        }
+        // No reachable known chest — fall through to exploration to find more.
+        return this.exploreAction(me, state, map, new Set());
+      }
     }
 
     // Find nearest escape tile
@@ -317,6 +345,39 @@ export class BotPlayer {
       if (path.length === 0) continue;
       // Path length from findPath is the step count to reach the target.
       if (path.length < bestDist) { bestDist = path.length; best = { x: c.x, y: c.y }; }
+    }
+    return best;
+  }
+
+  /** Nearest walkable tile adjacent to one of this bot's pending consoles
+   *  (assigned, not yet used). Consoles are solid footprints — the bot
+   *  channels them from the surrounding ring. Returns the bot's own tile if
+   *  it is already in channel range, or null if nothing is reachable. */
+  private findNearestConsoleApproach(
+    me: BombermanState, map: MapData,
+  ): { x: number; y: number } | null {
+    const spots = map.consoleSpots ?? [];
+    const pending = (me.assignedConsoles ?? [])
+      .filter(id => !(me.consolesUsed ?? []).includes(id) && spots[id]);
+    let best: { x: number; y: number } | null = null;
+    let bestDist = Infinity;
+    for (const id of pending) {
+      const box = spots[id];
+      // Already in range of this one — stay put and channel.
+      const dx = Math.max(box.x - me.x, me.x - (box.x + box.w - 1), 0);
+      const dy = Math.max(box.y - me.y, me.y - (box.y + box.h - 1), 0);
+      if (Math.max(dx, dy) <= 1) return { x: me.x, y: me.y };
+      // Ring of tiles around the footprint (footprint itself is solid).
+      for (let ty = box.y - 1; ty <= box.y + box.h; ty++) {
+        for (let tx = box.x - 1; tx <= box.x + box.w; tx++) {
+          const insideBox = tx >= box.x && tx < box.x + box.w && ty >= box.y && ty < box.y + box.h;
+          if (insideBox) continue;
+          if (map.grid[ty]?.[tx] !== TileType.FLOOR) continue;
+          const path = findPath(me.x, me.y, tx, ty, map);
+          if (path.length === 0) continue;
+          if (path.length < bestDist) { bestDist = path.length; best = { x: tx, y: ty }; }
+        }
+      }
     }
     return best;
   }
@@ -442,13 +503,16 @@ export class BotPlayer {
 
     // Prefer a known unlooted chest while below the key cap — chests are
     // the only key source post-NEW_META §5, so they're a higher-value
-    // pick than blind exploration.
-    const cap = BALANCE.keys.requiredPerHatch;
-    if ((me.keys ?? 0) < cap) {
-      const chestTarget = this.findNearestUnlootedChest(me, state, map);
-      if (chestTarget) {
-        const path = findPath(me.x, me.y, chestTarget.x, chestTarget.y, map);
-        if (path.length > 0) return this.pathStep(me, path, state);
+    // pick than blind exploration. (Keys hidden → consoles gate escape and
+    // are handled in escapeAction; chests carry no keys, so skip the detour.)
+    if (!HIDDEN_FEATURES.keys) {
+      const cap = BALANCE.keys.requiredPerHatch;
+      if ((me.keys ?? 0) < cap) {
+        const chestTarget = this.findNearestUnlootedChest(me, state, map);
+        if (chestTarget) {
+          const path = findPath(me.x, me.y, chestTarget.x, chestTarget.y, map);
+          if (path.length > 0) return this.pathStep(me, path, state);
+        }
       }
     }
 

@@ -4,6 +4,7 @@ import { TileType, type MapData } from '../src/shared/types/map.ts';
 import type { MatchState, PlayerAction, DroppedBody } from '../src/shared/types/match.ts';
 import type { BombermanState } from '../src/shared/types/bomberman.ts';
 import { BALANCE } from '../src/shared/config/balance.ts';
+import { HIDDEN_FEATURES } from '../src/shared/config/features.ts';
 
 function openMap(size = 10, hatchX = 5, hatchY = 5): MapData {
   const grid: TileType[][] = [];
@@ -162,9 +163,14 @@ describe('Keys system', () => {
   });
 
   it('test_keys_escapeBlocked_whenBelowCap', () => {
-    // Arrange — on hatch, idle, 0 keys, not tutorial.
+    // Arrange — on hatch, idle, 0 keys, not tutorial. While the Keys system
+    // is hidden (HIDDEN_FEATURES.keys) the hatch is gated by consoles
+    // instead, so also give the bomberman an unmet console trio — the escape
+    // must stay blocked under either flag state.
     const map = openMap();
     const bm = makeBomberman('p1', 5, 5, { keys: 0 });
+    bm.assignedConsoles = [0, 1, 2];
+    bm.consolesUsed = [];
     const state = makeState({ bombermen: [bm] });
 
     // Act
@@ -187,9 +193,11 @@ describe('Keys system', () => {
     const afterFirst = resolveTurn(state, idleActions(['p1']), map).state;
     const { state: next, events } = resolveTurn(afterFirst, idleActions(['p1']), map);
 
-    // Assert
+    // Assert — keys are only consumed while the Keys system is live; with
+    // keys hidden the escape goes through the (empty) console requirement
+    // and the carried keys are untouched.
     expect(next.bombermen[0].escaped).toBe(true);
-    expect(next.bombermen[0].keys).toBe(0);
+    expect(next.bombermen[0].keys).toBe(HIDDEN_FEATURES.keys ? cap : 0);
     expect(next.brokenHatches).toEqual([{ x: 5, y: 5 }]);
     expect(events.filter(e => e.kind === 'escaped')).toHaveLength(1);
   });

@@ -22,4 +22,12 @@ export const HIDDEN_FEATURES = {
    * income from chests. Profile stashes keep persisting untouched.
    */
   treasures: true,
+  /**
+   * Keys system. Hides key distribution into chests, the key HUD counter,
+   * hatch lock badges, and key tooltips, and switches the escape-hatch
+   * requirement from carried keys to the Console system (interact with your
+   * 3 assigned consoles). Key pickup plumbing stays intact — no keys enter
+   * circulation while hidden.
+   */
+  keys: true,
 };

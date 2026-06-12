@@ -644,6 +644,7 @@ export class BombsShopScene extends Phaser.Scene {
       x: 30, y: -28,
       tier: equipped.tier,
       level: upgradeLevel(equipped),
+      idleAction: equipped.idleAction ?? 'attack',
       maxCustomSlots: effSlots,
       stackSize: effStack,
       tooltipSide: 'left',
@@ -674,7 +675,7 @@ export class BombsShopScene extends Phaser.Scene {
     }
     container.add(meter);
 
-    // Class label (Attack / Heal / Disguise on Idle), tucked under the meter.
+    // Class label (Ambusher / Healster / Disguiser), tucked under the meter.
     container.add(createIdleActionBadge(this, textX, 60, equipped.idleAction ?? 'attack', '10px')
       .setOrigin(0, 0));
 

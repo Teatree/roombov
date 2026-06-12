@@ -1,6 +1,6 @@
 /**
  * Idle Action "class" badge — a small colored label identifying a Bomberman's
- * class (Attack / Heal / Disguise on Idle) in the Bomberman Shop and Upgrade
+ * class (Ambusher / Healster / Disguiser) in the Bomberman Shop and Upgrade
  * panel. Color matches the per-class tint hue family and the in-match under-feet
  * shape, so the shop reads consistently with the battlefield.
  */
@@ -15,9 +15,9 @@ export const IDLE_ACTION_TEXT_COLOR: Record<IdleAction, string> = {
   disguise: '#ffcc44',
 };
 
-/** Full label shown to the player, e.g. "Heal on Idle". */
+/** Class name shown to the player, e.g. "Healster". */
 export function idleActionLongLabel(idleAction: IdleAction): string {
-  return `${IDLE_ACTION_LABEL[idleAction] ?? 'Attack'} on Idle`;
+  return IDLE_ACTION_LABEL[idleAction] ?? IDLE_ACTION_LABEL.attack;
 }
 
 /**

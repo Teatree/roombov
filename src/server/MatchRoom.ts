@@ -45,7 +45,7 @@ type TypedServer = Server<ClientToServerEvents, ServerToClientEvents>;
 /**
  * Build the `bombermanName` string logged to analytics. Folds the Idle Action
  * class and total upgrade count into the display name (no new column), e.g.
- * "Foley - Class: Heal - Upg: 1". `Upg` is 1 + total upgrade tiers, so an
+ * "Foley - Class: Healster - Upg: 1". `Upg` is 1 + total upgrade tiers, so an
  * un-upgraded Bomberman reads "Upg: 1".
  */
 function analyticsBombermanName(
@@ -401,12 +401,28 @@ export class MatchRoom {
         rushActive: false,
         teleportedThisTurn: false,
         onHatchIdleTurns: 0,
+        // Console trio assigned below, once all bombermen exist.
+        assignedConsoles: [],
+        consolesUsed: [],
+        consoleIdleTurns: 0,
+        consoleEngagedId: null,
         statusEffects: [],
         meleeTrapMode: false,
         idleStillTurns: 0,
         sp: 0,
       };
     });
+
+    // Console system: each bomberman (players AND bots) gets a personal
+    // seeded-random trio of the map's console spots (by index). Independent
+    // per bomberman — two players may share a console spot and both use it.
+    // Maps without a Consoles layer assign none, which derives the escape
+    // requirement to 0 (see TurnResolver step 9.5).
+    const consoleIdx = (this.map.consoleSpots ?? []).map((_, i) => i);
+    for (const bm of bombermen) {
+      bm.assignedConsoles = seededShuffle(rng, consoleIdx)
+        .slice(0, Math.min(BALANCE.consoles.perPlayer, consoleIdx.length));
+    }
 
     // Seeded chests: zones are type-agnostic. Expand CHEST_SPAWN_TABLE into
     // a flat tier pool (e.g. [1,1,1,1,1,1,1, 2,2,2, 3]), shuffle both the
@@ -454,7 +470,9 @@ export class MatchRoom {
     // Keys-in-chests distribution (NEW_META §4): allocate BALANCE.keys.totalOnMap
     // keys across spawned chests by weighted random pick over CHEST_CONFIG[tier].keyWeight.
     // Multiple keys on the same chest accumulate. No per-chest cap.
-    if (chests.length > 0) {
+    // Keys hidden (Console system live): no keys enter circulation at all —
+    // the pickup plumbing stays intact but never fires. See HIDDEN_STUFF.md.
+    if (!HIDDEN_FEATURES.keys && chests.length > 0) {
       const chestWeights = chests.map(c => CHEST_CONFIG[c.tier].keyWeight);
       const totalWeight = chestWeights.reduce((a, b) => a + b, 0);
       if (totalWeight > 0) {

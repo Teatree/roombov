@@ -127,9 +127,14 @@ describe('Idle Action — Heal on Idle', () => {
   });
 
   it('test_healOnIdle_onEscapeHatch_doesNotHeal', () => {
-    // Arrange — hurt heal-class bomberman parked on a hatch (no keys → no escape).
+    // Arrange — hurt heal-class bomberman parked on a hatch. The escape must
+    // stay blocked so the heal guard is what's under test: 0 keys blocks it
+    // while the Keys system is live, and an unmet console trio blocks it
+    // while keys are hidden (Console system).
     const map = floorMap();
     const bm = makeBomberman('p1', 4, 4, { idleAction: 'heal', hp: 1, maxHp: 2, keys: 0 });
+    bm.assignedConsoles = [0, 1, 2];
+    bm.consolesUsed = [];
     const state = makeState([bm], { escapeTiles: [{ x: 4, y: 4 }] });
 
     // Act — idle past the heal threshold while standing on the hatch.

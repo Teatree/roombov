@@ -149,6 +149,30 @@ export const BALANCE = {
      *  Used when state.isTutorial === true. See docs/NEW_META.md §7. */
     tutorialRequiredPerHatch: 1,
   },
+  consoles: {
+    /** Consoles stay dark (inactive + non-channelable) for this many full
+     *  turns from match start (~30s at 3s/turn) so the early game isn't a
+     *  console rush; they power on when the next turn begins. */
+    activationDelayTurns: 10,
+    /** Console spots seeded-randomly assigned to each bomberman at match
+     *  start (their personal trio). Fewer if the map declares fewer spots. */
+    perPlayer: 3,
+    /** Consoles a bomberman must use before any hatch accepts them. Clamped
+     *  to the assigned count, so a map with no consoles gates nothing. */
+    requiredToEscape: 3,
+    /** Consecutive damage-free idle turns within Chebyshev 1 of an assigned
+     *  active console required to use it. The arrival turn (action 'move')
+     *  does not count — mirrors escapeHatches.idleTurnsRequired. */
+    interactIdleTurns: 3,
+    /** Bots ignore consoles until this fraction of the turn limit has
+     *  elapsed, then start seeking their trio so they can extract. */
+    botStartFraction: 0.6,
+    /** Mini-flare fired from the console's center when a player completes
+     *  it: Chebyshev reveal radius — half a thrown flare's 4 — and lifetime
+     *  in turns (matches a thrown flare's visible lifetime). */
+    flareRadius: 2,
+    flareTurns: 3,
+  },
   escapeHatches: {
     /** Number of escape hatches spawned per match — chosen at random from the
      *  map's pre-authored `escapeTiles[]` candidate pool. If the map declares
@@ -213,20 +237,15 @@ export const BALANCE = {
       /** +1 SP per N turns the Bomberman is alive in-match. */
       perSurvivalTurns: 5,
     },
-    // Calibration:
-    //   avg extraction ≈ 65 SP (2 chest opens = 10, 1 player kill = 50,
-    //   25 turns survived = 5). First tier on every track is a cheap taster
-    //   (cap 30 / stack 50 / hp 50 SP, 2026-06-10) so a new player can buy
-    //   one upgrade within their first game; later tiers keep the original
-    //   multi-extraction targets.
-    // Coin costs bumped 2026-06-10 when the treasure cost was waived
-    // (HIDDEN_FEATURES.treasures — see features.ts + HIDDEN_STUFF.md): each
-    // tier's coins absorb its old treasure cost, valued as
-    // (treasure amount / avg per-run haul) × ~300 coins per-run income,
-    // rounded (avg hauls: mushrooms ~206, coffee ~46, grapes ~22 per run).
-    // Old coins: cap 350/800, stack 300/700/1500, hp 2200. The `treasure`
-    // fields are kept (un-charged while hidden) for an eventual un-hide —
-    // restore the old coin values if that happens.
+    // Calibration (repriced 2026-06-12): SP doubles per tier within a track
+    // (cap 100→200, stack 50→100→200) and coins are the softer secondary
+    // gate; HP is the SP-heavy capstone (300 SP ≈ 4-5 decent extractions).
+    // Avg extraction ≈ 65 SP (2 chest opens = 10, 1 player kill = 50,
+    // 25 turns survived = 5), so stack lvl1 is buyable within one good game.
+    // The `treasure` fields are NOT charged while HIDDEN_FEATURES.treasures
+    // is on (see features.ts + HIDDEN_STUFF.md) — kept for an eventual
+    // un-hide; the pre-hide coin values were cap 350/800, stack 300/700/1500,
+    // hp 2200 if that pricing era needs restoring.
     cap: {
       /** Per-Bomberman upgrade slots available. */
       maxTiers: 2,
@@ -235,17 +254,17 @@ export const BALANCE = {
       treasure: 'mushrooms' as const,
       /** Cost array, indexed by tier-applied count. */
       tiers: [
-        { sp: 30, coins: 400, treasure: 12 },   // first-upgrade taster (<1 game)
-        { sp: 480, coins: 900, treasure: 25 },  // ~7.4 games
+        { sp: 100, coins: 500, treasure: 12 },
+        { sp: 200, coins: 750, treasure: 25 },
       ] as Array<{ sp: number; coins: number; treasure: number }>,
     },
     stack: {
       maxTiers: 3,
       treasure: 'coffee' as const,
       tiers: [
-        { sp: 50, coins: 350, treasure: 8 },    // first-upgrade taster (<1 game)
-        { sp: 340, coins: 850, treasure: 18 },  // ~5.2 games
-        { sp: 760, coins: 1800, treasure: 38 }, // ~11.7 games
+        { sp: 50, coins: 250, treasure: 8 },
+        { sp: 100, coins: 400, treasure: 18 },
+        { sp: 200, coins: 600, treasure: 38 },
       ] as Array<{ sp: number; coins: number; treasure: number }>,
     },
     hp: {
@@ -254,7 +273,7 @@ export const BALANCE = {
       cap: 3,
       treasure: 'grapes' as const,
       tiers: [
-        { sp: 50, coins: 3000, treasure: 60 },  // first-upgrade taster SP; coins carry the gate
+        { sp: 300, coins: 500, treasure: 60 },
       ] as Array<{ sp: number; coins: number; treasure: number }>,
     },
   },

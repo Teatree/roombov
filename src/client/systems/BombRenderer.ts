@@ -274,7 +274,10 @@ export class BombRenderer {
     for (const f of flares) {
       seen.add(f.id);
       if (!this.flareVisuals.has(f.id)) {
-        this.flareVisuals.set(f.id, this.createFlareFlame(f.x, f.y, f.turnsRemaining, f.kind ?? 'flare'));
+        this.flareVisuals.set(
+          f.id,
+          this.createFlareFlame(f.x, f.y, f.turnsRemaining, f.kind ?? 'flare', f.mini ? 0.5 : 1),
+        );
       } else {
         this.flareVisuals.get(f.id)!.updateTurns?.(f.turnsRemaining);
       }
@@ -973,10 +976,13 @@ export class BombRenderer {
   }
 
   /** Public — used by MatchScene to play the flare-flash burst for each
-   *  UAV-spawned flare. Identical to the burst player flares produce on
-   *  detonation (rendered into the explosionLayer). */
-  flareFlash(tile: Tile, durationMs: number): void {
+   *  UAV-spawned flare and (at half size) for console-completion
+   *  mini-flares. Identical to the burst player flares produce on
+   *  detonation (rendered into the explosionLayer). `sizeScale` scales the
+   *  whole burst — 0.5 for mini-flares, 1 (default) otherwise. */
+  flareFlash(tile: Tile, durationMs: number, sizeScale = 1): void {
     const ts = this.tileSize;
+    const fs = ts * sizeScale;
     const cx = tile.x * ts + ts / 2;
     const cy = tile.y * ts + ts / 2;
 
@@ -992,10 +998,10 @@ export class BombRenderer {
         g.clear();
         // Outer glow
         g.fillStyle(0xffffff, (1 - t) * 0.6);
-        g.fillCircle(cx, cy, ts * (0.5 + 1.5 * t));
+        g.fillCircle(cx, cy, fs * (0.5 + 1.5 * t));
         // Inner core
         g.fillStyle(0xffffee, (1 - t) * 0.9);
-        g.fillCircle(cx, cy, ts * (0.3 + 0.5 * t));
+        g.fillCircle(cx, cy, fs * (0.3 + 0.5 * t));
       },
       onComplete: () => g.destroy(),
     });
@@ -1008,7 +1014,7 @@ export class BombRenderer {
       ray.lineStyle(2, 0xffffcc, 0.9);
       ray.beginPath();
       ray.moveTo(cx, cy);
-      ray.lineTo(cx + Math.cos(angle) * ts * 0.5, cy + Math.sin(angle) * ts * 0.5);
+      ray.lineTo(cx + Math.cos(angle) * fs * 0.5, cy + Math.sin(angle) * fs * 0.5);
       ray.strokePath();
       this.scene.tweens.add({
         targets: ray,
@@ -1868,8 +1874,13 @@ export class BombRenderer {
     y: number,
     turnsRemaining: number,
     kind: 'flare' | 'phosphorus' | 'motion_detector' = 'flare',
+    /** Flame size multiplier — 0.5 for console mini-flares, 1 otherwise.
+     *  Position and the turn-dot row are unaffected. */
+    sizeScale = 1,
   ): FlareVisual {
     const ts = this.tileSize;
+    // All flame/glow dimensions derive from `fs` so the whole visual scales.
+    const fs = ts * sizeScale;
     const cx = x * ts + ts / 2;
     const cy = y * ts + ts / 2;
 
@@ -1888,13 +1899,13 @@ export class BombRenderer {
       g.clear();
       // Intensity scales with turns remaining: 3=bright, 2=medium, 1=dim
       const intensity = currentTurns / 3;
-      const flameH = ts * (0.3 + 0.15 * intensity);
-      const flameW = ts * (0.15 + 0.1 * intensity);
-      const wobble = Math.sin(phase) * ts * 0.03;
+      const flameH = fs * (0.3 + 0.15 * intensity);
+      const flameW = fs * (0.15 + 0.1 * intensity);
+      const wobble = Math.sin(phase) * fs * 0.03;
 
       // Outer glow
       g.fillStyle(palette.glow, 0.15 * intensity);
-      g.fillCircle(cx + wobble, cy - flameH * 0.3, ts * (0.3 + 0.1 * intensity));
+      g.fillCircle(cx + wobble, cy - flameH * 0.3, fs * (0.3 + 0.1 * intensity));
 
       // Flame body
       g.fillStyle(palette.outer, 0.7 * intensity);

@@ -359,10 +359,37 @@ export class MatchScene extends Phaser.Scene {
    *  disappears out of LOS remains visible on this client until we look
    *  back. Resets each match (cleared in shutdown / on scene init). */
   private keyMemory = new Map<string, boolean>();
-  /** Small key icon used in the HUD counter widget. */
-  private keysHudIcon: Phaser.GameObjects.Image | null = null;
-  /** "N/3" text shown next to the HUD key icon. */
+  /** Small icon used in the HUD requirement counter — the key image, or a
+   *  🖥 emoji Text while the Keys system is hidden (Console system live). */
+  private keysHudIcon: Phaser.GameObjects.Image | Phaser.GameObjects.Text | null = null;
+  /** "N/3" text shown next to the HUD requirement icon. */
   private keysHudText: Phaser.GameObjects.Text | null = null;
+
+  /** One sprite per map console footprint. Frame 1 (active) while the spot is
+   *  in the local player's assigned trio, not yet used, and consoles have
+   *  powered on (BALANCE.consoles.activationDelayTurns); frame 0 otherwise.
+   *  Views intentionally differ between players — trios are per-player.
+   *  `memoryFrame` is the door-style fog-of-war memory: the frame the player
+   *  last saw with LOS on the footprint. Outside LOS the sprite keeps showing
+   *  it, so a console that powers on behind lesser fog stays dark until
+   *  re-seen. Starts 0 — every console is dark at match start. */
+  private consoleSprites: Array<{
+    idx: number;
+    box: { x: number; y: number; w: number; h: number };
+    sprite: Phaser.GameObjects.Sprite;
+    memoryFrame: number;
+  }> = [];
+  /** Cyan channel-progress ring under the local bomberman while engaged with
+   *  a console. Same phase-timed model as the escape ring. */
+  private consoleRing: Phaser.GameObjects.Graphics | null = null;
+  /** Red navigation line toward the next pending console / nearest hatch.
+   *  Drawn above fog (depth 55) but skipped over never-seen tiles. */
+  private consoleNavGraphics: Phaser.GameObjects.Graphics | null = null;
+  /** Nav-line stages the player already reached: touching the target console
+   *  (or getting near any usable hatch once the trio is done) retires the
+   *  line for that stage permanently — even if they walk away again. Keys:
+   *  `console:<usedCount>` per console stage, `hatch` for the final leg. */
+  private consoleNavDismissed = new Set<string>();
 
   // Escape hatch animated sprites
   // States:
@@ -507,6 +534,8 @@ export class MatchScene extends Phaser.Scene {
     });
     // Key collectible — single static image, stretched to fit a full tile.
     this.load.image('key', 'sprites/key.png');
+    // Escape consoles: 64x32 sheet, two 32x32 frames — 0 inactive, 1 active.
+    this.load.spritesheet('consoles', 'sprites/consoles.png', { frameWidth: 32, frameHeight: 32 });
     // Chests: 64x32 sheets, 4 frames of 16x32 each
     this.load.spritesheet('chest_1', 'sprites/chest_1.png', { frameWidth: 16, frameHeight: 32 });
     this.load.spritesheet('chest_2', 'sprites/chest_2.png', { frameWidth: 16, frameHeight: 32 });
@@ -977,6 +1006,13 @@ export class MatchScene extends Phaser.Scene {
     this.keyMemory = new Map();
     this.keysHudIcon = null;
     this.keysHudText = null;
+    for (const cs of this.consoleSprites) cs.sprite.destroy();
+    this.consoleSprites = [];
+    this.consoleRing?.destroy();
+    this.consoleRing = null;
+    this.consoleNavGraphics?.destroy();
+    this.consoleNavGraphics = null;
+    this.consoleNavDismissed.clear();
     this.hudObjects = [];
     if (this.hudCamera) {
       this.cameras.remove(this.hudCamera);
@@ -1010,6 +1046,9 @@ export class MatchScene extends Phaser.Scene {
     // Update heal/disguise idle-action progress rings (smooth, phase-timed —
     // same model as the escape ring).
     this.updateIdleActionIndicators();
+
+    // Console channel progress ring (cyan, 3 idle turns — Console system).
+    this.updateConsoleReadyIndicator();
 
     // Mobile: refresh the drag selector + preview (path for move, aim tile for
     // attack). Runs before the ghost/path draws below so they pick up the
@@ -1153,7 +1192,11 @@ export class MatchScene extends Phaser.Scene {
           bg.fillRoundedRect(-15, -8, 30, 15, 3);
           bg.lineStyle(1, 0xff5555, 1);
           bg.strokeRoundedRect(-15, -8, 30, 15, 3);
-          const keyIcon = this.add.image(-7, 0, 'key').setDisplaySize(9, 9);
+          // Keys hidden → the badge shows the console requirement instead
+          // (computer emoji per the Console-system spec).
+          const keyIcon = HIDDEN_FEATURES.keys
+            ? this.add.text(-8, 0, '🖥', { fontSize: '8px' }).setOrigin(0.5, 0.5)
+            : this.add.image(-7, 0, 'key').setDisplaySize(9, 9);
           const txt = this.add.text(2, 0, '0/3', {
             fontSize: '6px', color: '#ff8888', fontFamily: 'Arial, sans-serif', fontStyle: 'bold',
             stroke: '#000000', strokeThickness: 1,
@@ -1161,6 +1204,29 @@ export class MatchScene extends Phaser.Scene {
           badge.add([bg, keyIcon, txt]);
           if (this.hudCamera) this.hudCamera.ignore(badge);
           this.lockBadges.push({ x: esc.x, y: esc.y, container: badge, text: txt });
+        }
+
+        // Console sprites — one per map console footprint (Console system).
+        // Frame is synced per state update in updateConsoles(): active for
+        // the local player's pending trio, inactive otherwise. Same depth
+        // band as hatches; fog (depth 50) covers them naturally.
+        for (const cs of this.consoleSprites) cs.sprite.destroy();
+        this.consoleSprites = [];
+        if (HIDDEN_FEATURES.keys) {
+          (this.mapData.consoleSpots ?? []).forEach((box, idx) => {
+            const spr = this.add.sprite(
+              (box.x + box.w / 2) * mapTs,
+              (box.y + box.h) * mapTs,
+              'consoles',
+              0,
+            );
+            spr.setOrigin(0.5, 1);
+            spr.setDisplaySize(box.w * mapTs, box.h * mapTs);
+            spr.setDepth(10);
+            if (this.hudCamera) this.hudCamera.ignore(spr);
+            this.consoleSprites.push({ idx, box: { ...box }, sprite: spr, memoryFrame: 0 });
+          });
+          this.updateConsoles();
         }
         // Initial chest-sprite build — subsequent syncs happen below on every
         // state update so tutorial-spawned chests also get sprites.
@@ -2019,6 +2085,61 @@ export class MatchScene extends Phaser.Scene {
         const baseY = bm.y * ts + ts / 2 - ts * 0.5;
         this.spawnKeyPopup(baseX, baseY);
       }
+
+      // Console hacked (local player) — flash the console sprite and float a
+      // progress confirmation over it. The frame flip to inactive happens on
+      // the next updateConsoles() sync.
+      for (const ev of events) {
+        if (ev.kind !== 'console_used') continue;
+        const e = ev as unknown as { playerId: string; consoleId: number; remaining: number };
+        const cs = this.consoleSprites.find(c => c.idx === e.consoleId);
+        if (!cs) continue;
+        // Mini-flare launch — a small light pops up out of the console's
+        // center (the persistent half-size flame from state.flares takes
+        // over via syncFlares). Plays for ANY player's completion, gated on
+        // LOS like other through-fog VFX; the flash + label below stay
+        // local-player-only.
+        const centerTileX = cs.box.x + Math.floor(cs.box.w / 2);
+        const centerTileY = cs.box.y + Math.floor(cs.box.h / 2);
+        if (this.fogRenderer?.isVisible(centerTileX, centerTileY) ?? true) {
+          const fcx = (cs.box.x + cs.box.w / 2) * ts;
+          const fcy = (cs.box.y + cs.box.h / 2) * ts;
+          // Half the thrown-flare circle (ts * 0.22 in spawnThrowArc).
+          const puff = this.add.circle(fcx, fcy, ts * 0.11, 0xffffff, 1).setDepth(500);
+          if (this.hudCamera) this.hudCamera.ignore(puff);
+          this.tweens.add({
+            targets: puff,
+            y: fcy - ts * 0.9,
+            alpha: 0,
+            duration: 450,
+            ease: 'Cubic.easeOut',
+            onComplete: () => puff.destroy(),
+          });
+          // Half-size flare detonation burst at the flame's tile — same VFX
+          // a thrown flare / motion-detector mine plays, scaled to mini.
+          const flashMs = Math.round(BALANCE.match.transitionPhaseSeconds * 1000 * 0.5);
+          this.bombRenderer?.flareFlash({ x: centerTileX, y: centerTileY }, flashMs, 0.5);
+        }
+        if (e.playerId !== this.myPlayerId) continue;
+        cs.sprite.setTintFill(0xaaffee);
+        this.time.delayedCall(180, () => { if (cs.sprite.active) cs.sprite.clearTint(); });
+        const px = (cs.box.x + cs.box.w / 2) * ts;
+        const py = cs.box.y * ts - 4;
+        const label = e.remaining > 0 ? `🖥 ${e.remaining} LEFT` : '🖥 HATCH UNLOCKED';
+        const popup = this.add.text(px, py, label, {
+          fontSize: '8px', color: '#44ddff', fontFamily: 'monospace', fontStyle: 'bold',
+          stroke: '#000000', strokeThickness: 2,
+        }).setOrigin(0.5, 1).setDepth(500);
+        if (this.hudCamera) this.hudCamera.ignore(popup);
+        this.tweens.add({
+          targets: popup,
+          y: py - ts * 1.2,
+          alpha: 0,
+          duration: 1200,
+          ease: 'Cubic.easeOut',
+          onComplete: () => popup.destroy(),
+        });
+      }
     }
 
     // Local escape — jump to Results without waiting for match_end.
@@ -2316,9 +2437,13 @@ export class MatchScene extends Phaser.Scene {
     }
     const onHatch = this.state.escapeTiles.some(t => t.x === me.x && t.y === me.y);
     const onBroken = this.state.brokenHatches.some(t => t.x === me.x && t.y === me.y);
-    const cap = BALANCE.keys.requiredPerHatch;
-    const heldKeys = me.keys ?? 0;
-    if (!onHatch || onBroken || heldKeys < cap) {
+    // Unlock requirement mirrors the resolver's escape gate: consoles used
+    // while keys are hidden (Console system), carried keys otherwise.
+    const requirementMet = HIDDEN_FEATURES.keys
+      ? (me.consolesUsed ?? []).length >= Math.min(
+          BALANCE.consoles.requiredToEscape, (me.assignedConsoles ?? []).length)
+      : (me.keys ?? 0) >= BALANCE.keys.requiredPerHatch;
+    if (!onHatch || onBroken || !requirementMet) {
       this.setEscapeIndicatorVisible(false);
       return;
     }
@@ -2399,6 +2524,242 @@ export class MatchScene extends Phaser.Scene {
       this.escapeRing.setVisible(visible);
       if (!visible) this.escapeRing.clear();
     }
+  }
+
+  /** Sync console sprite frames to the local player's trio state: frame 1
+   *  (active) for assigned-and-pending spots once consoles have powered on
+   *  (BALANCE.consoles.activationDelayTurns), frame 0 (inactive) otherwise.
+   *  Per-player perspective by design — other players see their own trios.
+   *
+   *  Door-style fog-of-war rule: the authoritative frame is only adopted
+   *  while the player has LOS on the footprint (any of its tiles — solid
+   *  tiles become 'visible' via the FogRenderer adjacent-wall pass). Outside
+   *  LOS the sprite keeps the remembered last-seen frame, so a console that
+   *  powered on under lesser fog still reads as dark until looked at again. */
+  private updateConsoles(): void {
+    if (!this.state || this.consoleSprites.length === 0) return;
+    const me = this.state.bombermen.find(b => b.playerId === this.myPlayerId);
+    const assigned = new Set(me?.assignedConsoles ?? []);
+    const used = new Set(me?.consolesUsed ?? []);
+    const powered = this.state.turnNumber > BALANCE.consoles.activationDelayTurns;
+    for (const cs of this.consoleSprites) {
+      const authFrame =
+        powered && assigned.has(cs.idx) && !used.has(cs.idx) ? 1 : 0;
+      let inLos = !this.fogRenderer; // no fog (tutorial-style) → always trust auth
+      if (this.fogRenderer) {
+        for (let ty = cs.box.y; ty < cs.box.y + cs.box.h && !inLos; ty++) {
+          for (let tx = cs.box.x; tx < cs.box.x + cs.box.w && !inLos; tx++) {
+            if (this.fogRenderer.isVisible(tx, ty)) inLos = true;
+          }
+        }
+      }
+      if (inLos) cs.memoryFrame = authFrame;
+      cs.sprite.setFrame(cs.memoryFrame);
+    }
+  }
+
+  /**
+   * Cyan channel-progress ring under the local bomberman while engaged with
+   * one of their pending consoles. Clone of the escape ring's phase-timed
+   * model with required = BALANCE.consoles.interactIdleTurns (3 idle turns).
+   */
+  private updateConsoleReadyIndicator(): void {
+    const hide = (): void => {
+      if (this.consoleRing) { this.consoleRing.setVisible(false); this.consoleRing.clear(); }
+    };
+    if (!HIDDEN_FEATURES.keys || !this.state || !this.mapData) { hide(); return; }
+    const me = this.state.bombermen.find(b => b.playerId === this.myPlayerId);
+    if (!me || !me.alive || me.escaped) { hide(); return; }
+    // Engagement is resolver-derived state — set while standing in channel
+    // range of an assigned pending console (TurnResolver step 9.45).
+    if (me.consoleEngagedId === null || me.consoleEngagedId === undefined) { hide(); return; }
+    // Suppress during the arrival/reset transition (counter still 0 and the
+    // bomberman may still be lerping) — mirror the escape ring's rule.
+    const channelTurns = me.consoleIdleTurns ?? 0;
+    if (this.state.phase === 'transition' && channelTurns === 0) { hide(); return; }
+
+    if (!this.consoleRing) {
+      const ring = this.add.graphics().setDepth(15);
+      if (this.hudCamera) this.hudCamera.ignore(ring);
+      this.consoleRing = ring;
+    }
+    const ts = this.mapData.tileSize;
+    const cx = me.x * ts + ts / 2;
+    const cy = me.y * ts + ts / 2;
+    const required = BALANCE.consoles.interactIdleTurns;
+    const inputMs = BALANCE.match.inputPhaseSeconds * 1000;
+    const transitionMs = BALANCE.match.transitionPhaseSeconds * 1000;
+    const totalMs = required * inputMs + (required - 1) * transitionMs;
+    const phaseRemaining = Math.max(0, this.state.phaseEndsAt - Date.now());
+    let elapsed: number;
+    if (this.state.phase === 'input') {
+      elapsed = channelTurns * (inputMs + transitionMs) + (inputMs - phaseRemaining);
+    } else {
+      elapsed = (channelTurns - 1) * (inputMs + transitionMs) + inputMs
+        + (transitionMs - phaseRemaining);
+    }
+    const progress = Math.max(0, Math.min(1, elapsed / totalMs));
+    const g = this.consoleRing;
+    g.setVisible(true);
+    g.clear();
+    const radius = ts * 0.55;
+    // Cyan — the Console system's signature color (escape ring is purple,
+    // heal is green).
+    g.lineStyle(2, 0x113a44, 0.55);
+    g.strokeCircle(cx, cy, radius);
+    if (progress > 0) {
+      g.lineStyle(3, 0x44ddff, 1);
+      g.beginPath();
+      const start = -Math.PI / 2;
+      g.arc(cx, cy, radius, start, start + progress * Math.PI * 2, false);
+      g.strokePath();
+    }
+  }
+
+  /**
+   * Red navigation line guiding the local player through the Console flow.
+   * Appears once at least one console is done: points to a seeded-random
+   * pick among the remaining pending consoles, and — once the trio is done —
+   * to the nearest (path-distance) unbroken escape hatch. Recomputed per
+   * state update; segments over never-seen (darkest) fog are skipped, so the
+   * line reads over lesser fog only, never revealing unexplored map.
+   */
+  private updateConsoleNavPath(): void {
+    const clear = (): void => { this.consoleNavGraphics?.clear(); };
+    if (!HIDDEN_FEATURES.keys || !this.state || !this.mapData) { clear(); return; }
+    const me = this.state.bombermen.find(b => b.playerId === this.myPlayerId);
+    if (!me || !me.alive || me.escaped) { clear(); return; }
+    const assigned = me.assignedConsoles ?? [];
+    const used = me.consolesUsed ?? [];
+    const required = Math.min(BALANCE.consoles.requiredToEscape, assigned.length);
+    if (assigned.length === 0 || used.length === 0) { clear(); return; }
+
+    const spots = this.mapData.consoleSpots ?? [];
+    let path: PathTile[] | null = null;
+    if (used.length < required) {
+      // Touching the target even once retires the line for this stage —
+      // the player has seen where it is; don't keep hand-holding.
+      const stageKey = `console:${used.length}`;
+      if (this.consoleNavDismissed.has(stageKey)) { clear(); return; }
+      // Next pending console — seeded-deterministic pick so the target is
+      // stable for this stage and identical across reconnects.
+      const remaining = assigned.filter(id => !used.includes(id) && spots[id]);
+      if (remaining.length === 0) { clear(); return; }
+      const pick = remaining[
+        hashStringToInt(`${this.state.matchId}:${this.myPlayerId}:nav:${used.length}`) % remaining.length
+      ];
+      const box = spots[pick];
+      const dx = Math.max(box.x - me.x, me.x - (box.x + box.w - 1), 0);
+      const dy = Math.max(box.y - me.y, me.y - (box.y + box.h - 1), 0);
+      if (Math.max(dx, dy) <= 1) {
+        this.consoleNavDismissed.add(stageKey);
+        clear(); return;
+      }
+      path = this.shortestPathToConsole(me.x, me.y, box);
+    } else {
+      // Trio complete — guide to the nearest unbroken hatch (any hatch
+      // works). Getting near any usable hatch retires the line for good.
+      if (this.consoleNavDismissed.has('hatch')) { clear(); return; }
+      const broken = this.state.brokenHatches;
+      const usable = this.state.escapeTiles.filter(
+        esc => !broken.some(b => b.x === esc.x && b.y === esc.y),
+      );
+      if (usable.some(esc => Math.max(Math.abs(esc.x - me.x), Math.abs(esc.y - me.y)) <= 2)) {
+        this.consoleNavDismissed.add('hatch');
+        clear(); return;
+      }
+      let best: PathTile[] | null = null;
+      for (const esc of usable) {
+        const p = findPath(me.x, me.y, esc.x, esc.y, this.mapData);
+        if (p.length === 0) continue;
+        if (!best || p.length < best.length) best = p;
+      }
+      path = best;
+    }
+
+    if (!this.consoleNavGraphics) {
+      // Depth 55: above fog (50) so the line reads over lesser fog; darkest
+      // fog is handled by skipping unseen segments below.
+      const g = this.add.graphics().setDepth(55);
+      if (this.hudCamera) this.hudCamera.ignore(g);
+      this.consoleNavGraphics = g;
+    }
+    const g = this.consoleNavGraphics;
+    g.clear();
+    if (!path || path.length === 0) return;
+    const ts = this.mapData.tileSize;
+    const full: Array<{ x: number; y: number }> = [{ x: me.x, y: me.y }, ...path];
+    // Dotted + translucent — a hint, not a painted road.
+    g.lineStyle(2, 0xff3344, 0.6);
+    for (let i = 0; i < full.length - 1; i++) {
+      const a = full[i];
+      const b = full[i + 1];
+      // Never draw over never-seen fog — the path must not map unexplored
+      // territory. Lesser (seen-dim) fog is fine.
+      if (this.fogRenderer?.isUnseen(a.x, a.y) || this.fogRenderer?.isUnseen(b.x, b.y)) continue;
+      this.drawDashedLine(
+        g,
+        a.x * ts + ts / 2, a.y * ts + ts / 2,
+        b.x * ts + ts / 2, b.y * ts + ts / 2,
+      );
+    }
+  }
+
+  /** Draw a line as short dashes (4px on / 6px off) using lineBetween per
+   *  dash — beginPath/lineTo mixed with other primitives on one Graphics
+   *  breaks silently in Phaser, lineBetween is safe. */
+  private drawDashedLine(
+    g: Phaser.GameObjects.Graphics,
+    x1: number, y1: number, x2: number, y2: number,
+    dash = 4, gap = 6,
+  ): void {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len = Math.hypot(dx, dy);
+    if (len <= 0) return;
+    const ux = dx / len;
+    const uy = dy / len;
+    for (let d = 0; d < len; d += dash + gap) {
+      const e = Math.min(d + dash, len);
+      g.lineBetween(x1 + ux * d, y1 + uy * d, x1 + ux * e, y1 + uy * e);
+    }
+  }
+
+  /** Shortest walkable path toward the BOTTOM face of a console footprint
+   *  (the footprint itself is solid). End-tile candidates are the ring tiles
+   *  beside/below the footprint's bottom row — falling back to the full ring
+   *  if the bottom approach is walled off — and the bottom footprint tile
+   *  nearest the path's end is appended as a final, visual-only point so the
+   *  drawn line lands on the console itself. Null if unreachable. */
+  private shortestPathToConsole(
+    sx: number, sy: number, box: { x: number; y: number; w: number; h: number },
+  ): PathTile[] | null {
+    const map = this.mapData;
+    if (!map) return null;
+    // Already in channel range — no line needed.
+    const dx = Math.max(box.x - sx, sx - (box.x + box.w - 1), 0);
+    const dy = Math.max(box.y - sy, sy - (box.y + box.h - 1), 0);
+    if (Math.max(dx, dy) <= 1) return null;
+    const bottomY = box.y + box.h - 1;
+    const search = (minTy: number): PathTile[] | null => {
+      let best: PathTile[] | null = null;
+      for (let ty = Math.max(minTy, box.y - 1); ty <= box.y + box.h; ty++) {
+        for (let tx = box.x - 1; tx <= box.x + box.w; tx++) {
+          const insideBox = tx >= box.x && tx < box.x + box.w && ty >= box.y && ty < box.y + box.h;
+          if (insideBox) continue;
+          if (map.grid[ty]?.[tx] !== 0) continue;
+          const p = findPath(sx, sy, tx, ty, map);
+          if (p.length === 0) continue;
+          if (!best || p.length < best.length) best = p;
+        }
+      }
+      return best;
+    };
+    const best = search(bottomY) ?? search(box.y - 1);
+    if (!best) return null;
+    const end = best[best.length - 1];
+    const bx = Math.max(box.x, Math.min(box.x + box.w - 1, end.x));
+    return [...best, { x: bx, y: bottomY }];
   }
 
   /** Floating "+N [icon]" treasure popup that rises and fades out. Staggered
@@ -2540,6 +2901,10 @@ export class MatchScene extends Phaser.Scene {
     // Key sprite reconcile with per-client fog memory.
     this.updateKeys();
 
+    // Console sprites + red navigation line track the local trio state.
+    this.updateConsoles();
+    this.updateConsoleNavPath();
+
     // Door state machine
     if (this.doorSprites.length > 0) this.updateDoors();
 
@@ -2570,11 +2935,20 @@ export class MatchScene extends Phaser.Scene {
     // Strict LOS gate for blood splats: lesser fog (0.55 alpha) doesn't hide
     // depth-25 graphics on its own, so hide them explicitly when not in LOS.
     // Reappear on re-entry. Per "never show over fog of war" rule.
+    // Same for active smoke clouds (Fart Escape): the puffs are translucent
+    // and render above (depth 120), so blood under a cloud would bleed
+    // through — hide it outright until the cloud dissipates.
+    const smokedTiles = new Set<string>();
+    for (const cloud of this.state.smokeClouds ?? []) {
+      for (const t of cloud.tiles) smokedTiles.add(`${t.x},${t.y}`);
+    }
     for (const [key, g] of this.bloodDecals) {
       const coords = key.slice(6).split(',');
       const bx = Number(coords[0]);
       const by = Number(coords[1]);
-      g.setVisible(this.fogRenderer?.isVisible(bx, by) ?? true);
+      g.setVisible(
+        (this.fogRenderer?.isVisible(bx, by) ?? true) && !smokedTiles.has(`${bx},${by}`),
+      );
     }
 
     // Explosion decals: scorch marks persist through lesser fog. Visible
@@ -3738,8 +4112,14 @@ export class MatchScene extends Phaser.Scene {
         const broken = !!spr?.memoryBroken;
         if (broken) return { kind: 'tileHatchBroken' };
         const me = this.state.bombermen.find(b => b.playerId === this.myPlayerId);
-        const held = me?.keys ?? 0;
-        return { kind: 'tileHatch', held, required: BALANCE.keys.requiredPerHatch };
+        // Keys hidden → the hatch tooltip reports console progress instead.
+        const held = HIDDEN_FEATURES.keys
+          ? (me?.consolesUsed ?? []).length
+          : (me?.keys ?? 0);
+        const required = HIDDEN_FEATURES.keys
+          ? Math.min(BALANCE.consoles.requiredToEscape, (me?.assignedConsoles ?? []).length)
+          : BALANCE.keys.requiredPerHatch;
+        return { kind: 'tileHatch', held, required };
       }
     }
     // Chest
@@ -4011,15 +4391,25 @@ export class MatchScene extends Phaser.Scene {
       pulseOnCount: true,
     });
 
-    // Keys counter — small icon + "N/3" text, sits just left of the
-    // coin row + TreasureListWidget column. Its own column, per docs/keys-system.md §9.
+    // Escape-requirement counter — small icon + "N/3" text, sits just left of
+    // the coin row + TreasureListWidget column. Its own column, per
+    // docs/keys-system.md §9. Keys hidden (Console system live): the icon is
+    // a 🖥 emoji and the count tracks consoles used instead of keys carried.
     const keyColX = Math.round(160 * hs);
     const keyTxtX = Math.round(146 * hs);
-    this.keysHudIcon = this.hud(this.add.image(width - keyColX, COIN_ROW_Y + keySize / 2, 'key')
-      .setOrigin(0.5, 0.5)
-      .setDisplaySize(keySize, keySize)
-      .setDepth(1001));
-    this.keysHudText = this.hud(this.add.text(width - keyTxtX, COIN_ROW_Y + keySize / 2, `0/${BALANCE.keys.requiredPerHatch}`, {
+    this.keysHudIcon = this.hud(
+      HIDDEN_FEATURES.keys
+        ? this.add.text(width - keyColX, COIN_ROW_Y + keySize / 2, '🖥', {
+            fontSize: `${Math.max(10, keySize)}px`,
+          }).setOrigin(0.5, 0.5).setDepth(1001)
+        : this.add.image(width - keyColX, COIN_ROW_Y + keySize / 2, 'key')
+            .setOrigin(0.5, 0.5)
+            .setDisplaySize(keySize, keySize)
+            .setDepth(1001));
+    const requirementCap = HIDDEN_FEATURES.keys
+      ? BALANCE.consoles.requiredToEscape
+      : BALANCE.keys.requiredPerHatch;
+    this.keysHudText = this.hud(this.add.text(width - keyTxtX, COIN_ROW_Y + keySize / 2, `0/${requirementCap}`, {
       fontSize: f(14), color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
       stroke: '#000000', strokeThickness: Math.max(2, Math.round(3 * hs)),
     }).setOrigin(0, 0.5).setDepth(1001));
@@ -4469,8 +4859,15 @@ export class MatchScene extends Phaser.Scene {
       this.state.escapeTiles.some(t => t.x === meForHatch.x && t.y === meForHatch.y);
     const onBroken = onHatch &&
       this.state.brokenHatches.some(t => t.x === meForHatch.x && t.y === meForHatch.y);
-    const cap = BALANCE.keys.requiredPerHatch;
-    const heldKeys = meForHatch?.keys ?? 0;
+    // Requirement readout: consoles used (keys hidden) or keys carried.
+    // A consoles cap of 0 (map without consoles, e.g. tutorial) gates nothing
+    // and hides the counter + badges entirely.
+    const cap = HIDDEN_FEATURES.keys
+      ? Math.min(BALANCE.consoles.requiredToEscape, (meForHatch?.assignedConsoles ?? []).length)
+      : BALANCE.keys.requiredPerHatch;
+    const heldKeys = HIDDEN_FEATURES.keys
+      ? (meForHatch?.consolesUsed ?? []).length
+      : (meForHatch?.keys ?? 0);
     const onShortHatch = onHatch && !onBroken && heldKeys < cap;
 
     if (this.brokenHatchText) {
@@ -4478,7 +4875,9 @@ export class MatchScene extends Phaser.Scene {
         this.brokenHatchText.setText('This Hatch is Broken, you won’t be able to Escape from it');
         this.brokenHatchText.setVisible(true);
       } else if (onShortHatch) {
-        this.brokenHatchText.setText(`Keys ${heldKeys}/${cap} — loot chests for more`);
+        this.brokenHatchText.setText(HIDDEN_FEATURES.keys
+          ? `Consoles ${heldKeys}/${cap} — hack your highlighted consoles first`
+          : `Keys ${heldKeys}/${cap} — loot chests for more`);
         this.brokenHatchText.setVisible(true);
       } else {
         this.brokenHatchText.setVisible(false);
@@ -4501,8 +4900,13 @@ export class MatchScene extends Phaser.Scene {
     //   - at cap            → green steady (you can escape)
     //   - otherwise         → default yellow
     if (this.keysHudText && this.keysHudIcon) {
+      // Hide the counter entirely on maps without consoles (cap derives to 0
+      // while keys are hidden — tutorial map).
+      const counterVisible = !HIDDEN_FEATURES.keys || cap > 0;
+      this.keysHudIcon.setVisible(counterVisible);
+      this.keysHudText.setVisible(counterVisible);
       this.keysHudText.setText(`${heldKeys}/${cap}`);
-      const atCap = heldKeys >= cap;
+      const atCap = cap > 0 && heldKeys >= cap;
       if (onShortHatch) {
         this.keysHudText.setColor('#ff5555');
         this.keysHudIcon.setTint(0xff8888);
