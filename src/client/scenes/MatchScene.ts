@@ -13,6 +13,7 @@ import { BombermanSpriteSystem, deathAnimationDurationMs } from '../systems/Bomb
 const SWORD_FADE_MS = BombermanSpriteSystem.SWORD_FADE_MS;
 import { ensureBombermanAnims, preloadBombermanSpritesheets } from '../systems/BombermanAnimations.ts';
 import { loadMapById } from '@shared/maps/map-loader.ts';
+import { getSeeThroughTileSet, hasLineOfSight } from '@shared/systems/LineOfSight.ts';
 import { findPath, type PathTile } from '@shared/systems/Pathfinding.ts';
 import { resolveBombTrigger, bombAffectedTiles } from '@shared/systems/BombResolver.ts';
 import type { MapData } from '@shared/types/map.ts';
@@ -553,6 +554,14 @@ export class MatchScene extends Phaser.Scene {
       frameWidth: 32,
       frameHeight: 32,
     });
+    // Discovered-eye indicator — 4-frame "eye looking around" sheet shown
+    // above any bomberman standing in flare light (flare / flare mine /
+    // phosphorus / console mini-flare). Animation registered in create()
+    // at 2 fps; visibility gated by BombermanSpriteSystem.
+    this.load.spritesheet('discovered_eye', 'sprites/discovered_eye_ani.png', {
+      frameWidth: 64,
+      frameHeight: 64,
+    });
     // Rush Mode icon — single 32x32 image used as the fly-up VFX when the
     // local bomberman enters out-of-combat Rush. Replaces the previous green
     // up-arrow text glyph.
@@ -679,6 +688,17 @@ export class MatchScene extends Phaser.Scene {
       this.anims.create({
         key: 'stunned_effect_anim',
         frames: this.anims.generateFrameNumbers('stunned_effect', { start: 0, end: 1 }),
+        frameRate: 2,
+        repeat: -1,
+      });
+    }
+
+    // Discovered-eye anim — slow 4-frame look-around loop. 2 fps so the eye
+    // reads as deliberate scanning rather than a frantic flicker.
+    if (!this.anims.exists('discovered_eye_anim')) {
+      this.anims.create({
+        key: 'discovered_eye_anim',
+        frames: this.anims.generateFrameNumbers('discovered_eye', { start: 0, end: 3 }),
         frameRate: 2,
         repeat: -1,
       });
@@ -5184,6 +5204,15 @@ export class MatchScene extends Phaser.Scene {
    * draw blue. Both → red wins, since dying matters more than getting
    * stunned. None → hide.
    *
+   * The red edge also fires on enemy contact: a living enemy bomberman in
+   * MUTUAL line of sight (both can see each other — same rule the rush
+   * break uses, see TurnResolver step 2b). Geometric LoS is symmetric, so
+   * one call covers both directions; capping the check at the fog radius
+   * keeps flare-lit enemies beyond your own sight from triggering it.
+   * Disguised or smoked enemies are skipped (the border would leak their
+   * position), and nothing fires while the local bomberman sits inside
+   * smoke (enemies can't see in).
+   *
    * Re-run every renderHud pass; state diffs (bombs added/removed, the
    * bomberman moving) flip the visual on the same frame the state lands.
    * Doors and shield walls are read live so the prediction respects them
@@ -5241,11 +5270,38 @@ export class MatchScene extends Phaser.Scene {
         if (Math.max(Math.abs(dx), Math.abs(dy)) <= 1) { inDamage = true; break; }
       }
     }
-    if (!inDamage && !inStun) {
+    // Enemy in mutual LoS — same danger color as a pending blast. Mirrors
+    // the rush-break check (TurnResolver step 2b): distance capped at the
+    // fog sight radius + clear geometric LoS, doors/shield walls blocking.
+    let enemyInSight = false;
+    if (!inDamage) {
+      const smokedTiles = new Set<string>();
+      for (const c of state.smokeClouds ?? []) {
+        for (const t of c.tiles) smokedTiles.add(`${t.x},${t.y}`);
+      }
+      const ts = this.mapData.tileSize;
+      const seeThroughTiles = getSeeThroughTileSet(this.mapData);
+      enemyInSight = !smokedTiles.has(myKey) && state.bombermen.some(other => {
+        if (other.playerId === me.playerId) return false;
+        if (!other.alive || other.escaped) return false;
+        // A disguised enemy reads as decor — flagging it would defeat the
+        // Disguiser class. Smoked enemies are invisible to everyone.
+        if (other.disguiseFrame !== undefined) return false;
+        if (smokedTiles.has(`${other.x},${other.y}`)) return false;
+        const dist = Math.max(Math.abs(other.x - me.x), Math.abs(other.y - me.y));
+        if (dist > BALANCE.match.losRadius) return false;
+        return hasLineOfSight(
+          me.x * ts + ts / 2, me.y * ts + ts / 2,
+          other.x * ts + ts / 2, other.y * ts + ts / 2,
+          this.mapData!.grid, ts, closedDoorTiles, shieldWallTiles, seeThroughTiles,
+        );
+      });
+    }
+    if (!inDamage && !enemyInSight && !inStun) {
       g.setVisible(false);
       return;
     }
-    const color = inDamage ? 0xff3333 : 0x66aaff;
+    const color = inDamage || enemyInSight ? 0xff3333 : 0x66aaff;
     const w = this.scale.width;
     const h = this.scale.height;
     const thickness = 6;

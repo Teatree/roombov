@@ -83,6 +83,12 @@ const HP_GHOST_MS = 600;
  */
 const HEAL_HOURGLASS_COLOR = 0x44ff88;
 const DISGUISE_HOURGLASS_COLOR = 0xffcc44;
+
+/** Discovered-eye indicator sizing/placement. Display size ≈ twice the
+ *  bomberman's head, floating above it; 30% transparent per design. */
+const DISCOVERED_EYE_SIZE = 0.8;      // × tileSize
+const DISCOVERED_EYE_ALPHA = 0.7;
+const DISCOVERED_EYE_OFFSET_Y = 1.9;  // × tileSize above the feet tile center
 /** Heal aura / rising cross VFX color. */
 const HEAL_VFX_COLOR = 0x66ff99;
 
@@ -135,6 +141,11 @@ interface BombermanSpriteEntry {
    *  sprite (`stunned_effect_anim`) shown to all players whenever the
    *  bomberman has the `stunned` status effect. */
   stunIcon: Phaser.GameObjects.Sprite;
+  /** Discovered-eye indicator above the head — 4-frame "eye looking around"
+   *  sprite (`discovered_eye_anim`) shown while the bomberman stands on an
+   *  active light tile (flare / flare mine / phosphorus / console flare),
+   *  i.e. while they are lit up and revealed to everyone. */
+  discoveredEye: Phaser.GameObjects.Sprite;
   /** Ambush star — drawn on the tile UNDER the bomberman while in Melee
    *  Trap Mode. Slowly rotates; pulses on a counter-attack; grows + fades
    *  on exit. Replaces the old floating sword icon. */
@@ -230,6 +241,10 @@ export class BombermanSpriteSystem {
       for (const t of c.tiles) smokedTiles.add(`${t.x},${t.y}`);
     }
     const isSmoked = (x: number, y: number): boolean => smokedTiles.has(`${x},${y}`);
+    // Active light tiles (flares, flare mines, phosphorus, console flares
+    // all derive into state.lightTiles) — standing on one = "discovered".
+    const litTiles = new Set<string>();
+    for (const t of state.lightTiles ?? []) litTiles.add(`${t.x},${t.y}`);
     const seen = new Set<string>();
     for (const b of state.bombermen) {
       if (b.escaped) {
@@ -312,6 +327,17 @@ export class BombermanSpriteSystem {
       );
       entry.stunIcon.setVisible(stunned && visible && !dimmed);
       entry.stunIcon.setAlpha(dimmed ? CORPSE_SEEN_DIM_ALPHA : 1);
+
+      // Discovered-eye: shown while standing in flare light, for as long as
+      // the light lasts. Suppressed for disguised bombermen (the eye would
+      // out their cover) and on smoke tiles (smoke hides them regardless of
+      // light). Requires the sprite itself to be visible to this client.
+      entry.discoveredEye.setVisible(
+        b.alive && visible && !dimmed
+        && litTiles.has(`${b.x},${b.y}`)
+        && b.disguiseFrame === undefined
+        && !isSmoked(b.x, b.y),
+      );
 
       // --- Melee Trap Mode handling ---
       // Entry: swap to crouch anim, show ambush star at base scale.
@@ -571,7 +597,7 @@ export class BombermanSpriteSystem {
         entry.escapeFadeStarted = true;
         entry.sprite.anims.stop();
         const fadeTargets: Phaser.GameObjects.GameObject[] = [
-          entry.sprite, entry.stunIcon, entry.ambushStar, entry.hpBar,
+          entry.sprite, entry.stunIcon, entry.discoveredEye, entry.ambushStar, entry.hpBar,
         ];
         if (entry.nameLabel) fadeTargets.push(entry.nameLabel);
         if (entry.aimShadow) fadeTargets.push(entry.aimShadow);
@@ -669,6 +695,18 @@ export class BombermanSpriteSystem {
     }
     this.layer.add(stunIcon);
 
+    // Discovered-eye — floats above the head while the bomberman stands in
+    // flare light. ~2× head size, 30% transparent. Anim registered in
+    // MatchScene.create() at 2 fps; visibility driven by syncFromState.
+    const discoveredEye = this.scene.add.sprite(cx, cy, 'discovered_eye');
+    discoveredEye.setDisplaySize(ts * DISCOVERED_EYE_SIZE, ts * DISCOVERED_EYE_SIZE);
+    discoveredEye.setAlpha(DISCOVERED_EYE_ALPHA);
+    discoveredEye.setVisible(false);
+    if (this.scene.anims.exists('discovered_eye_anim')) {
+      discoveredEye.play('discovered_eye_anim');
+    }
+    this.layer.add(discoveredEye);
+
     // Over-head HP bar — drawn each frame in applyVisualPosition, but only ever
     // made visible for the local player (you can't see other Bombermen's HP).
     const hpBar = this.scene.add.graphics();
@@ -702,6 +740,7 @@ export class BombermanSpriteSystem {
       sprite,
       aimShadow,
       stunIcon,
+      discoveredEye,
       ambushStar,
       ambushFading: false,
       meleeTrapMode: b.meleeTrapMode ?? false,
@@ -881,6 +920,7 @@ export class BombermanSpriteSystem {
     entry.sprite.destroy();
     entry.aimShadow?.destroy();
     entry.stunIcon.destroy();
+    entry.discoveredEye.destroy();
     entry.ambushStar.destroy();
     entry.idleHourglass.destroy();
     entry.disguiseSprite?.destroy();
@@ -1083,6 +1123,11 @@ export class BombermanSpriteSystem {
     // Stun icon floats slightly above the head, bobbing gently via time.
     const bob = Math.sin(this.scene.time.now / 220) * 2;
     entry.stunIcon.setPosition(visualX, visualY - ts * 1.75 + bob);
+
+    // Discovered-eye floats a touch higher than the stun icon (both can
+    // show at once — flashed AND lit) with its own slower bob.
+    const eyeBob = Math.sin(this.scene.time.now / 350) * 2;
+    entry.discoveredEye.setPosition(visualX, visualY - ts * DISCOVERED_EYE_OFFSET_Y + eyeBob);
 
     // Name label sits just above the head. Round to integer pixels so the
     // text doesn't smear when the sprite is mid-lerp at a fractional pixel.
