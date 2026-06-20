@@ -7,12 +7,17 @@
 import Phaser from 'phaser';
 import type { IdleAction } from '@shared/types/bomberman.ts';
 import { IDLE_ACTION_LABEL } from '@shared/types/bomberman.ts';
+import { CSS, FONT } from '../design/tokens.ts';
 
-/** Hex text color per class (matches the under-feet shape / tint family). */
+/**
+ * Hex text color per class (Pixel Panel §1.4): Ambusher(attack)=red,
+ * Healster(heal)=green, Disguiser(disguise)=gold. The class name always renders
+ * in its class color.
+ */
 export const IDLE_ACTION_TEXT_COLOR: Record<IdleAction, string> = {
-  attack: '#ff8888',
-  heal: '#66ff99',
-  disguise: '#ffcc44',
+  attack: CSS.red,
+  heal: CSS.green,
+  disguise: CSS.gold,
 };
 
 /** Class name shown to the player, e.g. "Healster". */
@@ -33,10 +38,9 @@ export function createIdleActionBadge(
 ): Phaser.GameObjects.Text {
   const cls: IdleAction =
     idleAction === 'heal' || idleAction === 'disguise' ? idleAction : 'attack';
-  return scene.add.text(x, y, idleActionLongLabel(cls), {
+  return scene.add.text(x, y, idleActionLongLabel(cls).toUpperCase(), {
     fontSize,
     color: IDLE_ACTION_TEXT_COLOR[cls],
-    fontFamily: 'monospace',
-    fontStyle: 'bold',
+    fontFamily: FONT.silk,
   }).setOrigin(0.5, 0);
 }

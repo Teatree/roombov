@@ -9,6 +9,8 @@ import { preloadBombermanSpritesheets, ensureBombermanAnims } from '../systems/B
 import { designViewport, fitSceneToViewport } from '../util/responsiveScene.ts';
 import { effectiveMaxCustomSlots, effectiveStackSize } from '@shared/utils/bomberman-stats.ts';
 import type { MatchListing } from '@shared/types/match.ts';
+import { COL, CSS, FONT, urgencyCol, urgencyHex, urgencyOf } from '../design/tokens.ts';
+import { addTabLabel, drawNotchedPanel, drawSegmentBar } from '../util/pixelPanel.ts';
 
 const CARD_WIDTH = 260;
 const CARD_HEIGHT = 280;
@@ -36,6 +38,14 @@ interface CardView {
   playerCountText: Phaser.GameObjects.Text;
   /** Border outline — re-styled when isJoined flips. */
   borderGfx: Phaser.GameObjects.Graphics;
+  /** Segment bar under the countdown — redrawn per second (urgency + fill). */
+  segmentGfx: Phaser.GameObjects.Graphics;
+  /** Highest countdown observed for this card — denominator for the bar fill. */
+  maxCountdown: number;
+  /** Right-aligned "JOINED ✓" tab on the top border; present only when joined. */
+  joinedTab: { label: Phaser.GameObjects.Text; bg: Phaser.GameObjects.Rectangle } | null;
+  /** Restyle the JOIN button for the current urgency (gold-promote in red phase). */
+  updateJoinUrgency: ((secs: number) => void) | null;
   /** True once a fly-off tween has been kicked off; view will be destroyed. */
   leaving: boolean;
   /** Set if this card was rendered as joined last time, so we can detect
@@ -99,28 +109,29 @@ export class LobbyScene extends Phaser.Scene {
 
     const { width } = this.scale;
     const { layoutH } = designViewport(this, DESIGN_W, DESIGN_H);
+    this.cameras.main.setBackgroundColor(CSS.bg);
 
-    this.add.text(width / 2, 40, 'LOBBY', {
-      fontSize: '40px', color: '#e0e0e0', fontFamily: 'monospace', fontStyle: 'bold',
+    this.add.text(width / 2, 44, 'LOBBY', {
+      fontSize: '36px', color: CSS.text, fontFamily: FONT.press,
+    }).setOrigin(0.5).setShadow(5, 5, CSS.stageFrame, 0, true, true);
+
+    this.add.text(width / 2, 86, 'CHOOSE A MATCH', {
+      fontSize: '14px', color: CSS.dim, fontFamily: FONT.silk,
+    }).setOrigin(0.5).setLetterSpacing(4);
+
+    this.warnText = this.add.text(width / 2, 110, '', {
+      fontSize: '13px', color: CSS.orange, fontFamily: FONT.silk,
     }).setOrigin(0.5);
 
-    this.add.text(width / 2, 84, 'Choose a match', {
-      fontSize: '14px', color: '#888', fontFamily: 'monospace',
-    }).setOrigin(0.5);
-
-    this.warnText = this.add.text(width / 2, 108, '', {
-      fontSize: '14px', color: '#ff8844', fontFamily: 'monospace',
-    }).setOrigin(0.5);
-
-    this.statusText = this.add.text(width / 2, layoutH - 20, 'Connecting...', {
-      fontSize: '12px', color: '#666', fontFamily: 'monospace',
+    this.statusText = this.add.text(width / 2, layoutH - 20, 'connecting…', {
+      fontSize: '12px', color: CSS.statusGreen, fontFamily: FONT.silk,
     }).setOrigin(0.5);
 
     const backBtn = this.add.text(20, layoutH - 30, '[ < MENU ]', {
-      fontSize: '16px', color: '#888', fontFamily: 'monospace',
+      fontSize: '14px', color: CSS.dim, fontFamily: FONT.silk,
     }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
-    backBtn.on('pointerover', () => backBtn.setColor('#ccc'));
-    backBtn.on('pointerout', () => backBtn.setColor('#888'));
+    backBtn.on('pointerover', () => backBtn.setColor(CSS.text));
+    backBtn.on('pointerout', () => backBtn.setColor(CSS.dim));
     backBtn.on('pointerdown', () => {
       if (this.joinedMatchId) NetworkManager.getSocket().emit('leave_match');
       this.scene.start('MainMenuScene');
@@ -137,16 +148,16 @@ export class LobbyScene extends Phaser.Scene {
     socket.emit('match_listings_request');
 
     socket.on('connect', () => {
-      this.statusText.setText(`Connected: ${socket.id}`);
-      this.statusText.setColor('#44ff88');
+      this.statusText.setText(`connected · ${socket.id}`);
+      this.statusText.setColor(CSS.statusGreen);
     });
     if (socket.connected) {
-      this.statusText.setText(`Connected: ${socket.id}`);
-      this.statusText.setColor('#44ff88');
+      this.statusText.setText(`connected · ${socket.id}`);
+      this.statusText.setColor(CSS.statusGreen);
     }
     socket.on('disconnect', () => {
-      this.statusText.setText('Disconnected');
-      this.statusText.setColor('#ff4444');
+      this.statusText.setText('disconnected');
+      this.statusText.setColor(CSS.red);
     });
 
     socket.on('match_listings', (msg) => {
@@ -175,7 +186,7 @@ export class LobbyScene extends Phaser.Scene {
     // Warn if no Bomberman is equipped
     const profile = ProfileStore.get();
     if (!profile?.equippedBombermanId) {
-      this.warnText.setText('⚠ No Bomberman equipped — visit the shop first');
+      this.warnText.setText('NO BOMBERMAN EQUIPPED — VISIT THE SHOP FIRST');
     }
 
     // Bomberman selector at the bottom — equip from the lobby
@@ -204,11 +215,10 @@ export class LobbyScene extends Phaser.Scene {
     const { width } = this.scale;
     const btnY = layoutH * 0.4 + CARD_HEIGHT / 2 + 28;
     this.equipBombsBtn = this.add.text(width / 2, btnY, '', {
-      fontSize: '15px', color: '#44aaff', fontFamily: 'monospace',
-      backgroundColor: '#222244', padding: { x: 14, y: 6 },
+      fontSize: '14px', color: CSS.blue, fontFamily: FONT.silk,
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-    this.equipBombsBtn.on('pointerover', () => this.equipBombsBtn?.setColor('#88ccff'));
-    this.equipBombsBtn.on('pointerout', () => this.equipBombsBtn?.setColor('#44aaff'));
+    this.equipBombsBtn.on('pointerover', () => this.equipBombsBtn?.setColor('#9bd0ff'));
+    this.equipBombsBtn.on('pointerout', () => this.equipBombsBtn?.setColor(CSS.blue));
     this.equipBombsBtn.on('pointerdown', () => {
       if (this.joinedMatchId) NetworkManager.getSocket().emit('leave_match');
       this.scene.start('BombsShopScene', { backScene: 'LobbyScene' });
@@ -239,7 +249,7 @@ export class LobbyScene extends Phaser.Scene {
     const capacity = effectiveMaxCustomSlots(bm) * effectiveStackSize(bm);
     const fill = bm.inventory.slots.reduce((sum, s) => sum + (s?.count ?? 0), 0);
     const freeSpace = Math.max(0, capacity - fill);
-    btn.setText(`[ EQUIP BOMBS ${stockTotal} in stock · space for ${freeSpace} ]`);
+    btn.setText(`[ EQUIP BOMBS — ${stockTotal} IN STOCK · SPACE FOR ${freeSpace} ]`);
 
     // Pulse while the loadout sits under 25% of total bomb capacity.
     if (fill * 4 < capacity) {
@@ -384,122 +394,194 @@ export class LobbyScene extends Phaser.Scene {
     const container = this.add.container(x, y);
     const cfg = listing.config;
     const isJoined = this.joinedMatchId === cfg.id;
+    const halfW = CARD_WIDTH / 2;
+    const halfH = CARD_HEIGHT / 2;
 
     const borderGfx = this.add.graphics();
     this.drawCardBorder(borderGfx, isJoined);
     container.add(borderGfx);
 
-    container.add(this.add.text(0, -CARD_HEIGHT / 2 + 24, cfg.mapName, {
-      fontSize: '18px', color: '#fff', fontFamily: 'monospace', fontStyle: 'bold',
+    // Mode rides the top border as a tab label (green Normal / orange special).
+    const modeText = cfg.allowBots ? 'NORMAL' : 'NO BOTS OR SCAVS';
+    const modeColor = cfg.allowBots ? CSS.green : CSS.orange;
+    const tab = addTabLabel(this, -halfW, -halfH, CARD_WIDTH, modeText, { side: 'left', color: modeColor });
+    container.add([tab.bg, tab.label]);
+
+    container.add(this.add.text(0, -halfH + 28, cfg.mapName, {
+      fontSize: '15px', color: CSS.text, fontFamily: FONT.press,
     }).setOrigin(0.5));
 
-    // Mode label — "Normal" matches have bots + scavs; the alternating
-    // "No Bots or Scavs" matches run AI-free (see MatchConfig.allowBots).
-    container.add(this.add.text(
-      0, -CARD_HEIGHT / 2 + 48,
-      cfg.allowBots ? 'Normal' : 'No Bots or Scavs',
-      {
-        fontSize: '13px',
-        color: cfg.allowBots ? '#88ccaa' : '#ffcc44',
-        fontFamily: 'monospace',
-        fontStyle: 'bold',
-      },
-    ).setOrigin(0.5));
-
-    const playerCountText = this.add.text(0, 0, `Players: ${listing.playerCount}/${cfg.maxPlayers}`, {
-      fontSize: '14px', color: '#ccc', fontFamily: 'monospace',
-    }).setOrigin(0.5);
+    const playerCountText = this.add.text(0, -halfH + 58, `PLAYERS ${listing.playerCount}/${cfg.maxPlayers}`, {
+      fontSize: '12px', color: CSS.faint, fontFamily: FONT.silk,
+    }).setOrigin(0.5).setLetterSpacing(1);
     container.add(playerCountText);
 
     const secs = Math.ceil(listing.countdown);
-    const countdownText = this.add.text(0, 40, `${secs}s`, {
-      fontSize: '30px', color: this.countdownColor(secs), fontFamily: 'monospace', fontStyle: 'bold',
+    const u = urgencyOf(secs);
+    const countdownText = this.add.text(0, -18, `${secs}`, {
+      fontSize: '30px', color: urgencyHex(u), fontFamily: FONT.press,
     }).setOrigin(0.5);
     container.add(countdownText);
 
+    // Segment bar — the conveyor position readout (time made physical).
+    const segmentGfx = this.add.graphics();
+    container.add(segmentGfx);
+
     const actionContainer = this.add.container(0, 0);
     container.add(actionContainer);
-    this.populateActionArea(actionContainer, listing, isJoined);
 
-    return {
+    const view: CardView = {
       matchId: cfg.id,
       container,
       countdownText,
       playerCountText,
       borderGfx,
+      segmentGfx,
+      maxCountdown: Math.max(1, secs),
+      joinedTab: null,
+      updateJoinUrgency: null,
       leaving: false,
       isJoined,
       actionContainer,
     };
+
+    this.drawSegments(view, secs);
+    this.setJoinedTab(view, isJoined);
+    this.populateActionArea(view, listing, isJoined);
+    return view;
   }
 
   private drawCardBorder(g: Phaser.GameObjects.Graphics, isJoined: boolean): void {
     g.clear();
-    g.fillStyle(0x1a1a2e, 0.95);
-    g.fillRoundedRect(-CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT, 8);
-    g.lineStyle(2, isJoined ? 0x44ff88 : 0x333355, 1);
-    g.strokeRoundedRect(-CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT, 8);
+    drawNotchedPanel(g, -CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT, {
+      fill: COL.panel, border: isJoined ? COL.green : COL.border, borderWidth: 2, notch: 8,
+    });
   }
 
-  private countdownColor(secs: number): string {
-    return secs <= 5 ? '#ff4444' : secs <= 15 ? '#ffcc44' : '#ffffff';
+  /** Redraw the 14-segment time bar for the current seconds remaining. */
+  private drawSegments(view: CardView, secs: number): void {
+    view.maxCountdown = Math.max(view.maxCountdown, secs);
+    const u = urgencyOf(secs);
+    const segW = 13, gap = 2, segments = 14;
+    const totalW = segments * segW + (segments - 1) * gap;
+    view.segmentGfx.clear();
+    drawSegmentBar(view.segmentGfx, -totalW / 2, 12, {
+      segments, segW, segH: 10, gap,
+      fraction: secs / view.maxCountdown,
+      color: urgencyCol(u),
+    });
+  }
+
+  /** Add or remove the right-aligned "JOINED ✓" tab on the top border. */
+  private setJoinedTab(view: CardView, joined: boolean): void {
+    if (joined && !view.joinedTab) {
+      const t = addTabLabel(this, -CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, 'JOINED ✓', {
+        side: 'right', color: CSS.green,
+      });
+      view.container.add([t.bg, t.label]);
+      view.joinedTab = t;
+    } else if (!joined && view.joinedTab) {
+      view.joinedTab.label.destroy();
+      view.joinedTab.bg.destroy();
+      view.joinedTab = null;
+    }
   }
 
   /** Apply per-second updates to a kept card without rebuilding the whole
-   *  thing. Re-styles the border and rebuilds the action area only when the
-   *  joined-state flips. */
+   *  thing. Re-styles the border + action area only when joined-state flips. */
   private updateCardInPlace(view: CardView, listing: MatchListing): void {
     const cfg = listing.config;
     const isJoined = this.joinedMatchId === cfg.id;
 
-    view.playerCountText.setText(`Players: ${listing.playerCount}/${cfg.maxPlayers}`);
+    view.playerCountText.setText(`PLAYERS ${listing.playerCount}/${cfg.maxPlayers}`);
 
     const secs = Math.ceil(listing.countdown);
-    view.countdownText.setText(`${secs}s`);
-    view.countdownText.setColor(this.countdownColor(secs));
+    const u = urgencyOf(secs);
+    view.countdownText.setText(`${secs}`);
+    view.countdownText.setColor(urgencyHex(u));
+    this.drawSegments(view, secs);
+    // JOIN promotes to gold when the dying card hits the red phase.
+    view.updateJoinUrgency?.(secs);
 
     if (view.isJoined !== isJoined) {
       this.drawCardBorder(view.borderGfx, isJoined);
+      this.setJoinedTab(view, isJoined);
       view.actionContainer.removeAll(true);
-      this.populateActionArea(view.actionContainer, listing, isJoined);
+      view.updateJoinUrgency = null;
+      this.populateActionArea(view, listing, isJoined);
       view.isJoined = isJoined;
     }
   }
 
-  private populateActionArea(actionContainer: Phaser.GameObjects.Container, listing: MatchListing, isJoined: boolean): void {
+  /**
+   * A card-width notched button. Variants: 'neutral' (panel2 fill, borderHi
+   * border, hover→green), 'gold' (gold fill, hover→white border), 'danger'
+   * (panel2 fill, red border + red label, never filled). Returns a setVariant
+   * hook so the JOIN button can promote to gold on urgency.
+   */
+  private makeCardButton(
+    parent: Phaser.GameObjects.Container, yLocal: number, w: number, h: number,
+    label: string, fontPx: number, onClick: (() => void) | null,
+  ): { setVariant: (v: 'neutral' | 'gold' | 'danger') => void; container: Phaser.GameObjects.Container } {
+    const c = this.add.container(0, yLocal);
+    parent.add(c);
+    const g = this.add.graphics();
+    const txt = this.add.text(0, 0, label, { fontSize: `${fontPx}px`, color: CSS.text, fontFamily: FONT.press }).setOrigin(0.5);
+    c.add([g, txt]);
+    let variant: 'neutral' | 'gold' | 'danger' = 'neutral';
+    let hover = false;
+    const redraw = () => {
+      g.clear();
+      if (variant === 'gold') {
+        drawNotchedPanel(g, -w / 2, -h / 2, w, h, { fill: COL.gold, border: hover ? 0xffffff : COL.goldEdge, borderWidth: 2, notch: 6 });
+        txt.setColor(CSS.goldText);
+      } else if (variant === 'danger') {
+        drawNotchedPanel(g, -w / 2, -h / 2, w, h, { fill: COL.panel2, border: COL.red, borderWidth: 2, notch: 6 });
+        txt.setColor(CSS.red);
+      } else {
+        drawNotchedPanel(g, -w / 2, -h / 2, w, h, { fill: COL.panel2, border: hover ? COL.green : COL.borderHi, borderWidth: 2, notch: 6 });
+        txt.setColor(CSS.text);
+      }
+    };
+    redraw();
+    if (onClick) {
+      // Hit area anchored at (0,0) — Phaser container input-local coords come
+      // from the rendered top-left, not the centered origin (a centered rect
+      // would make only the top-left quadrant clickable).
+      c.setSize(w, h).setInteractive(new Phaser.Geom.Rectangle(0, 0, w, h), Phaser.Geom.Rectangle.Contains);
+      c.on('pointerover', () => { hover = true; this.input.setDefaultCursor('pointer'); redraw(); });
+      c.on('pointerout', () => { hover = false; c.y = yLocal; this.input.setDefaultCursor('default'); redraw(); });
+      c.on('pointerdown', () => { c.y = yLocal + 2; });
+      c.on('pointerup', () => { c.y = yLocal; onClick(); });
+    }
+    return { setVariant: (v) => { variant = v; redraw(); }, container: c };
+  }
+
+  private populateActionArea(view: CardView, listing: MatchListing, isJoined: boolean): void {
     const cfg = listing.config;
+    const ac = view.actionContainer;
     if (isJoined) {
-      actionContainer.add(this.add.text(0, CARD_HEIGHT / 2 - 56, 'JOINED - WAITING...', {
-        fontSize: '13px', color: '#44ff88', fontFamily: 'monospace', fontStyle: 'bold',
-      }).setOrigin(0.5));
-      const unjoinBtn = this.add.text(0, CARD_HEIGHT / 2 - 30, '[ UNJOIN ]', {
-        fontSize: '14px', color: '#ff6644', fontFamily: 'monospace', fontStyle: 'bold',
-        backgroundColor: '#2a1818', padding: { x: 16, y: 6 },
-      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-      unjoinBtn.on('pointerover', () => unjoinBtn.setColor('#ffaa88'));
-      unjoinBtn.on('pointerout', () => unjoinBtn.setColor('#ff6644'));
-      unjoinBtn.on('pointerdown', () => {
+      ac.add(this.add.text(0, CARD_HEIGHT / 2 - 64, 'JOINED — WAITING', {
+        fontSize: '12px', color: CSS.green, fontFamily: FONT.silk,
+      }).setOrigin(0.5).setLetterSpacing(1));
+      this.makeCardButton(ac, CARD_HEIGHT / 2 - 34, CARD_WIDTH - 36, 34, 'UNJOIN', 13, () => {
         NetworkManager.getSocket().emit('leave_match');
         this.joinedMatchId = null;
         this.renderCards();
-      });
-      actionContainer.add(unjoinBtn);
+      }).setVariant('danger');
     } else if (this.joinedMatchId === null) {
       const profile = ProfileStore.get();
       const canJoin = !!profile?.equippedBombermanId;
-      const btn = this.add.text(0, CARD_HEIGHT / 2 - 40, '[ JOIN ]', {
-        fontSize: '18px', color: canJoin ? '#44aaff' : '#555', fontFamily: 'monospace', fontStyle: 'bold',
-        backgroundColor: '#222244', padding: { x: 24, y: 8 },
-      }).setOrigin(0.5);
-      if (canJoin) {
-        btn.setInteractive({ useHandCursor: true });
-        btn.on('pointerover', () => btn.setColor('#88ccff'));
-        btn.on('pointerout', () => btn.setColor('#44aaff'));
-        btn.on('pointerdown', () => {
-          NetworkManager.getSocket().emit('join_match', { matchId: cfg.id });
-        });
+      const join = this.makeCardButton(ac, CARD_HEIGHT / 2 - 38, CARD_WIDTH - 36, 44, 'JOIN', 16,
+        canJoin ? () => NetworkManager.getSocket().emit('join_match', { matchId: cfg.id }) : null);
+      if (!canJoin) {
+        join.container.setAlpha(0.55);
+        view.updateJoinUrgency = null;
+      } else {
+        // Promote to gold in the red phase; neutral otherwise.
+        view.updateJoinUrgency = (secs: number) => join.setVariant(urgencyOf(secs) === 'urgent' ? 'gold' : 'neutral');
+        view.updateJoinUrgency(Math.ceil(listing.countdown));
       }
-      actionContainer.add(btn);
     }
   }
 }

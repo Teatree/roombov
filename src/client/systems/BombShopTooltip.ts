@@ -2,6 +2,8 @@ import Phaser from 'phaser';
 import type { BombCategory, BombType } from '@shared/types/bombs.ts';
 import { BOMB_CATALOG } from '@shared/config/bombs.ts';
 import { bombIconFrame } from './BombIcons.ts';
+import { COL, CSS, FONT } from '../design/tokens.ts';
+import { drawNotchedPanel } from '../util/pixelPanel.ts';
 
 /**
  * Minimal info this tooltip renders. The Bombs Shop passes a full
@@ -54,12 +56,12 @@ const CURSOR_OFFSET_Y = 14;
 const FADE_MS = 120;
 
 const CATEGORY_COLORS: Record<BombCategory, number> = {
-  standard: 0x4488dd, // fallback (Rock, Banana Piece — internal only)
-  tactical: 0xffd944, // gold — delayed AoE
-  utility:  0x44dd88, // green — vision / passive
-  instant:  0xff6644, // orange-red — contact / impact
-  escape:   0x44ddff, // cyan — self-movement
-  special:  0xff44aa, // pink — high-impact endgame
+  standard: COL.blue,   // fallback (Rock, Banana Piece — internal only)
+  tactical: COL.gold,   // delayed AoE
+  utility:  COL.green,  // vision / passive
+  instant:  COL.orange, // contact / impact
+  escape:   COL.blue,   // self-movement
+  special:  0xc06ad0,   // magenta — high-impact endgame (no palette token)
 };
 
 const CATEGORY_LABELS: Record<BombCategory, string> = {
@@ -74,7 +76,6 @@ const CATEGORY_LABELS: Record<BombCategory, string> = {
 export class BombShopTooltip {
   private scene: Phaser.Scene;
   private container: Phaser.GameObjects.Container;
-  private shadowGfx: Phaser.GameObjects.Graphics;
   private bgGfx: Phaser.GameObjects.Graphics;
   private topBar: Phaser.GameObjects.Rectangle;
   private icon: Phaser.GameObjects.Image;
@@ -94,7 +95,6 @@ export class BombShopTooltip {
     this.scene = scene;
     this.container = scene.add.container(0, 0).setDepth(5000).setVisible(false).setAlpha(0);
 
-    this.shadowGfx = scene.add.graphics();
     this.bgGfx = scene.add.graphics();
     this.topBar = scene.add.rectangle(0, 0, WIDTH, TOP_BAR_H, 0xffffff).setOrigin(0, 0);
     this.icon = scene.add.image(PADDING_X + ICON_SIZE / 2, TOP_BAR_H + PADDING_Y + ICON_SIZE / 2, 'bomb_icons', 0)
@@ -102,18 +102,18 @@ export class BombShopTooltip {
 
     const textStartX = PADDING_X + ICON_SIZE + 10;
     this.categoryText = scene.add.text(textStartX, TOP_BAR_H + PADDING_Y + 2, '', {
-      fontSize: '10px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: '9px', color: CSS.text, fontFamily: FONT.silk,
     }).setOrigin(0, 0);
-    this.nameText = scene.add.text(textStartX, TOP_BAR_H + PADDING_Y + 16, '', {
-      fontSize: '14px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
+    this.nameText = scene.add.text(textStartX, TOP_BAR_H + PADDING_Y + 18, '', {
+      fontSize: '12px', color: CSS.text, fontFamily: FONT.press,
     }).setOrigin(0, 0);
     this.descText = scene.add.text(PADDING_X, TOP_BAR_H + PADDING_Y + ICON_SIZE + 10, '', {
-      fontSize: '11px', color: '#aaaaaa', fontFamily: 'monospace',
+      fontSize: '11px', color: CSS.dim, fontFamily: FONT.silk,
       wordWrap: { width: WIDTH - PADDING_X * 2 },
       lineSpacing: 2,
     }).setOrigin(0, 0);
 
-    this.container.add([this.shadowGfx, this.bgGfx, this.topBar, this.icon, this.categoryText, this.nameText, this.descText]);
+    this.container.add([this.bgGfx, this.topBar, this.icon, this.categoryText, this.nameText, this.descText]);
   }
 
   /**
@@ -212,14 +212,9 @@ export class BombShopTooltip {
   }
 
   private drawBg(height: number): void {
-    this.shadowGfx.clear();
-    this.shadowGfx.fillStyle(0x000000, 0.5);
-    this.shadowGfx.fillRoundedRect(3, 4, WIDTH, height, 4);
-
     this.bgGfx.clear();
-    this.bgGfx.fillStyle(0x1a1a2e, 0.96);
-    this.bgGfx.fillRoundedRect(0, 0, WIDTH, height, 4);
-    this.bgGfx.lineStyle(1, 0x333355, 1);
-    this.bgGfx.strokeRoundedRect(0, 0, WIDTH, height, 4);
+    drawNotchedPanel(this.bgGfx, 0, 0, WIDTH, height, {
+      fill: COL.panel, border: COL.border, borderWidth: 2, notch: 6,
+    });
   }
 }

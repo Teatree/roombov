@@ -18,6 +18,8 @@ import { createIdleActionBadge } from './IdleActionBadge.ts';
 import { BALANCE } from '@shared/config/balance.ts';
 import { HIDDEN_FEATURES } from '@shared/config/features.ts';
 import { tiersRemaining, effectiveMaxCustomSlots, effectiveStackSize, upgradeLevel } from '@shared/utils/bomberman-stats.ts';
+import { COL, CSS, FONT } from '../design/tokens.ts';
+import { drawNotchedPanel, linkAction, notchedPoints } from '../util/pixelPanel.ts';
 
 const SELECTOR_CARD_W = 140;
 const SELECTOR_CARD_H = 180;
@@ -60,8 +62,8 @@ export class BombermanSelector {
       const empty = this.scene.add.container(0, 0);
       empty.add(this.scene.add.text(
         this.scene.scale.width / 2, this.y,
-        '(No Bombermen owned — visit the Bomberman Shop)',
-        { fontSize: '12px', color: '#666', fontFamily: 'monospace' },
+        'NO BOMBERMEN OWNED — VISIT THE BOMBERMAN SHOP',
+        { fontSize: '12px', color: CSS.faint, fontFamily: FONT.silk },
       ).setOrigin(0.5));
       this.containers.push(empty);
       return;
@@ -76,8 +78,8 @@ export class BombermanSelector {
     const label = this.scene.add.container(0, 0);
     label.add(this.scene.add.text(width / 2, this.y - SELECTOR_CARD_H / 2 - 20,
       'YOUR BOMBERMEN', {
-        fontSize: '13px', color: '#aaaaaa', fontFamily: 'monospace', fontStyle: 'bold',
-      }).setOrigin(0.5));
+        fontSize: '13px', color: CSS.faint, fontFamily: FONT.silk,
+      }).setOrigin(0.5).setLetterSpacing(2));
     this.containers.push(label);
 
     for (let i = 0; i < count; i++) {
@@ -91,9 +93,9 @@ export class BombermanSelector {
       // signal rather than constant clutter.
       if (this.cardHasAffordableUpgrade(owned, profile.coins, profile.treasures)) {
         const pip = this.scene.add.graphics();
-        pip.fillStyle(0x44ff88, 1);
+        pip.fillStyle(COL.green, 1);
         pip.fillCircle(SELECTOR_CARD_W / 2 - 8, -SELECTOR_CARD_H / 2 + 8, 4);
-        pip.lineStyle(1, 0x0a3a18, 1);
+        pip.lineStyle(1, COL.bg, 1);
         pip.strokeCircle(SELECTOR_CARD_W / 2 - 8, -SELECTOR_CARD_H / 2 + 8, 4);
         card.add(pip);
       }
@@ -126,12 +128,11 @@ export class BombermanSelector {
   private buildCard(x: number, y: number, owned: OwnedBomberman, isEquipped: boolean): Phaser.GameObjects.Container {
     const container = this.scene.add.container(x, y);
 
-    // Background
+    // Background — notched panel; equipped card gets a green border.
     const bg = this.scene.add.graphics();
-    bg.fillStyle(0x1a1a2e, 0.95);
-    bg.fillRoundedRect(-SELECTOR_CARD_W / 2, -SELECTOR_CARD_H / 2, SELECTOR_CARD_W, SELECTOR_CARD_H, 6);
-    bg.lineStyle(2, isEquipped ? 0x44ff88 : 0x333355, 1);
-    bg.strokeRoundedRect(-SELECTOR_CARD_W / 2, -SELECTOR_CARD_H / 2, SELECTOR_CARD_W, SELECTOR_CARD_H, 6);
+    drawNotchedPanel(bg, -SELECTOR_CARD_W / 2, -SELECTOR_CARD_H / 2, SELECTOR_CARD_W, SELECTOR_CARD_H, {
+      fill: COL.panel, border: isEquipped ? COL.green : COL.border, borderWidth: 2, notch: 6,
+    });
     container.add(bg);
 
     // Card-wide hit target — click opens the Upgrade popup. Added before
@@ -146,9 +147,10 @@ export class BombermanSelector {
       .setInteractive({ useHandCursor: true });
     cardZone.on('pointerover', () => {
       cardHover.clear();
-      cardHover.lineStyle(2, 0xffd944, 1);
-      cardHover.strokeRoundedRect(-SELECTOR_CARD_W / 2 + 1, -SELECTOR_CARD_H / 2 + 1,
-        SELECTOR_CARD_W - 2, SELECTOR_CARD_H - 2, 6);
+      cardHover.lineStyle(2, COL.borderHi, 1);
+      cardHover.strokePoints(notchedPoints(
+        -SELECTOR_CARD_W / 2 + 1, -SELECTOR_CARD_H / 2 + 1,
+        SELECTOR_CARD_W - 2, SELECTOR_CARD_H - 2, 6), true);
     });
     cardZone.on('pointerout', () => cardHover.clear());
     cardZone.on('pointerdown', () => {
@@ -181,6 +183,8 @@ export class BombermanSelector {
       idleAction: owned.idleAction ?? 'attack',
       maxCustomSlots: effectiveMaxCustomSlots(owned),
       stackSize: effectiveStackSize(owned),
+      name: owned.name,
+      sp: owned.sp ?? 0,
     });
 
     // Class label (Ambusher / Healster / Disguiser) across the top.
@@ -190,7 +194,7 @@ export class BombermanSelector {
 
     // Name
     container.add(this.scene.add.text(0, -4, owned.name ?? '???', {
-      fontSize: '10px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: '10px', color: CSS.text, fontFamily: FONT.press,
     }).setOrigin(0.5));
 
     // Inventory icons row — variable count based on the bomberman's slots.
@@ -223,11 +227,11 @@ export class BombermanSelector {
           .setDisplaySize(iconSize, iconSize);
         container.add(icon);
         container.add(this.scene.add.text(ix, iconY + iconSize / 2 + 4, `${slot.count}`, {
-          fontSize: '8px', color: '#ffd944', fontFamily: 'monospace',
+          fontSize: '8px', color: CSS.faint, fontFamily: FONT.silk,
         }).setOrigin(0.5, 0));
       } else {
         container.add(this.scene.add.text(ix, iconY, '—', {
-          fontSize: '10px', color: '#444', fontFamily: 'monospace',
+          fontSize: '10px', color: CSS.faint, fontFamily: FONT.silk,
         }).setOrigin(0.5));
       }
     }
@@ -244,8 +248,8 @@ export class BombermanSelector {
       ).setInteractive({ useHandCursor: true });
       zone.on('pointerover', () => {
         loadoutHover.clear();
-        loadoutHover.lineStyle(2, 0xffd944, 1);
-        loadoutHover.strokeRoundedRect(loadoutLeft, loadoutTop, loadoutWidth, loadoutHeight, 4);
+        loadoutHover.lineStyle(2, COL.borderHi, 1);
+        loadoutHover.strokeRect(loadoutLeft, loadoutTop, loadoutWidth, loadoutHeight);
       });
       zone.on('pointerout', () => loadoutHover.clear());
       zone.on('pointerdown', () => {
@@ -261,19 +265,13 @@ export class BombermanSelector {
     // Equip button or "EQUIPPED" label
     if (isEquipped) {
       container.add(this.scene.add.text(0, SELECTOR_CARD_H / 2 - 16, 'EQUIPPED', {
-        fontSize: '10px', color: '#44ff88', fontFamily: 'monospace', fontStyle: 'bold',
+        fontSize: '11px', color: CSS.green, fontFamily: FONT.silk,
       }).setOrigin(0.5));
     } else {
-      const btn = this.scene.add.text(0, SELECTOR_CARD_H / 2 - 16, '[ EQUIP ]', {
-        fontSize: '10px', color: '#44aaff', fontFamily: 'monospace', fontStyle: 'bold',
-        backgroundColor: '#222244', padding: { x: 6, y: 3 },
-      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-      btn.on('pointerover', () => btn.setColor('#88ccff'));
-      btn.on('pointerout', () => btn.setColor('#44aaff'));
-      btn.on('pointerdown', () => {
+      const btn = linkAction(this.scene, 0, SELECTOR_CARD_H / 2 - 16, 'EQUIP', () => {
         NetworkManager.track('equip_bomberman', 'profile');
         NetworkManager.getSocket().emit('equip_bomberman', { ownedId: owned.id });
-      });
+      }, 12);
       container.add(btn);
     }
 

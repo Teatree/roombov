@@ -15,6 +15,8 @@ import { TreasureListWidget } from '../systems/TreasureListWidget.ts';
 import { preloadTreasureIcons } from '../systems/TreasureIcons.ts';
 import { NetworkManager as NM } from '../NetworkManager.ts';
 import { designViewport, fitSceneToViewport } from '../util/responsiveScene.ts';
+import { COL, CSS, FONT } from '../design/tokens.ts';
+import { drawNotchedPanel, makePixelButton } from '../util/pixelPanel.ts';
 
 // Two-column layout (2026-06-06): left ~40% = the inline Upgrade panel (the old
 // popup, now embedded; targets the equipped Bomberman), right ~60% = the shop
@@ -108,6 +110,8 @@ export class BombermanShopScene extends Phaser.Scene {
     ensureBombermanAnims(this);
     const { layoutH } = designViewport(this, DESIGN_W, DESIGN_H);
 
+    this.cameras.main.setBackgroundColor(CSS.bg);
+
     // Layout adapts to ownership: with no Bombermen owned there's nothing to
     // upgrade, so the left column is omitted and the shop is centred on screen.
     // The first purchase expands to the two-column layout (see maybeExpandLayout).
@@ -127,13 +131,13 @@ export class BombermanShopScene extends Phaser.Scene {
     // Screen title — the screen is the "Bomberman" hub (its two sections are
     // the SHOP and UPGRADE, headered consistently below).
     this.add.text(centerX, 22, 'BOMBERMAN', {
-      fontSize: '26px', color: '#e0e0e0', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setOrigin(0.5, 0);
+      fontSize: '26px', color: CSS.text, fontFamily: FONT.press,
+    }).setOrigin(0.5, 0).setShadow(5, 5, CSS.stageFrame, 0, true, true);
 
     // Consistent section headers over each column. UPGRADE only exists in the
     // two-column layout.
     const sectionHeaderStyle = {
-      fontSize: '20px', color: '#cfd6e6', fontFamily: 'monospace', fontStyle: 'bold' as const,
+      fontSize: '18px', color: CSS.text, fontFamily: FONT.press,
     };
     if (this.twoColumn) {
       this.upgradeHeader = this.add.text(this.panelX + LEFT_W / 2, 62, 'UPGRADE', sectionHeaderStyle).setOrigin(0.5, 0);
@@ -149,10 +153,10 @@ export class BombermanShopScene extends Phaser.Scene {
     // --- Currency row (top-right): coins + SP + treasure, all of which the
     //     shop/upgrades spend. SP is the equipped Bomberman's. ---
     this.coinsText = this.add.text(rightEdge, 8, '', {
-      fontSize: '18px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: '16px', color: CSS.gold, fontFamily: FONT.press,
     }).setOrigin(1, 0);
-    this.spText = this.add.text(rightEdge, 30, '', {
-      fontSize: '16px', color: '#5db5ff', fontFamily: 'monospace', fontStyle: 'bold',
+    this.spText = this.add.text(rightEdge, 32, '', {
+      fontSize: '13px', color: CSS.blue, fontFamily: FONT.press,
     }).setOrigin(1, 0);
     this.wallet = new TreasureListWidget(this, {
       x: rightEdge, y: 52, anchor: 'top-left', direction: 'horizontal',
@@ -160,20 +164,20 @@ export class BombermanShopScene extends Phaser.Scene {
     });
 
     // Cycle timer — now BELOW the card listings (cards bottom ≈ 480).
-    this.timerText = this.add.text(this.rightCardsCx, 500, 'New cycle in --:--', {
-      fontSize: '14px', color: '#888888', fontFamily: 'monospace',
-    }).setOrigin(0.5, 0);
+    this.timerText = this.add.text(this.rightCardsCx, 500, 'NEW CYCLE IN --:--', {
+      fontSize: '12px', color: CSS.dim, fontFamily: FONT.silk,
+    }).setOrigin(0.5, 0).setLetterSpacing(1);
 
     this.toastText = this.add.text(centerX, layoutH - 58, '', {
-      fontSize: '16px', color: '#44ff88', fontFamily: 'monospace',
+      fontSize: '14px', color: CSS.green, fontFamily: FONT.silk,
     }).setOrigin(0.5);
 
     // Back button
-    const backBtn = this.add.text(20, layoutH - 30, '[ < BACK ]', {
-      fontSize: '16px', color: '#888888', fontFamily: 'monospace',
+    const backBtn = this.add.text(20, layoutH - 30, '[ < MENU ]', {
+      fontSize: '14px', color: CSS.dim, fontFamily: FONT.silk,
     }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
-    backBtn.on('pointerover', () => backBtn.setColor('#cccccc'));
-    backBtn.on('pointerout', () => backBtn.setColor('#888888'));
+    backBtn.on('pointerover', () => backBtn.setColor(CSS.text));
+    backBtn.on('pointerout', () => backBtn.setColor(CSS.dim));
     backBtn.on('pointerdown', () => this.scene.start('MainMenuScene'));
 
     this.input.keyboard?.on('keydown-ESC', () => this.scene.start('MainMenuScene'));
@@ -184,7 +188,7 @@ export class BombermanShopScene extends Phaser.Scene {
     NetworkManager.track('bomberman_shop_request', 'bomberman_shop_cycle');
     socket.emit('bomberman_shop_request');
     socket.on('shop_result', (msg) => {
-      this.toastText.setColor(msg.ok ? '#44ff88' : '#ff4444');
+      this.toastText.setColor(msg.ok ? CSS.green : CSS.red);
       this.toastText.setText(msg.message ?? msg.reason ?? '');
       this.time.delayedCall(2500, () => this.toastText.setText(''));
     });
@@ -219,7 +223,7 @@ export class BombermanShopScene extends Phaser.Scene {
     const msLeft = Math.max(0, cycle.endsAt - Date.now());
     const min = Math.floor(msLeft / 60000);
     const sec = Math.floor((msLeft % 60000) / 1000).toString().padStart(2, '0');
-    this.timerText.setText(`New cycle in ${min}:${sec}`);
+    this.timerText.setText(`NEW CYCLE IN ${min}:${sec}`);
 
     // Cycle expired locally — request the next one. Server will tick forward
     // and respond with a fresh cycle, which the diff-renderer will animate
@@ -253,10 +257,12 @@ export class BombermanShopScene extends Phaser.Scene {
   private renderHeader(): void {
     const profile = ProfileStore.get();
     if (!profile) return;
-    this.coinsText.setText(`Coins: ${profile.coins}`);
-    // SP is per-Bomberman — show the equipped one's (the Upgrade panel target).
+    this.coinsText.setText(`${profile.coins} C`);
+    // SP is the equipped Bomberman's EXPERIENCE (the Upgrade panel target) —
+    // rendered in blue, never as a stat. Hidden entirely when the player has no
+    // Bomberman (there is no experience to show).
     const equipped = profile.ownedBombermen.find(b => b.id === profile.equippedBombermanId);
-    this.spText.setText(`SP ${equipped?.sp ?? 0}`);
+    this.spText.setText(equipped ? `${equipped.sp ?? 0} SP` : '');
     this.wallet?.setBundle(profile.treasures ?? {});
     this.wallet?.rightAlignTo(this.walletRightEdge);
   }
@@ -300,7 +306,7 @@ export class BombermanShopScene extends Phaser.Scene {
 
     // Fade the UPGRADE header in over its column.
     const sectionHeaderStyle = {
-      fontSize: '20px', color: '#cfd6e6', fontFamily: 'monospace', fontStyle: 'bold' as const,
+      fontSize: '18px', color: CSS.text, fontFamily: FONT.press,
     };
     this.upgradeHeader = this.add.text(this.panelX + LEFT_W / 2, 62, 'UPGRADE', sectionHeaderStyle)
       .setOrigin(0.5, 0).setAlpha(0);
@@ -439,32 +445,22 @@ export class BombermanShopScene extends Phaser.Scene {
     const container = this.add.container(x, y);
     const profile = ProfileStore.get();
 
-    // Background tint hints tier
-    const tierColor = template.tier === 'free' ? 0x224422
-      : template.tier === 'paid' ? 0x222244
-      : 0x442233;
+    const isFree = template.price === 0;
 
+    // Card frame — notched panel. Identity now comes from the level badge +
+    // class color, not a tier label. FREE cards take a green border.
     const bg = this.add.graphics();
-    bg.fillStyle(tierColor, 0.9);
-    bg.fillRoundedRect(-CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT, 10);
-    bg.lineStyle(2, 0x555577, 1);
-    bg.strokeRoundedRect(-CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT, 10);
+    drawNotchedPanel(bg, -CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT, {
+      fill: COL.panel, border: isFree ? COL.green : COL.border, borderWidth: 2, notch: 8,
+    });
     container.add(bg);
 
-    // Tier badge
-    const tierLabel = template.tier === 'free' ? 'CHEAP'
-      : template.tier === 'paid' ? 'PAID'
-      : 'EXPENSIVE';
-    container.add(this.add.text(0, -CARD_HEIGHT / 2 + 14, tierLabel, {
-      fontSize: '12px', color: '#bbbbbb', fontFamily: 'monospace', fontStyle: 'bold',
+    // Name (Press Start).
+    container.add(this.add.text(0, -CARD_HEIGHT / 2 + 24, template.name, {
+      fontSize: '13px', color: CSS.text, fontFamily: FONT.press,
     }).setOrigin(0.5));
 
-    // Name
-    container.add(this.add.text(0, -CARD_HEIGHT / 2 + 30, template.name, {
-      fontSize: '14px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setOrigin(0.5));
-
-    // Idle Action "class" badge under the name.
+    // Idle Action "class" badge under the name (renders in its class color).
     container.add(createIdleActionBadge(this, 0, -CARD_HEIGHT / 2 + 42, template.idleAction ?? 'attack', '10px'));
 
     // Character sprite
@@ -472,7 +468,7 @@ export class BombermanShopScene extends Phaser.Scene {
     const charSprite = createShopBombermanSprite(this, 0, -82, template.tint, template.character, anim, 1.0);
     container.add(charSprite);
 
-    // Tier info badge — top-right of the card. Hover reveals stat tooltip.
+    // Level badge — top-right of the card. Hover reveals the stat tooltip.
     attachTierInfoBadge(this, container, {
       x: 64, y: -CARD_HEIGHT / 2 + 14,
       tier: template.tier,
@@ -480,6 +476,7 @@ export class BombermanShopScene extends Phaser.Scene {
       idleAction: template.idleAction ?? 'attack',
       maxCustomSlots: template.maxCustomSlots,
       stackSize: template.stackSize,
+      name: template.name,
       tooltipSide: 'below',
     });
 
@@ -492,8 +489,8 @@ export class BombermanShopScene extends Phaser.Scene {
       const slot = loadoutSlots[si];
       const rowY = loadoutStartY + si * rowH;
       if (!slot) {
-        container.add(this.add.text(0, rowY, '— empty', {
-          fontSize: '11px', color: '#666', fontFamily: 'monospace',
+        container.add(this.add.text(0, rowY, '— EMPTY', {
+          fontSize: '11px', color: CSS.faint, fontFamily: FONT.silk,
         }).setOrigin(0.5));
       } else {
         const name = BOMB_CATALOG[slot.type].name;
@@ -501,40 +498,40 @@ export class BombermanShopScene extends Phaser.Scene {
           .setDisplaySize(iconSize, iconSize);
         container.add(slotIcon);
         const nameText = this.add.text(-CARD_WIDTH / 2 + 32, rowY, name, {
-          fontSize: '11px', color: '#cccccc', fontFamily: 'monospace',
+          fontSize: '11px', color: CSS.dim, fontFamily: FONT.silk,
         }).setOrigin(0, 0.5);
+        // Truncate long names so they never collide with the right-aligned count.
+        const maxNameW = CARD_WIDTH - 64;
+        let trimmed = name;
+        while (trimmed.length > 1 && nameText.width > maxNameW) {
+          trimmed = trimmed.slice(0, -1);
+          nameText.setText(`${trimmed}…`);
+        }
         container.add(nameText);
-        container.add(this.add.text(CARD_WIDTH / 2 - 14, rowY, `×${slot.count}`, {
-          fontSize: '12px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
+        container.add(this.add.text(CARD_WIDTH / 2 - 14, rowY, `${slot.count}`, {
+          fontSize: '12px', color: CSS.gold, fontFamily: FONT.press,
         }).setOrigin(1, 0.5));
       }
     }
 
-    // Price
-    const priceLabel = template.price === 0 ? 'FREE' : `${template.price} coins`;
-    container.add(this.add.text(0, CARD_HEIGHT / 2 - 42, priceLabel, {
-      fontSize: '16px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
+    // Price — FREE in green, otherwise gold.
+    const priceLabel = isFree ? 'FREE' : `${template.price} C`;
+    container.add(this.add.text(0, CARD_HEIGHT / 2 - 50, priceLabel, {
+      fontSize: '15px', color: isFree ? CSS.green : CSS.gold, fontFamily: FONT.press,
     }).setOrigin(0.5));
 
     const canAfford = profile ? profile.coins >= template.price : false;
     const rosterFull = profile ? profile.ownedBombermen.length >= 5 : true;
     const enabled = canAfford && !rosterFull;
-    const btnColor = enabled ? '#44aaff' : '#555566';
-    const btn = this.add.text(0, CARD_HEIGHT / 2 - 18, '[ BUY ]', {
-      fontSize: '14px', color: btnColor, fontFamily: 'monospace', fontStyle: 'bold',
-      backgroundColor: '#111122', padding: { x: 12, y: 6 },
-    }).setOrigin(0.5);
-
-    if (enabled) {
-      btn.setInteractive({ useHandCursor: true });
-      btn.on('pointerover', () => btn.setColor('#88ccff'));
-      btn.on('pointerout', () => btn.setColor('#44aaff'));
-      btn.on('pointerdown', () => {
+    const buy = makePixelButton(this, {
+      x: 0, y: CARD_HEIGHT / 2 - 24, w: CARD_WIDTH - 28, h: 30,
+      label: 'BUY', variant: 'gold', fontPx: 13, enabled,
+      onClick: () => {
         NetworkManager.track('buy_bomberman', 'profile');
         NetworkManager.getSocket().emit('buy_bomberman', { templateId: template.id });
-      });
-    }
-    container.add(btn);
+      },
+    });
+    container.add(buy.container);
 
     return container;
   }

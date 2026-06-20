@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { COL, CSS, FONT } from '../design/tokens.ts';
 
 /**
  * Mobile-game style red-dot notification: a red circle with a centered count
@@ -21,17 +22,16 @@ export class NotificationBadge {
     this.container.setVisible(false);
 
     this.bg = scene.add.graphics();
-    this.bg.fillStyle(0xdd2233, 1);
+    this.bg.fillStyle(COL.red, 1);
     this.bg.fillCircle(0, 0, this.radius);
     this.bg.lineStyle(1.5, 0xffffff, 1);
     this.bg.strokeCircle(0, 0, this.radius);
     this.container.add(this.bg);
 
     this.text = scene.add.text(0, 0, '', {
-      fontSize: '12px',
-      color: '#ffffff',
-      fontFamily: 'Arial, sans-serif',
-      fontStyle: 'bold',
+      fontSize: '9px',
+      color: CSS.text,
+      fontFamily: FONT.silk,
     }).setOrigin(0.5, 0.5);
     this.container.add(this.text);
   }

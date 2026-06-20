@@ -19,6 +19,8 @@ import {
   createShopBombermanSprite,
   preloadBombermanSpritesheets,
 } from '../systems/BombermanAnimations.ts';
+import { COL, CSS, FONT } from '../design/tokens.ts';
+import { makePixelButton } from '../util/pixelPanel.ts';
 
 export interface MatchResultsData {
   outcome: 'escaped' | 'died' | 'lost';
@@ -73,8 +75,8 @@ export class ResultsScene extends Phaser.Scene {
    *  one upgrade is affordable. Held so it can be cleared on profile updates
    *  (e.g. after the player applies an upgrade and nothing is affordable). */
   private upgradePip: Phaser.GameObjects.Graphics | null = null;
-  /** Cached reference to the upgrade button so the pip can re-attach to it. */
-  private upgradeBtn: Phaser.GameObjects.Text | null = null;
+  /** Cached center + bounds of the upgrade button so the pip can re-attach. */
+  private upgradeBtnRect: { x: number; y: number; w: number; h: number } | null = null;
   private profileUnsub: (() => void) | null = null;
   /** Re-fit the camera when the viewport changes (orientation / resize). */
   private readonly onResize = (): void => fitSceneToViewport(this, DESIGN_W, DESIGN_H);
@@ -119,32 +121,32 @@ export class ResultsScene extends Phaser.Scene {
 
     // Background — camera bg color fills any area outside the design box when
     // the camera zooms out on short viewports; the rect covers desktop 1:1.
-    this.cameras.main.setBackgroundColor(0x0a0a14);
+    this.cameras.main.setBackgroundColor(CSS.bg);
     const bg = this.add.graphics();
-    bg.fillStyle(0x0a0a14, 1);
+    bg.fillStyle(COL.bg, 1);
     bg.fillRect(0, 0, width, height);
 
-    // Title
+    // Title (§1.2): Press Start + hard pixel shadow; green for escape, red loss.
     let title = '';
-    let titleColor = '#ffffff';
+    let titleColor: string = CSS.text;
     switch (r.outcome) {
       case 'escaped':
         title = 'ESCAPED';
-        titleColor = '#44ff88';
+        titleColor = CSS.green;
         break;
       case 'died':
         title = 'DIED';
-        titleColor = '#ff4444';
+        titleColor = CSS.red;
         break;
       case 'lost':
         title = 'LOST';
-        titleColor = '#ff4444';
+        titleColor = CSS.red;
         break;
     }
 
     this.add.text(width / 2, layoutH * 0.16, title, {
-      fontSize: '48px', color: titleColor, fontFamily: 'monospace', fontStyle: 'bold',
-    }).setOrigin(0.5);
+      fontSize: '40px', color: titleColor, fontFamily: FONT.press,
+    }).setOrigin(0.5).setShadow(5, 5, CSS.stageFrame, 0, true, true);
 
     // Subtitle line
     let subtitleY = layoutH * 0.26;
@@ -153,7 +155,7 @@ export class ResultsScene extends Phaser.Scene {
       // Section header style is shared between Treasures Gathered + Items
       // Kept so they read as parallel summaries.
       const headerStyle: Phaser.Types.GameObjects.Text.TextStyle = {
-        fontSize: '18px', color: '#c4a566', fontFamily: 'monospace', fontStyle: 'bold',
+        fontSize: '14px', color: CSS.gold, fontFamily: FONT.silk,
       };
 
       // --- SP hero block ---
@@ -205,24 +207,24 @@ export class ResultsScene extends Phaser.Scene {
       // Kills (positioned below Items Kept so the haul tallies come first)
       if (r.kills > 0) {
         this.add.text(width / 2, subtitleY, `Bombermen eliminated: ${r.kills}`, {
-          fontSize: '16px', color: '#ff8844', fontFamily: 'monospace',
+          fontSize: '14px', color: CSS.orange, fontFamily: FONT.silk,
         }).setOrigin(0.5);
         subtitleY += 30;
       }
 
       // Lifetime SP — sum of all SP this Bomberman ever earned across all
       // matches, including SP already spent on upgrades. Memorial-style
-      // total that sits right above the turns-survived line.
+      // total that sits right above the turns-survived line. SP is experience
+      // (blue), never a stat.
       subtitleY += 10;
       this.add.text(width / 2, subtitleY, `Lifetime SP: ${r.lifetimeSp}`, {
-        fontSize: '16px', color: '#5db5ff', fontFamily: 'monospace', fontStyle: 'bold',
+        fontSize: '14px', color: CSS.blue, fontFamily: FONT.silk,
       }).setOrigin(0.5);
       subtitleY += 24;
 
-      // Turns — sized to match Bombermen eliminated; keeps its dim gray so
-      // the eye lands on the headline tallies first.
+      // Turns — kept dim so the eye lands on the headline tallies first.
       this.add.text(width / 2, subtitleY, `Turns survived: ${r.turnsPlayed}`, {
-        fontSize: '16px', color: '#888888', fontFamily: 'monospace',
+        fontSize: '14px', color: CSS.dim, fontFamily: FONT.silk,
       }).setOrigin(0.5);
 
     } else if (r.outcome === 'died') {
@@ -234,102 +236,89 @@ export class ResultsScene extends Phaser.Scene {
       // Killed by
       if (r.killerName) {
         this.add.text(width / 2, subtitleY, `Killed by: ${r.killerName}`, {
-          fontSize: '16px', color: '#ff8844', fontFamily: 'monospace',
+          fontSize: '14px', color: CSS.orange, fontFamily: FONT.silk,
         }).setOrigin(0.5);
         subtitleY += 30;
       } else {
         this.add.text(width / 2, subtitleY, 'Killed in action', {
-          fontSize: '16px', color: '#888888', fontFamily: 'monospace',
+          fontSize: '14px', color: CSS.dim, fontFamily: FONT.silk,
         }).setOrigin(0.5);
         subtitleY += 30;
       }
 
       // Lifetime SP memorial — same line slot as the escape variant. Even
       // though the Bomberman is dead, we still honor what they collected.
+      // SP is experience (blue), never a stat.
       subtitleY += 10;
       this.add.text(width / 2, subtitleY, `Lifetime SP: ${r.lifetimeSp}`, {
-        fontSize: '14px', color: '#5db5ff', fontFamily: 'monospace', fontStyle: 'bold',
+        fontSize: '13px', color: CSS.blue, fontFamily: FONT.silk,
       }).setOrigin(0.5);
       subtitleY += 22;
 
       this.add.text(width / 2, subtitleY, `Turns survived: ${r.turnsPlayed}`, {
-        fontSize: '13px', color: '#888888', fontFamily: 'monospace',
+        fontSize: '13px', color: CSS.dim, fontFamily: FONT.silk,
       }).setOrigin(0.5);
 
     } else {
       // Lost (turn limit exceeded)
       this.add.text(width / 2, subtitleY, 'Time ran out!', {
-        fontSize: '20px', color: '#ff8844', fontFamily: 'monospace', fontStyle: 'bold',
+        fontSize: '18px', color: CSS.orange, fontFamily: FONT.press,
       }).setOrigin(0.5);
       subtitleY += 36;
 
       this.add.text(width / 2, subtitleY, `You stayed too long (${r.turnsPlayed} turns)`, {
-        fontSize: '14px', color: '#888888', fontFamily: 'monospace',
+        fontSize: '14px', color: CSS.dim, fontFamily: FONT.silk,
       }).setOrigin(0.5);
     }
 
-    // Back button
-    const playBtn = this.add.text(width / 2, layoutH * 0.82, '[ BACK TO LOBBY ]', {
-      fontSize: '24px', color: '#44aaff', fontFamily: 'monospace',
-    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-
-    playBtn.on('pointerover', () => playBtn.setColor('#88ccff'));
-    playBtn.on('pointerout', () => playBtn.setColor('#44aaff'));
-    playBtn.on('pointerdown', () => this.backToLobby());
+    // Back button — primary CTA, gold pixel button.
+    makePixelButton(this, {
+      x: width / 2, y: layoutH * 0.82, w: 260, h: 50,
+      label: 'BACK TO LOBBY', variant: 'gold', fontPx: 16,
+      onClick: () => this.backToLobby(),
+    });
 
     // Shortcut row — Factory + Bombs Shop + (escaped only) Upgrade Bomberman,
-    // all sharing the same chrome so the row reads as a parallel set of
-    // detours before re-queueing.
+    // all sharing neutral pixel-button chrome so the row reads as a parallel
+    // set of detours before re-queueing.
     const shortcutY = layoutH * 0.92;
-    const shortcutGap = 24;
-    const shortcutStyle: Phaser.Types.GameObjects.Text.TextStyle = {
-      fontSize: '16px', color: '#44aaff', fontFamily: 'monospace',
-      backgroundColor: '#1a1a2a', padding: { x: 14, y: 6 },
-    };
-    const factoryBtn = HIDDEN_FEATURES.factory
-      ? null
-      : this.add.text(0, 0, '[ FACTORY ]', shortcutStyle).setOrigin(0.5);
-    const bombsBtn = this.add.text(0, 0, '[ BOMBS SHOP ]', shortcutStyle).setOrigin(0.5);
-    const upgradeBtn = r.outcome === 'escaped'
-      ? this.add.text(0, 0, '[ UPGRADE BOMBERMAN ]', shortcutStyle).setOrigin(0.5)
-      : null;
+    const shortcutGap = 20;
+    const shortcutH = 40;
+    type Shortcut = { label: string; w: number; target?: string; isUpgrade?: boolean };
+    const specs: Shortcut[] = [];
+    if (!HIDDEN_FEATURES.factory) specs.push({ label: 'FACTORY', w: 130, target: 'FactoryScene' });
+    specs.push({ label: 'BOMBS SHOP', w: 160, target: 'BombsShopScene' });
+    if (r.outcome === 'escaped') specs.push({ label: 'UPGRADE BOMBERMAN', w: 230, isUpgrade: true });
 
-    // Lay the row out left-to-right with gaps, centered on screen.
-    const rowItems: Phaser.GameObjects.Text[] = [factoryBtn, bombsBtn, upgradeBtn]
-      .filter((b): b is Phaser.GameObjects.Text => b !== null);
-    const totalW = rowItems.reduce((sum, b) => sum + b.width, 0)
-      + shortcutGap * (rowItems.length - 1);
+    const totalW = specs.reduce((sum, s) => sum + s.w, 0) + shortcutGap * (specs.length - 1);
     let cursor = width / 2 - totalW / 2;
-    for (const btn of rowItems) {
-      btn.setPosition(cursor + btn.width / 2, shortcutY);
-      cursor += btn.width + shortcutGap;
+    let factoryBtnRect: { x: number; y: number; w: number; h: number } | null = null;
+    for (const spec of specs) {
+      const bx = cursor + spec.w / 2;
+      const onClick = spec.isUpgrade
+        ? () => {
+            const p = ProfileStore.get();
+            if (!p || !p.equippedBombermanId) return;
+            // The upgrade popup was removed — the Bomberman Shop now hosts the
+            // inline Upgrade panel (targets the equipped Bomberman).
+            NetworkManager.getSocket().emit('leave_match');
+            this.scene.start('BombermanShopScene');
+          }
+        : () => {
+            NetworkManager.getSocket().emit('leave_match');
+            this.scene.start(spec.target!);
+          };
+      makePixelButton(this, {
+        x: bx, y: shortcutY, w: spec.w, h: shortcutH,
+        label: spec.label, variant: 'neutral', fontPx: 11, onClick,
+      });
+      const rect = { x: bx, y: shortcutY, w: spec.w, h: shortcutH };
+      if (spec.isUpgrade) this.upgradeBtnRect = rect;
+      if (spec.target === 'FactoryScene') factoryBtnRect = rect;
+      cursor += spec.w + shortcutGap;
     }
 
-    for (const [btn, target] of [[factoryBtn, 'FactoryScene'], [bombsBtn, 'BombsShopScene']] as const) {
-      if (!btn) continue;
-      btn.setInteractive({ useHandCursor: true });
-      btn.on('pointerover', () => btn.setColor('#88ccff'));
-      btn.on('pointerout', () => btn.setColor('#44aaff'));
-      btn.on('pointerdown', () => {
-        NetworkManager.getSocket().emit('leave_match');
-        this.scene.start(target);
-      });
-    }
-
-    if (upgradeBtn) {
-      this.upgradeBtn = upgradeBtn;
-      upgradeBtn.setInteractive({ useHandCursor: true });
-      upgradeBtn.on('pointerover', () => upgradeBtn.setColor('#88ccff'));
-      upgradeBtn.on('pointerout', () => upgradeBtn.setColor('#44aaff'));
-      upgradeBtn.on('pointerdown', () => {
-        const p = ProfileStore.get();
-        if (!p || !p.equippedBombermanId) return;
-        // The upgrade popup was removed — the Bomberman Shop now hosts the
-        // inline Upgrade panel (targets the equipped Bomberman).
-        NetworkManager.getSocket().emit('leave_match');
-        this.scene.start('BombermanShopScene');
-      });
-
+    if (this.upgradeBtnRect) {
       // Breadcrumb pip — green dot, shown when any upgrade track is
       // currently affordable. Refreshed on every profile update so the pip
       // disappears the moment the player applies an upgrade that empties
@@ -341,15 +330,15 @@ export class ResultsScene extends Phaser.Scene {
     // Factory claim badge — only shown when claimable bombs > 0. The results
     // screen is short-lived so a one-shot compute is enough (no timer).
     const profile = ProfileStore.get();
-    if (profile && factoryBtn) {
+    if (profile && factoryBtnRect) {
       const now = Date.now();
       let claimable = 0;
       for (const id of FACTORY_IDS) {
         claimable += projectedClaimable(profile.factories[id], FACTORIES[id].cycleDurationMs, now);
       }
       if (claimable > 0) {
-        const badgeX = factoryBtn.x + factoryBtn.displayWidth / 2 - 4;
-        const badgeY = factoryBtn.y - factoryBtn.displayHeight / 2 + 4;
+        const badgeX = factoryBtnRect.x + factoryBtnRect.w / 2 - 4;
+        const badgeY = factoryBtnRect.y - factoryBtnRect.h / 2 + 4;
         new NotificationBadge(this, badgeX, badgeY).setCount(claimable);
       }
     }
@@ -396,7 +385,7 @@ export class ResultsScene extends Phaser.Scene {
 
     // Name label ABOVE the sprite so the player reads identity first.
     this.add.text(centerX - 50, blockTop - 16, name, {
-      fontSize: '12px', color: '#cfd6e6', fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: '11px', color: CSS.text, fontFamily: FONT.press,
     }).setOrigin(0.5, 0);
 
     // Sprite preview — uses the same builder as the Bomberman card on the
@@ -405,17 +394,17 @@ export class ResultsScene extends Phaser.Scene {
     const sprite = createShopBombermanSprite(this, 0, 0, tint, character, anim, 1.3);
     sprite.setPosition(centerX - 50, spriteCY + 6);
 
-    // SP text — count-up tween from 0 → spEarned. Wallet-blue to match the
-    // upgrade popup's SP cost color.
+    // SP text — count-up tween from 0 → spEarned. Experience blue (SP is
+    // experience, never a stat).
     const spText = this.add.text(centerX + SP_TEXT_GAP, spriteCY + 6, '+0 SP', {
-      fontSize: '34px', color: '#5db5ff', fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: '28px', color: CSS.blue, fontFamily: FONT.press,
     }).setOrigin(0, 0.5);
 
     // Reaction message — sits directly UNDER the SP text (not under the
     // sprite). Hidden until the count-up tween completes.
     const reactionY = spriteCY + 6 + 24;
     const reactionText = this.add.text(centerX + SP_TEXT_GAP, reactionY, '', {
-      fontSize: '18px', color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: '16px', color: CSS.gold, fontFamily: FONT.press,
     }).setOrigin(0, 0).setAlpha(0);
 
     const COUNT_DURATION = Math.max(600, Math.min(1600, 600 + spEarned * 20));
@@ -476,10 +465,10 @@ export class ResultsScene extends Phaser.Scene {
     const blockTop = topY;
     const spriteCY = blockTop + SPRITE_BOX / 2;
 
-    // Name label ABOVE the sprite — gravestone style. Slightly muted color
-    // so it reads as memorial text.
+    // Name label ABOVE the sprite — gravestone style. Muted color so it reads
+    // as memorial text.
     this.add.text(centerX - 50, blockTop - 16, name, {
-      fontSize: '12px', color: '#a8a4b0', fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: '11px', color: CSS.dim, fontFamily: FONT.press,
     }).setOrigin(0.5, 0);
 
     // Death sprite — plays the one-shot Die animation (registered with
@@ -506,7 +495,7 @@ export class ResultsScene extends Phaser.Scene {
     const LETTER_STAGGER = 220; // ms between each *visible* letter
     const FADE_DURATION = 280;
     const ripStyle: Phaser.Types.GameObjects.Text.TextStyle = {
-      fontSize: '34px', color: '#ff4a4a', fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: '28px', color: CSS.red, fontFamily: FONT.press,
     };
     // Anchor at the same baseline as +N SP would sit.
     const ripX = centerX + RIP_TEXT_GAP;
@@ -542,7 +531,7 @@ export class ResultsScene extends Phaser.Scene {
   /** Re-evaluate the affordable-upgrade pip. Drawn fresh each time so we
    *  don't have to track its position when the row reflows. */
   private refreshUpgradePip(): void {
-    if (!this.upgradeBtn) return;
+    if (!this.upgradeBtnRect) return;
     this.upgradePip?.destroy();
     this.upgradePip = null;
 
@@ -553,21 +542,21 @@ export class ResultsScene extends Phaser.Scene {
     if (!this.hasAffordableUpgrade(equipped, profile.coins, profile.treasures)) return;
 
     const pip = this.add.graphics();
-    const px = this.upgradeBtn.x + this.upgradeBtn.displayWidth / 2 - 4;
-    const py = this.upgradeBtn.y - this.upgradeBtn.displayHeight / 2 + 4;
-    pip.fillStyle(0x44ff88, 1);
+    const px = this.upgradeBtnRect.x + this.upgradeBtnRect.w / 2 - 4;
+    const py = this.upgradeBtnRect.y - this.upgradeBtnRect.h / 2 + 4;
+    pip.fillStyle(COL.green, 1);
     pip.fillCircle(px, py, 5);
-    pip.lineStyle(1, 0x0a3a18, 1);
+    pip.lineStyle(1, COL.stageFrame, 1);
     pip.strokeCircle(px, py, 5);
     this.upgradePip = pip;
   }
 
   /** Map SP earned to (reaction label, color) per the design tiers. */
   private spReaction(sp: number): { label: string; color: string } {
-    if (sp <= 0)  return { label: 'Bad',       color: '#ff5a4a' };
-    if (sp <= 30) return { label: 'Not Bad',   color: '#c4a566' };
-    if (sp <= 80) return { label: 'Nice',      color: '#88ddff' };
-    return         { label: 'Excellent!',     color: '#44ff88' };
+    if (sp <= 0)  return { label: 'BAD',       color: CSS.red };
+    if (sp <= 30) return { label: 'NOT BAD',   color: CSS.gold };
+    if (sp <= 80) return { label: 'NICE',      color: CSS.blue };
+    return         { label: 'EXCELLENT!',     color: CSS.green };
   }
 
   /** True when any of the three upgrade tracks has a tier the player can
@@ -619,7 +608,7 @@ export class ResultsScene extends Phaser.Scene {
       const cellLeft = idx * (cellW + cellGap);
       const icon = createBombIcon(this, cellLeft + iconPx / 2, iconPx / 2, item.type, iconPx);
       const text = this.add.text(cellLeft + iconPx + iconTextGap, iconPx / 2, `x${item.count}`, {
-        fontSize: `${fontSize}px`, color: '#ffffff', fontFamily: 'monospace',
+        fontSize: `${fontSize}px`, color: CSS.text, fontFamily: FONT.press,
       }).setOrigin(0, 0.5);
       container.add([icon, text]);
     });

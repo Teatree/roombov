@@ -16,6 +16,10 @@ import { BombShopTooltip } from '../systems/BombShopTooltip.ts';
 import { effectiveMaxCustomSlots, effectiveStackSize, upgradeLevel } from '@shared/utils/bomberman-stats.ts';
 import { createIdleActionBadge } from '../systems/IdleActionBadge.ts';
 import { designViewport, fitSceneToViewport } from '../util/responsiveScene.ts';
+import { COL, CSS, FONT } from '../design/tokens.ts';
+import {
+  addTabLabel, drawNotchedPanel, drawDashedRect, notchedPoints,
+} from '../util/pixelPanel.ts';
 
 /** Design box this three-panel shop is authored against; the main camera scales
  *  it down to fit short/narrow viewports (no-op on desktop). DESIGN_W (780) is
@@ -50,17 +54,6 @@ const CATALOG_TILE_H = 80;
 const CATALOG_GRID_COLS = 3;
 const STOCKPILE_GRID_COLS = 3;
 const STOCKPILE_TILE_H = 68;
-const PANEL_BG = 0x1a1a2e;
-const PANEL_BORDER = 0x333355;
-const PANEL_HEADER_BG = 0x222244;
-const COIN_GOLD = '#ffd944';
-const WARN_RED = '#ff4444';
-const TEXT_DEFAULT = '#ffffff';
-const TEXT_DIM = '#888888';
-const TEXT_HEADER = '#aaaaaa';
-const HIGHLIGHT_GOLD = 0xffd944;
-const SLOT_BG = 0x1a1a2e;
-const ROCK_BORDER = 0x554433;
 const COL_GAP = 16;
 const OUTER_PAD = 24;
 /** Below this column width, UNEQUIP collapses to an `×` icon button. */
@@ -130,6 +123,7 @@ export class BombsShopScene extends Phaser.Scene {
 
   create(): void {
     trackScreen(this, 'BombsShop');
+    this.cameras.main.setBackgroundColor(CSS.bg);
     this.events.once('shutdown', this.shutdown, this);
     ensureBombermanAnims(this);
     const { width } = this.scale;
@@ -139,13 +133,13 @@ export class BombsShopScene extends Phaser.Scene {
     const { layoutW, layoutH } = designViewport(this, DESIGN_W, DESIGN_H);
 
     this.add.text(width / 2, 30, 'BOMBS SHOP', {
-      fontSize: '26px', color: '#e0e0e0', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setOrigin(0.5);
+      fontSize: '26px', color: CSS.text, fontFamily: FONT.press,
+    }).setOrigin(0.5).setShadow(5, 5, CSS.stageFrame, 0, true, true);
 
     // Coins + treasure wallet — both depth-bumped so they always render on top
     // of the panels (the wallet would otherwise overlap the stockpile column).
     this.coinsText = this.add.text(layoutW - 20, 14, '', {
-      fontSize: '18px', color: COIN_GOLD, fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: '18px', color: CSS.gold, fontFamily: FONT.press,
     }).setOrigin(1, 0).setDepth(100);
 
     // Horizontal layout so a stash with many types stays on a single row.
@@ -164,14 +158,14 @@ export class BombsShopScene extends Phaser.Scene {
     });
 
     this.toastText = this.add.text(width / 2, layoutH - 30, '', {
-      fontSize: '14px', color: '#44ff88', fontFamily: 'monospace',
+      fontSize: '14px', color: CSS.green, fontFamily: FONT.silk,
     }).setOrigin(0.5);
 
     const backBtn = this.add.text(20, layoutH - 30, '[ < BACK ]', {
-      fontSize: '14px', color: TEXT_DIM, fontFamily: 'monospace',
+      fontSize: '14px', color: CSS.dim, fontFamily: FONT.silk,
     }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
-    backBtn.on('pointerover', () => backBtn.setColor('#cccccc'));
-    backBtn.on('pointerout', () => backBtn.setColor(TEXT_DIM));
+    backBtn.on('pointerover', () => backBtn.setColor(CSS.text));
+    backBtn.on('pointerout', () => backBtn.setColor(CSS.dim));
     backBtn.on('pointerdown', () => this.scene.start(this.backScene));
 
     this.input.keyboard?.on('keydown-ESC', () => this.scene.start(this.backScene));
@@ -207,7 +201,7 @@ export class BombsShopScene extends Phaser.Scene {
       this.rebuild();
     });
     socket.on('shop_result', (msg) => {
-      this.toastText.setColor(msg.ok ? '#44ff88' : '#ff4444');
+      this.toastText.setColor(msg.ok ? CSS.green : CSS.red);
       this.toastText.setText(msg.message ?? msg.reason ?? '');
       this.time.delayedCall(2000, () => this.toastText.setText(''));
     });
@@ -264,7 +258,7 @@ export class BombsShopScene extends Phaser.Scene {
   private renderWallet(): void {
     const profile = ProfileStore.get();
     if (!profile) return;
-    this.coinsText.setText(`Coins: ${profile.coins}`);
+    this.coinsText.setText(`${profile.coins}c`);
     this.treasureList?.setBundle(profile.treasures ?? {});
     // Flush right against the design box's right edge (`layoutW`, the edge the
     // camera scales) — align by the real rendered extent so short counts don't
@@ -339,20 +333,16 @@ export class BombsShopScene extends Phaser.Scene {
     const headerH = 24;
     const container = this.add.container(0, 0);
     const bg = this.add.graphics();
-    bg.fillStyle(PANEL_BG, 0.85);
-    bg.fillRoundedRect(x, y, w, h, 6);
-    bg.lineStyle(1, PANEL_BORDER, 1);
-    bg.strokeRoundedRect(x, y, w, h, 6);
+    drawNotchedPanel(bg, x, y, w, h, {
+      fill: COL.panel, border: COL.border, borderWidth: 2, notch: 8,
+    });
     container.add(bg);
 
-    const header = this.add.graphics();
-    header.fillStyle(PANEL_HEADER_BG, 1);
-    header.fillRoundedRect(x, y, w, headerH, 6);
-    header.fillRect(x, y + headerH - 6, w, 6);
-    container.add(header);
-    container.add(this.add.text(x + w / 2, y + headerH / 2, title, {
-      fontSize: '12px', color: TEXT_HEADER, fontFamily: 'monospace', fontStyle: 'bold',
-    }).setOrigin(0.5));
+    // Tab label rides the top border (replaces the old header bar + title).
+    const { label, bg: tabBg } = addTabLabel(this, x, y, w, title, {
+      side: 'center', color: CSS.dim, panelFill: COL.panel, fontPx: 14,
+    });
+    container.add([tabBg, label]);
 
     this.containers.push(container);
     fillBody(y + headerH + 6, h - headerH - 12);
@@ -401,10 +391,9 @@ export class BombsShopScene extends Phaser.Scene {
     const tileAlpha = affordable ? 1 : 0.65;
 
     const bg = this.add.graphics().setAlpha(tileAlpha);
-    bg.fillStyle(0x222238, 0.95);
-    bg.fillRoundedRect(x, y, w, h, 4);
-    bg.lineStyle(1, PANEL_BORDER, 1);
-    bg.strokeRoundedRect(x, y, w, h, 4);
+    drawNotchedPanel(bg, x, y, w, h, {
+      fill: COL.panel2, border: COL.border, borderWidth: 2, notch: 5,
+    });
     parent.add(bg);
 
     // Hover zone — added FIRST after bg, so buttons added later are on top.
@@ -419,23 +408,23 @@ export class BombsShopScene extends Phaser.Scene {
       .setDisplaySize(28, 28).setAlpha(tileAlpha));
 
     parent.add(this.add.text(x + w / 2, y + 36, entry.name, {
-      fontSize: '9px', color: TEXT_DEFAULT, fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: '9px', color: CSS.text, fontFamily: FONT.silk,
       align: 'center', wordWrap: { width: w - 6 },
     }).setOrigin(0.5, 0).setAlpha(tileAlpha));
 
     // Price row (centered)
     const priceY = y + h - 24;
     const coinsLabel = this.add.text(0, 0, `${entry.price}c`, {
-      fontSize: '11px', color: coinsShort ? WARN_RED : COIN_GOLD,
-      fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: '11px', color: coinsShort ? CSS.red : CSS.gold,
+      fontFamily: FONT.press,
     }).setOrigin(0, 0.5);
 
     let treasureLabel: Phaser.GameObjects.Text | null = null;
     let treasureIcon: Phaser.GameObjects.Image | null = null;
     if (entry.treasureCost) {
       treasureLabel = this.add.text(0, 0, `${entry.treasureCost.amount}`, {
-        fontSize: '11px', color: treasureShort ? WARN_RED : TEXT_DEFAULT,
-        fontFamily: 'monospace', fontStyle: 'bold',
+        fontSize: '11px', color: treasureShort ? CSS.red : CSS.text,
+        fontFamily: FONT.press,
       }).setOrigin(0, 0.5);
       treasureIcon = this.add.image(0, 0, TREASURE_TEXTURE_KEY, treasureIconFrame(entry.treasureCost.type))
         .setDisplaySize(12, 12).setOrigin(0, 0.5);
@@ -457,11 +446,18 @@ export class BombsShopScene extends Phaser.Scene {
     if (treasureIcon) parent.add(treasureIcon);
 
     // BUY button on top — wins clicks AND fires hover to keep tooltip visible.
+    // Gold notched chip when affordable; dim faint chip otherwise.
     const btnY = y + h - 9;
+    const btnW = 40;
+    const btnH = 16;
+    const btnG = this.add.graphics();
     if (affordable) {
+      drawNotchedPanel(btnG, x + w / 2 - btnW / 2, btnY - btnH / 2, btnW, btnH, {
+        fill: COL.gold, border: COL.goldEdge, borderWidth: 2, notch: 4,
+      });
+      parent.add(btnG);
       const btn = this.add.text(x + w / 2, btnY, 'BUY', {
-        fontSize: '10px', color: COIN_GOLD, fontFamily: 'monospace', fontStyle: 'bold',
-        backgroundColor: '#332a44', padding: { x: 8, y: 1 },
+        fontSize: '10px', color: CSS.goldText, fontFamily: FONT.press,
       }).setOrigin(0.5).setInteractive({ useHandCursor: true });
       btn.on('pointerdown', () => {
         NetworkManager.track('buy_bomb', 'profile');
@@ -471,9 +467,14 @@ export class BombsShopScene extends Phaser.Scene {
       this.wireHover(btn, entry);
       parent.add(btn);
     } else {
-      parent.add(this.add.text(x + w / 2, btnY, '—', {
-        fontSize: '11px', color: '#555566', fontFamily: 'monospace',
-      }).setOrigin(0.5));
+      btnG.setAlpha(0.55);
+      drawNotchedPanel(btnG, x + w / 2 - btnW / 2, btnY - btnH / 2, btnW, btnH, {
+        fill: COL.panel2, border: COL.border, borderWidth: 2, notch: 4,
+      });
+      parent.add(btnG);
+      parent.add(this.add.text(x + w / 2, btnY, 'BUY', {
+        fontSize: '10px', color: CSS.faint, fontFamily: FONT.press,
+      }).setOrigin(0.5).setAlpha(0.55));
     }
   }
 
@@ -496,7 +497,7 @@ export class BombsShopScene extends Phaser.Scene {
 
     if (stockEntries.length === 0) {
       inner.add(this.add.text(w / 2, 28, '(empty — buy some bombs)', {
-        fontSize: '11px', color: '#666', fontFamily: 'monospace',
+        fontSize: '11px', color: CSS.faint, fontFamily: FONT.silk,
       }).setOrigin(0.5));
       this.applyScrollMask(inner, { x, y, w, h }, 60);
       this.containers.push(inner);
@@ -521,7 +522,7 @@ export class BombsShopScene extends Phaser.Scene {
       const selName = sel?.name ?? this.selectedStockpile;
       inner.add(this.add.text(w / 2, contentH + 6,
         `Selected: ${selName}\nPick a slot to equip`, {
-          fontSize: '10px', color: '#44ff88', fontFamily: 'monospace', align: 'center',
+          fontSize: '10px', color: CSS.green, fontFamily: FONT.silk, align: 'center',
         }).setOrigin(0.5, 0));
       contentH += 36;
     }
@@ -539,10 +540,10 @@ export class BombsShopScene extends Phaser.Scene {
     const isSelected = this.selectedStockpile === entry.type;
 
     const bg = this.add.graphics();
-    bg.fillStyle(isSelected ? 0x334477 : 0x222238, 0.95);
-    bg.fillRoundedRect(x, y, w, h, 4);
-    bg.lineStyle(isSelected ? 2 : 1, isSelected ? HIGHLIGHT_GOLD : PANEL_BORDER, 1);
-    bg.strokeRoundedRect(x, y, w, h, 4);
+    drawNotchedPanel(bg, x, y, w, h, {
+      fill: COL.panel2, border: isSelected ? COL.green : COL.border,
+      borderWidth: 2, notch: 5,
+    });
     parent.add(bg);
 
     // Click+hover zone added BEFORE content so... wait no, we need it as the
@@ -551,17 +552,17 @@ export class BombsShopScene extends Phaser.Scene {
     parent.add(this.add.image(x + w / 2, y + 20, 'bomb_icons', bombIconFrame(entry.type))
       .setDisplaySize(28, 28));
     parent.add(this.add.text(x + w / 2, y + h - 10, entry.name, {
-      fontSize: '9px', color: TEXT_DEFAULT, fontFamily: 'monospace',
+      fontSize: '9px', color: CSS.text, fontFamily: FONT.silk,
       align: 'center', wordWrap: { width: w - 6 },
     }).setOrigin(0.5));
 
-    // Stock badge top-right
+    // Stock count badge top-right — green fill, dark count for legibility.
     const badgeBg = this.add.graphics();
-    badgeBg.fillStyle(0x227744, 1);
-    badgeBg.fillRoundedRect(x + w - 22, y + 3, 20, 12, 3);
+    badgeBg.fillStyle(COL.green, 1);
+    badgeBg.fillRect(x + w - 22, y + 3, 20, 12);
     parent.add(badgeBg);
     parent.add(this.add.text(x + w - 12, y + 9, `${count}`, {
-      fontSize: '9px', color: TEXT_DEFAULT, fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: '9px', color: CSS.goldText, fontFamily: FONT.press,
     }).setOrigin(0.5));
 
     // Click+hover surface on top
@@ -622,7 +623,7 @@ export class BombsShopScene extends Phaser.Scene {
     const equipped = profile.ownedBombermen.find(b => b.id === profile.equippedBombermanId);
     if (!equipped) {
       container.add(this.add.text(w / 2, 40, 'No Bomberman equipped.\nBuy one first.', {
-        fontSize: '11px', color: '#666', fontFamily: 'monospace', align: 'center',
+        fontSize: '11px', color: CSS.faint, fontFamily: FONT.silk, align: 'center',
       }).setOrigin(0.5));
       this.containers.push(container);
       return;
@@ -647,31 +648,34 @@ export class BombsShopScene extends Phaser.Scene {
       idleAction: equipped.idleAction ?? 'attack',
       maxCustomSlots: effSlots,
       stackSize: effStack,
+      name: equipped.name,
+      sp: equipped.sp ?? 0,
       tooltipSide: 'left',
     });
     container.add(previewContainer);
 
     const textX = 92;
     container.add(this.add.text(textX, 10, equipped.name ?? 'Bomberman', {
-      fontSize: '16px', color: TEXT_DEFAULT, fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: '16px', color: CSS.text, fontFamily: FONT.press,
     }));
     const totalCarried = (equipped.inventory?.slots ?? [])
       .reduce((acc: number, s) => acc + (s?.count ?? 0), 0);
     const totalCapacity = effSlots * effStack;
-    container.add(this.add.text(textX, 32, `Tier ${equipped.tier} · ${totalCarried}/${totalCapacity} carried`, {
-      fontSize: '10px', color: TEXT_DIM, fontFamily: 'monospace',
+    container.add(this.add.text(textX, 32, `LV ${upgradeLevel(equipped)} · ${totalCarried}/${totalCapacity} carried`, {
+      fontSize: '10px', color: CSS.dim, fontFamily: FONT.silk,
     }));
 
     const meterY = 50;
     const meterW = Math.min(w - textX - 12, 200);
     const meterH = 5;
     const fillRatio = totalCapacity > 0 ? Math.min(1, totalCarried / totalCapacity) : 0;
+    const meterFull = totalCapacity > 0 && totalCarried >= totalCapacity;
     const meter = this.add.graphics();
-    meter.fillStyle(0x222244, 1);
-    meter.fillRoundedRect(textX, meterY, meterW, meterH, 2);
+    meter.fillStyle(COL.panel2, 1);
+    meter.fillRect(textX, meterY, meterW, meterH);
     if (fillRatio > 0) {
-      meter.fillStyle(0x44dd88, 1);
-      meter.fillRoundedRect(textX, meterY, Math.max(2, meterW * fillRatio), meterH, 2);
+      meter.fillStyle(meterFull ? COL.green : COL.gold, 1);
+      meter.fillRect(textX, meterY, Math.max(2, meterW * fillRatio), meterH);
     }
     container.add(meter);
 
@@ -680,7 +684,7 @@ export class BombsShopScene extends Phaser.Scene {
       .setOrigin(0, 0));
 
     const divider = this.add.graphics();
-    divider.lineStyle(1, PANEL_BORDER, 0.6);
+    divider.lineStyle(1, COL.border, 1);
     divider.beginPath();
     divider.moveTo(8, headerH);
     divider.lineTo(w - 8, headerH);
@@ -721,13 +725,11 @@ export class BombsShopScene extends Phaser.Scene {
 
     const bg = this.add.graphics();
     if (isRock) {
-      bg.lineStyle(1, ROCK_BORDER, 1);
-      this.strokeDashedRoundedRect(bg, innerX, y, innerW, h, 4, 4, 3);
+      drawDashedRect(bg, innerX, y, innerW, h, COL.border, 2, 6, 4);
     } else {
-      bg.fillStyle(SLOT_BG, 0.9);
-      bg.fillRoundedRect(innerX, y, innerW, h, 4);
-      bg.lineStyle(1, PANEL_BORDER, 1);
-      bg.strokeRoundedRect(innerX, y, innerW, h, 4);
+      drawNotchedPanel(bg, innerX, y, innerW, h, {
+        fill: COL.panel2, border: COL.border, borderWidth: 2, notch: 5,
+      });
     }
     parent.add(bg);
 
@@ -753,7 +755,7 @@ export class BombsShopScene extends Phaser.Scene {
 
     // Content
     parent.add(this.add.text(innerX + 4, y + h / 2, `SLOT ${slotIdx + 1}`, {
-      fontSize: '8px', color: TEXT_DIM, fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: '8px', color: CSS.faint, fontFamily: FONT.silk,
     }).setOrigin(0, 0.5));
 
     if (slot && (slot.count > 0 || isRock)) {
@@ -764,13 +766,13 @@ export class BombsShopScene extends Phaser.Scene {
       const nameX = iconX + 18;
       const name = entry?.name ?? slot.type;
       parent.add(this.add.text(nameX, y + h / 2 - 5, name, {
-        fontSize: '10px', color: isRock ? '#ccaa88' : TEXT_DEFAULT,
-        fontFamily: 'monospace', fontStyle: 'bold',
+        fontSize: '10px', color: isRock ? CSS.dim : CSS.text,
+        fontFamily: FONT.silk,
       }).setOrigin(0, 0.5));
 
       if (isRock) {
         parent.add(this.add.text(nameX, y + h / 2 + 7, 'infinite (fallback)', {
-          fontSize: '8px', color: '#776655', fontFamily: 'monospace',
+          fontSize: '8px', color: CSS.faint, fontFamily: FONT.silk,
         }).setOrigin(0, 0.5));
       } else {
         const fillRatio = slot.count / stackLimit;
@@ -778,19 +780,19 @@ export class BombsShopScene extends Phaser.Scene {
         if (meterW > 8) {
           const fillFull = slot.count >= stackLimit;
           const meter = this.add.graphics();
-          meter.fillStyle(0x222244, 1);
+          meter.fillStyle(COL.panel, 1);
           meter.fillRect(nameX, y + h / 2 + 5, meterW, 3);
-          meter.fillStyle(fillFull ? 0x44dd88 : HIGHLIGHT_GOLD, 1);
+          meter.fillStyle(fillFull ? COL.green : COL.gold, 1);
           meter.fillRect(nameX, y + h / 2 + 5, Math.max(2, meterW * fillRatio), 3);
           parent.add(meter);
         }
       }
 
       const countText = isRock ? '∞' : `${slot.count}/${stackLimit}`;
-      const countColor = !isRock && slot.count >= stackLimit ? '#44dd88' : TEXT_DEFAULT;
+      const countColor = !isRock && slot.count >= stackLimit ? CSS.green : CSS.gold;
       const countX = innerX + innerW - (isRock ? 14 : 56);
       parent.add(this.add.text(countX, y + h / 2, countText, {
-        fontSize: '10px', color: countColor, fontFamily: 'monospace',
+        fontSize: '10px', color: countColor, fontFamily: FONT.press,
       }).setOrigin(0.5, 0.5));
 
       // UNEQUIP button on top of hover zone — wins clicks.
@@ -799,12 +801,12 @@ export class BombsShopScene extends Phaser.Scene {
         const btnX = innerX + innerW - 4;
         const btn = useIconBtn
           ? this.add.text(btnX, y + h / 2, '×', {
-              fontSize: '14px', color: '#ff8844', fontFamily: 'monospace', fontStyle: 'bold',
-              backgroundColor: '#221a2e', padding: { x: 4, y: 0 },
+              fontSize: '14px', color: CSS.red, fontFamily: FONT.press,
+              backgroundColor: CSS.panel2, padding: { x: 4, y: 0 },
             }).setOrigin(1, 0.5)
           : this.add.text(btnX, y + h / 2, 'UNEQUIP', {
-              fontSize: '8px', color: '#ff8844', fontFamily: 'monospace',
-              backgroundColor: '#221a2e', padding: { x: 5, y: 2 },
+              fontSize: '8px', color: CSS.red, fontFamily: FONT.silk,
+              backgroundColor: CSS.panel2, padding: { x: 5, y: 2 },
             }).setOrigin(1, 0.5);
         btn.setInteractive({ useHandCursor: true });
         const bombType = slot.type;
@@ -821,7 +823,7 @@ export class BombsShopScene extends Phaser.Scene {
       }
     } else {
       parent.add(this.add.text(innerX + 48, y + h / 2, 'empty', {
-        fontSize: '10px', color: '#666', fontFamily: 'monospace',
+        fontSize: '10px', color: CSS.faint, fontFamily: FONT.silk,
       }).setOrigin(0, 0.5));
     }
 
@@ -844,12 +846,12 @@ export class BombsShopScene extends Phaser.Scene {
         // Filled slot — full hover (tooltip + cross-column highlight).
         this.wireHover(click, entry);
       } else {
-        // Empty slot — just toggle gold border on hover to signal "click here
-        // to drop the selected bomb." No tooltip (no bomb to describe yet).
+        // Empty slot — toggle a blue (swap-target) border on hover to signal
+        // "click here to drop the selected bomb." No tooltip (no bomb yet).
         click.on('pointerover', () => {
           highlight.clear();
-          highlight.lineStyle(2, HIGHLIGHT_GOLD, 1);
-          highlight.strokeRoundedRect(innerX, y, innerW, h, 4);
+          highlight.lineStyle(2, COL.blue, 1);
+          highlight.strokePoints(notchedPoints(innerX, y, innerW, h, 5), true);
         });
         click.on('pointerout', () => {
           highlight.clear();
@@ -907,33 +909,11 @@ export class BombsShopScene extends Phaser.Scene {
     for (const ref of this.slotRowRefs) {
       ref.border.clear();
       if (type !== null && ref.bombType === type) {
-        ref.border.lineStyle(2, HIGHLIGHT_GOLD, 1);
-        ref.border.strokeRoundedRect(ref.bounds.x, ref.bounds.y, ref.bounds.w, ref.bounds.h, 4);
+        ref.border.lineStyle(2, COL.green, 1);
+        ref.border.strokePoints(
+          notchedPoints(ref.bounds.x, ref.bounds.y, ref.bounds.w, ref.bounds.h, 5), true,
+        );
       }
-    }
-  }
-
-  private strokeDashedRoundedRect(
-    g: Phaser.GameObjects.Graphics,
-    x: number, y: number, w: number, h: number,
-    _radius: number, dashLen: number, gapLen: number,
-  ): void {
-    const step = dashLen + gapLen;
-    for (let i = x; i < x + w; i += step) {
-      const end = Math.min(i + dashLen, x + w);
-      g.beginPath(); g.moveTo(i, y); g.lineTo(end, y); g.strokePath();
-    }
-    for (let i = x; i < x + w; i += step) {
-      const end = Math.min(i + dashLen, x + w);
-      g.beginPath(); g.moveTo(i, y + h); g.lineTo(end, y + h); g.strokePath();
-    }
-    for (let i = y; i < y + h; i += step) {
-      const end = Math.min(i + dashLen, y + h);
-      g.beginPath(); g.moveTo(x, i); g.lineTo(x, end); g.strokePath();
-    }
-    for (let i = y; i < y + h; i += step) {
-      const end = Math.min(i + dashLen, y + h);
-      g.beginPath(); g.moveTo(x + w, i); g.lineTo(x + w, end); g.strokePath();
     }
   }
 }

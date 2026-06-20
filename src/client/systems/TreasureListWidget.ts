@@ -35,6 +35,7 @@ import {
 } from '@shared/config/treasures.ts';
 import { TREASURE_TEXTURE_KEY, treasureIconFrame, TREASURE_FRAME_SIZE } from './TreasureIcons.ts';
 import { HIDDEN_FEATURES } from '@shared/config/features.ts';
+import { CSS, FONT } from '../design/tokens.ts';
 
 export type TreasureListAnchor = 'top-left' | 'top-right';
 export type TreasureListDirection = 'vertical' | 'horizontal';
@@ -283,10 +284,9 @@ export class TreasureListWidget {
     icon.setDisplaySize(iconPx, iconPx);
     const text = this.scene.add.text(textX, textY, `x${count}`, {
       fontSize: `${this.opts.fontSize}px`,
-      color: '#ffd944',
-      fontFamily: 'monospace',
-      fontStyle: 'bold',
-      stroke: '#000000',
+      color: CSS.dim,
+      fontFamily: FONT.silk,
+      stroke: CSS.stageFrame,
       strokeThickness: 2,
     }).setOrigin(textOriginX, 0.5);
 

@@ -1,0 +1,237 @@
+{
+  "id": "p_8ffed1862161",
+  "createdAt": 1781987296758,
+  "updatedAt": 1781988330674,
+  "coins": 1450,
+  "treasures": {},
+  "ownedBombermen": [
+    {
+      "id": "owned_p_8ffed1862161_1781988330674_ao2e",
+      "name": "Maverick",
+      "tier": "paid",
+      "colors": {
+        "shirt": 4380559,
+        "pants": 4270218,
+        "hair": 11678870
+      },
+      "tint": 9170405,
+      "character": "char2",
+      "maxCustomSlots": 4,
+      "stackSize": 5,
+      "idleAction": "heal",
+      "inventory": {
+        "slots": [
+          {
+            "type": "bomb",
+            "count": 5
+          },
+          {
+            "type": "fart_escape",
+            "count": 2
+          },
+          {
+            "type": "motion_detector_flare",
+            "count": 2
+          },
+          null
+        ]
+      },
+      "purchasedAt": 1781988330674,
+      "sourceTemplateId": "cycle_p_8ffed1862161_mqmttzpb_0_paid",
+      "sp": 0,
+      "lifetimeSp": 0,
+      "upgrades": {
+        "cap": 0,
+        "stack": 0,
+        "hp": 0
+      }
+    }
+  ],
+  "equippedBombermanId": "owned_p_8ffed1862161_1781988330674_ao2e",
+  "bombStockpile": {},
+  "gamblerStreet": {
+    "gamblers": [],
+    "pendingArrivals": [
+      1781987296758,
+      1781987296758,
+      1781987296758,
+      1781987296758,
+      1781987296758
+    ],
+    "lastTickedAt": 1781987296758,
+    "nextGamblerSerial": 1
+  },
+  "bombermanShop": {
+    "cycleId": "cycle_p_8ffed1862161_mqmttzpb",
+    "startedAt": 1781988314879,
+    "endsAt": 1781988434879,
+    "bombermen": [
+      {
+        "id": "cycle_p_8ffed1862161_mqmttzpb_0_paid",
+        "name": "Maverick",
+        "tier": "paid",
+        "price": 550,
+        "colors": {
+          "shirt": 4380559,
+          "pants": 4270218,
+          "hair": 11678870
+        },
+        "tint": 9170405,
+        "character": "char2",
+        "maxCustomSlots": 4,
+        "stackSize": 5,
+        "idleAction": "heal",
+        "inventory": {
+          "slots": [
+            {
+              "type": "bomb",
+              "count": 5
+            },
+            {
+              "type": "fart_escape",
+              "count": 2
+            },
+            {
+              "type": "motion_detector_flare",
+              "count": 2
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_8ffed1862161_mqmttzpb_1_paid",
+        "name": "Buckshot",
+        "tier": "paid",
+        "price": 500,
+        "colors": {
+          "shirt": 10633943,
+          "pants": 2644874,
+          "hair": 11678868
+        },
+        "tint": 13138401,
+        "character": "char1",
+        "maxCustomSlots": 4,
+        "stackSize": 5,
+        "idleAction": "disguise",
+        "inventory": {
+          "slots": [
+            {
+              "type": "delay_tricky",
+              "count": 5
+            },
+            {
+              "type": "shield",
+              "count": 2
+            },
+            {
+              "type": "motion_detector_flare",
+              "count": 2
+            },
+            null
+          ]
+        }
+      },
+      {
+        "id": "cycle_p_8ffed1862161_mqmttzpb_2_paid",
+        "name": "One-Eye",
+        "tier": "paid",
+        "price": 600,
+        "colors": {
+          "shirt": 14140994,
+          "pants": 9056552,
+          "hair": 3426226
+        },
+        "tint": 15506294,
+        "character": "char6",
+        "maxCustomSlots": 4,
+        "stackSize": 5,
+        "idleAction": "attack",
+        "inventory": {
+          "slots": [
+            {
+              "type": "bomb",
+              "count": 5
+            },
+            {
+              "type": "ender_pearl",
+              "count": 2
+            },
+            {
+              "type": "motion_detector_flare",
+              "count": 2
+            },
+            null
+          ]
+        }
+      }
+    ],
+    "boughtTemplateIds": [
+      "cycle_p_8ffed1862161_mqmttzpb_0_paid"
+    ],
+    "freeBonus": {
+      "id": "cycle_p_8ffed1862161_mqmttzpb_free_free",
+      "name": "Fitzgerald",
+      "tier": "free",
+      "price": 0,
+      "colors": {
+        "shirt": 4380595,
+        "pants": 6957194,
+        "hair": 3453532
+      },
+      "tint": 15624827,
+      "character": "char4",
+      "maxCustomSlots": 4,
+      "stackSize": 5,
+      "idleAction": "attack",
+      "inventory": {
+        "slots": [
+          {
+            "type": "delay_tricky",
+            "count": 3
+          },
+          {
+            "type": "shield",
+            "count": 1
+          },
+          {
+            "type": "flare",
+            "count": 1
+          },
+          null
+        ]
+      }
+    }
+  },
+  "factories": {
+    "1": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "2": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "3": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    },
+    "4": {
+      "firstCycleStartedAt": null,
+      "queueLength": 0,
+      "storage": [],
+      "sessionDone": 0,
+      "sessionTotal": 0
+    }
+  },
+  "totalMatchesPlayed": 0
+}

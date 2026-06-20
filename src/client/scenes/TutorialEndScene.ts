@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import { ProfileStore } from '../ClientState.ts';
 import { designViewport, fitSceneToViewport } from '../util/responsiveScene.ts';
+import { CSS, FONT } from '../design/tokens.ts';
+import { makePixelButton } from '../util/pixelPanel.ts';
 
 /** Design box this card is authored against. Content runs from the title
  *  (~0.32h) down to the MAIN MENU button (~0.74h); 600×600 keeps a comfortable
@@ -38,33 +40,35 @@ export class TutorialEndScene extends Phaser.Scene {
     // Backdrop is painted as the camera background so it always fills the
     // screen, even when the camera scales the content down (a sized fillRect
     // would leave letterbox gaps at the design-box edges).
-    this.cameras.main.setBackgroundColor(0x0a0a14);
+    this.cameras.main.setBackgroundColor(CSS.bg);
 
+    // Title (§1.2): Press Start + hard pixel shadow, green for the win state.
     this.add.text(width / 2, height * 0.32, 'TUTORIAL FINISHED', {
-      fontSize: '56px', color: '#88dd88', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setOrigin(0.5);
+      fontSize: '40px', color: CSS.green, fontFamily: FONT.press,
+    }).setOrigin(0.5).setShadow(5, 5, CSS.stageFrame, 0, true, true);
 
     const subtitle = ownsBomberman
       ? 'Go and play against some real Bombermen'
       : 'Go hire yourself a Bomberman';
     this.add.text(width / 2, height * 0.46, subtitle, {
-      fontSize: '22px', color: '#cccccc', fontFamily: 'monospace',
+      fontSize: '16px', color: CSS.dim, fontFamily: FONT.silk,
     }).setOrigin(0.5);
 
-    const ctaLabel = ownsBomberman ? '[ PLAY ]' : '[ BOMBERMAN SHOP ]';
+    // Primary CTA — gold pixel button (the one main action on this card).
+    const ctaLabel = ownsBomberman ? 'PLAY' : 'BOMBERMAN SHOP';
     const ctaTarget = ownsBomberman ? 'LobbyScene' : 'BombermanShopScene';
-    const ctaBtn = this.add.text(width / 2, height * 0.62, ctaLabel, {
-      fontSize: '28px', color: '#44aaff', fontFamily: 'monospace',
-    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-    ctaBtn.on('pointerover', () => ctaBtn.setColor('#88ccff'));
-    ctaBtn.on('pointerout', () => ctaBtn.setColor('#44aaff'));
-    ctaBtn.on('pointerdown', () => this.scene.start(ctaTarget));
+    makePixelButton(this, {
+      x: width / 2, y: height * 0.62, w: 280, h: 52,
+      label: ctaLabel, variant: 'gold', fontPx: 18,
+      onClick: () => this.scene.start(ctaTarget),
+    });
 
+    // Secondary nav — dim Silkscreen link back to the menu.
     const menuBtn = this.add.text(width / 2, height * 0.74, '[ MAIN MENU ]', {
-      fontSize: '18px', color: '#888888', fontFamily: 'monospace',
+      fontSize: '14px', color: CSS.dim, fontFamily: FONT.silk,
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-    menuBtn.on('pointerover', () => menuBtn.setColor('#bbbbbb'));
-    menuBtn.on('pointerout', () => menuBtn.setColor('#888888'));
+    menuBtn.on('pointerover', () => menuBtn.setColor(CSS.text));
+    menuBtn.on('pointerout', () => menuBtn.setColor(CSS.dim));
     menuBtn.on('pointerdown', () => this.scene.start('MainMenuScene'));
 
     this.input.keyboard?.on('keydown-ESC', () => this.scene.start('MainMenuScene'));

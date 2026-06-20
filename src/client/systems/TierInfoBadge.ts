@@ -1,21 +1,20 @@
 /**
- * Bomberman Info Badge — small numbered circle that attaches to the corner of
- * a Bomberman preview. The number is the Bomberman's LEVEL (1 + total upgrade
+ * Bomberman Level Badge — a small numbered circle that attaches to the corner
+ * of a Bomberman preview. The number is the Bomberman's LEVEL (1 + total upgrade
  * tiers bought), not its shop tier: a fresh Bomberman shows 1 and each upgrade
- * bumps it up. The circle/number color ramps with the level (extending the old
- * green→blue→magenta tier sequence). Hover reveals a tooltip with HP/Slots/Stack.
+ * bumps it up. The circle/number color ramps with the level (Pixel Panel §1.4:
+ * 1-2 green, 3-4 gold, 5+ red). Hover reveals the §1.7 popup.
  *
  * Used on:
  *   - MainMenuScene equipped preview
  *   - BombermanSelector cards (Bombs Shop + Lobby + Bomberman Shop)
  *   - BombsShopScene equipped panel
- *   - BombermanShopScene shop cards (different placement: alongside the
- *     stats square; same component for consistency)
+ *   - BombermanShopScene shop cards
  *
- * `tier` is still passed through — it drives only the hover tooltip's border
- * color, never the badge number/color. The tooltip headline reads
- * "<Class> Bomberman lvl <N>" (e.g. "Healster Bomberman lvl 1") and a perk
- * line at the bottom describes the class's Idle Action.
+ * `tier` is retained in the options for callsite compatibility but no longer
+ * drives any color (the badge replaces all "Tier" UI — terminology is
+ * "Level"/"LV", never "Tier"). The popup (§1.7) reads:
+ *   NAME · LV n  /  Class + behavior  /  --- /  HP·CAP·STACK  /  --- /  EXPERIENCE · N SP
  */
 
 import Phaser from 'phaser';
@@ -23,6 +22,8 @@ import { BALANCE } from '@shared/config/balance.ts';
 import type { BombermanTier, IdleAction } from '@shared/types/bomberman.ts';
 import { IDLE_ACTION_LABEL } from '@shared/types/bomberman.ts';
 import { IDLE_ACTION_TEXT_COLOR } from './IdleActionBadge.ts';
+import { COL, CSS, FONT, STAT_HEX, levelRampCol, levelRampHex } from '../design/tokens.ts';
+import { drawNotchedPanel } from '../util/pixelPanel.ts';
 
 export interface TierInfoBadgeOptions {
   /** Local x relative to the parent container. */
@@ -33,50 +34,22 @@ export interface TierInfoBadgeOptions {
   /** Bomberman level (1 + total upgrade tiers). Drives the badge number and
    *  its color ramp. Shop templates pass 1. */
   level: number;
-  /** Idle Action class — drives the tooltip headline ("Healster Bomberman
-   *  lvl 1") and the perk description line. */
+  /** Idle Action class — drives the popup class line + behavior. */
   idleAction: IdleAction;
   maxCustomSlots: number;
   stackSize: number;
   /** Radius in px. Default 12. */
   radius?: number;
-  /** HP override — defaults to BALANCE.match.bombermanMaxHp (uniform across
-   *  tiers today; pass through if a future tier varies HP). */
+  /** HP override — defaults to BALANCE.match.bombermanMaxHp. */
   hp?: number;
-  /** Tooltip anchor side relative to the badge — `auto` chooses based on
-   *  available space. Default 'auto'. */
+  /** Optional Bomberman name for the popup's first line (NAME · LV n). When
+   *  omitted, the popup leads with the class line. */
+  name?: string;
+  /** Optional experience (SP). When provided, the popup shows the §1.4
+   *  experience strip ("EXPERIENCE … N SP"). SP is never shown as a stat. */
+  sp?: number;
+  /** Tooltip anchor side relative to the badge. Default 'auto'. */
   tooltipSide?: 'auto' | 'left' | 'right' | 'below';
-}
-
-const TIER_COLOR: Record<BombermanTier, number> = {
-  free: 0x44aa66,           // green
-  paid: 0x4477cc,           // blue
-  paid_expensive: 0xcc4477, // magenta
-};
-
-/** Badge color ramp by Bomberman level (1..N). Extends the old per-tier
- *  green→blue→magenta sequence; levels past the array clamp to the last. */
-const LEVEL_COLORS: number[] = [
-  0x44aa66, // 1  green
-  0x4477cc, // 2  blue
-  0xcc4477, // 3  magenta
-  0xdd8a33, // 4  orange
-  0xdd4040, // 5  red
-  0xe0c93a, // 6  gold
-  0x44d6d6, // 7  cyan
-];
-
-function levelColor(level: number): number {
-  const i = Math.min(Math.max(1, level), LEVEL_COLORS.length) - 1;
-  return LEVEL_COLORS[i];
-}
-
-/** Darken a color toward black — used for the badge fill behind the number. */
-function darkenColor(hex: number, f = 0.22): number {
-  const r = Math.round(((hex >> 16) & 0xff) * f);
-  const g = Math.round(((hex >> 8) & 0xff) * f);
-  const b = Math.round((hex & 0xff) * f);
-  return (r << 16) | (g << 8) | b;
 }
 
 /** `0xrrggbb` → '#rrggbb' for Phaser text colors. */
@@ -84,13 +57,12 @@ function colorToHexStr(hex: number): string {
   return '#' + (hex & 0xffffff).toString(16).padStart(6, '0');
 }
 
-/** Real seconds in one full turn — the HUD presents turns as a clock, so the
- *  perk line speaks seconds too (see BALANCE.match note on the phase split). */
+/** Real seconds in one full turn — perk line speaks seconds like the HUD clock. */
 const SECONDS_PER_TURN =
   BALANCE.match.inputPhaseSeconds + BALANCE.match.transitionPhaseSeconds;
 
 /** One-line perk blurb per Idle Action class, derived from BALANCE so the
- *  tooltip stays honest when idle-action tuning changes. */
+ *  popup stays honest when idle-action tuning changes. */
 function perkDescription(idleAction: IdleAction): string {
   const ia = BALANCE.idleActions;
   switch (idleAction) {
@@ -105,10 +77,8 @@ function perkDescription(idleAction: IdleAction): string {
 
 /**
  * Add the badge to `parent` at the supplied local coordinates. Returns the
- * badge container so callers can reposition or destroy it later if needed.
- *
- * Tooltip is created on-demand in the SCENE display list (above the parent)
- * so it sits over neighbouring UI even when the parent is clipped.
+ * badge container. The tooltip is created on-demand in the SCENE display list
+ * (above the parent) so it sits over neighbouring UI even when clipped.
  */
 export function attachTierInfoBadge(
   scene: Phaser.Scene,
@@ -120,13 +90,13 @@ export function attachTierInfoBadge(
   const level = Math.max(1, Math.round(opts.level));
   const badge = scene.add.container(opts.x, opts.y);
 
-  const ramp = levelColor(level);
-  const circle = scene.add.circle(0, 0, radius, darkenColor(ramp), 1).setStrokeStyle(2, ramp, 1);
+  const ramp = levelRampCol(level);
+  const circle = scene.add.circle(0, 0, radius, COL.bg, 1).setStrokeStyle(2, ramp, 1);
   badge.add(circle);
 
   const label = scene.add.text(0, 0, String(level), {
-    fontSize: `${Math.max(10, Math.round(radius * 1.05))}px`,
-    color: colorToHexStr(ramp), fontFamily: 'monospace', fontStyle: 'bold',
+    fontSize: `${Math.max(9, Math.round(radius * 0.85))}px`,
+    color: levelRampHex(level), fontFamily: FONT.press,
   }).setOrigin(0.5);
   badge.add(label);
 
@@ -134,20 +104,14 @@ export function attachTierInfoBadge(
 
   const showTooltip = (): void => {
     if (tooltip) return;
-    // Compute screen-space anchor by walking up the parent chain. Phaser
-    // doesn't have getWorldTransform on Containers in 3.80, but we can use
-    // `parent.getWorldTransformMatrix` to get the absolute matrix and then
-    // transform (badge.x, badge.y) into world space.
     const m = new Phaser.GameObjects.Components.TransformMatrix();
     parent.getWorldTransformMatrix(m);
     const sx = m.tx + opts.x;
     const sy = m.ty + opts.y;
 
-    tooltip = buildTooltip(
-      scene, opts.tier, level, opts.idleAction, opts.maxCustomSlots, opts.stackSize, hp,
-    );
+    tooltip = buildTooltip(scene, opts, level, hp);
     const sw = scene.scale.width;
-    const tw = (tooltip.getData('w') as number) ?? 160;
+    const tw = (tooltip.getData('w') as number) ?? 250;
     const th = (tooltip.getData('h') as number) ?? 90;
 
     let tx = sx + radius + 8;
@@ -164,7 +128,6 @@ export function attachTierInfoBadge(
       ty = sy + radius + 8;
     }
     tooltip.setPosition(tx, ty);
-    // Make sure the tooltip floats above other scene content
     scene.children.bringToTop(tooltip);
   };
 
@@ -177,8 +140,6 @@ export function attachTierInfoBadge(
   circle.setInteractive({ useHandCursor: true });
   circle.on('pointerover', showTooltip);
   circle.on('pointerout', hideTooltip);
-  // Defensive cleanup — if the parent is destroyed while the tooltip is up,
-  // tear the tooltip down too. Phaser fires DESTROY on the parent.
   parent.once(Phaser.GameObjects.Events.DESTROY, hideTooltip);
   badge.once(Phaser.GameObjects.Events.DESTROY, hideTooltip);
 
@@ -188,69 +149,96 @@ export function attachTierInfoBadge(
 
 function buildTooltip(
   scene: Phaser.Scene,
-  tier: BombermanTier,
+  opts: TierInfoBadgeOptions,
   level: number,
-  idleAction: IdleAction,
-  maxCustomSlots: number,
-  stackSize: number,
   hp: number,
 ): Phaser.GameObjects.Container {
-  const padding = 10;
-  const lineH = 20;
-  const tipW = 212;
+  const pad = 12;
+  const tipW = 250;
+  const innerW = tipW - pad * 2;
+  const { idleAction, maxCustomSlots, stackSize, name, sp } = opts;
+  const className = IDLE_ACTION_LABEL[idleAction] ?? IDLE_ACTION_LABEL.attack;
+  const classColor = IDLE_ACTION_TEXT_COLOR[idleAction] ?? IDLE_ACTION_TEXT_COLOR.attack;
+  const rampHex = levelRampHex(level);
 
   const c = scene.add.container(0, 0);
   c.setDepth(10000);
+  let y = pad;
 
-  const className = IDLE_ACTION_LABEL[idleAction] ?? IDLE_ACTION_LABEL.attack;
-  const headline = scene.add.text(padding, padding, `${className} Bomberman lvl ${level}`, {
-    fontSize: '12px', color: '#e0e0e0', fontFamily: 'monospace', fontStyle: 'bold',
-  }).setOrigin(0, 0);
-  c.add(headline);
-
-  // Stat rows — emoji prefixes give visual rhythm and let the eye scan stats
-  // by icon. `maxCustomSlots` is the count WITHOUT Rock (the user-visible
-  // "Bomb Slots" number; Rock is implicit and not counted).
-  const rows: Array<[string, string, string]> = [
-    ['❤️', 'HP', String(hp)],
-    ['🟦', 'Bomb Slots', String(maxCustomSlots)],
-    ['🟧', 'Stack Size', String(stackSize)],
-  ];
-  // Use a font stack that pulls in the system emoji font for the icon column,
-  // monospace for the rest. Phaser's text uses CSS font-family fallback.
-  const emojiFontFamily = '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", monospace';
-  for (let i = 0; i < rows.length; i++) {
-    const [emoji, label, value] = rows[i];
-    const y = padding + lineH * (i + 1) + 4;
-    c.add(scene.add.text(padding, y, emoji, {
-      fontSize: '13px', fontFamily: emojiFontFamily,
+  // 1. NAME · LV n  (Silkscreen dim; LV n in ramp color)
+  if (name) {
+    const n = scene.add.text(pad, y, `${name} · `, {
+      fontFamily: FONT.silk, fontSize: '13px', color: CSS.dim,
+    }).setOrigin(0, 0);
+    c.add(n);
+    c.add(scene.add.text(pad + n.width, y, `LV ${level}`, {
+      fontFamily: FONT.silk, fontSize: '13px', color: rampHex,
     }).setOrigin(0, 0));
-    c.add(scene.add.text(padding + 22, y, label, {
-      fontSize: '11px', color: '#888888', fontFamily: 'monospace',
+    y += 20;
+  } else {
+    c.add(scene.add.text(pad, y, `LV ${level}`, {
+      fontFamily: FONT.silk, fontSize: '13px', color: rampHex,
     }).setOrigin(0, 0));
-    c.add(scene.add.text(tipW - padding, y, value, {
-      fontSize: '12px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setOrigin(1, 0));
+    y += 20;
   }
 
-  // Perk line — the class's Idle Action described as a perk, in the class
-  // color (same hue as the IdleActionBadge / under-feet shape). Wraps, so the
-  // background height is measured after the text is laid out.
-  const perkY = padding + lineH * (rows.length + 1) + 8;
-  const perk = scene.add.text(
-    padding, perkY, `"${className}" - ${perkDescription(idleAction)}`, {
-      fontSize: '10px',
-      color: IDLE_ACTION_TEXT_COLOR[idleAction] ?? IDLE_ACTION_TEXT_COLOR.attack,
-      fontFamily: 'monospace',
-      wordWrap: { width: tipW - padding * 2 },
-      lineSpacing: 2,
-    },
-  ).setOrigin(0, 0);
+  // 2. Class name (class color) + one-line behavior (dim, wrapped)
+  c.add(scene.add.text(pad, y, className, {
+    fontFamily: FONT.silk, fontSize: '13px', color: classColor,
+  }).setOrigin(0, 0));
+  y += 18;
+  const perk = scene.add.text(pad, y, perkDescription(idleAction), {
+    fontFamily: FONT.silk, fontSize: '11px', color: CSS.dim,
+    wordWrap: { width: innerW }, lineSpacing: 2,
+  }).setOrigin(0, 0);
   c.add(perk);
+  y += perk.height + 8;
 
-  const tipH = perkY + perk.height + padding;
-  const bg = scene.add.rectangle(tipW / 2, tipH / 2, tipW, tipH, 0x0e0e1a, 0.96)
-    .setStrokeStyle(1, TIER_COLOR[tier], 1);
+  // 3. divider
+  const divider = (yy: number) => {
+    const g = scene.add.graphics();
+    g.lineStyle(1, COL.border, 1);
+    g.lineBetween(pad, yy, tipW - pad, yy);
+    c.add(g);
+  };
+  divider(y);
+  y += 8;
+
+  // 4. HP / CAP / STACK rows, color-coded (label + value both in stat color)
+  const statRows: Array<[string, string, string]> = [
+    [STAT_HEX.hp, 'HP', String(hp)],
+    [STAT_HEX.cap, 'CAP', String(maxCustomSlots)],
+    [STAT_HEX.stack, 'STACK', String(stackSize)],
+  ];
+  for (const [color, lbl, val] of statRows) {
+    c.add(scene.add.text(pad, y, lbl, {
+      fontFamily: FONT.silk, fontSize: '12px', color,
+    }).setOrigin(0, 0));
+    c.add(scene.add.text(tipW - pad, y, val, {
+      fontFamily: FONT.press, fontSize: '11px', color,
+    }).setOrigin(1, 0));
+    y += 20;
+  }
+
+  // 5/6. divider + EXPERIENCE … N SP (SP is never a stat — §1.4)
+  if (sp !== undefined) {
+    y += 2;
+    divider(y);
+    y += 8;
+    c.add(scene.add.text(pad, y, 'EXPERIENCE', {
+      fontFamily: FONT.silk, fontSize: '12px', color: CSS.faint,
+    }).setOrigin(0, 0).setLetterSpacing(2));
+    c.add(scene.add.text(tipW - pad, y, `${sp} SP`, {
+      fontFamily: FONT.press, fontSize: '11px', color: CSS.text,
+    }).setOrigin(1, 0));
+    y += 20;
+  }
+
+  const tipH = y + pad - 8;
+  const bg = scene.add.graphics();
+  drawNotchedPanel(bg, 0, 0, tipW, tipH, {
+    fill: COL.panel, border: COL.borderHi, borderWidth: 2, notch: 6,
+  });
   c.addAt(bg, 0);
 
   c.setData('w', tipW);

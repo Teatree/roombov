@@ -7,6 +7,8 @@ import {
   tooltipDataFor,
   tooltipKeyEquals,
 } from '../tooltip/tooltipData.ts';
+import { COL, CSS, FONT } from '../design/tokens.ts';
+import { drawNotchedPanel } from '../util/pixelPanel.ts';
 
 const PANEL_W = 220;
 const PANEL_H = 52;
@@ -24,7 +26,7 @@ const FADE_OUT_MS = 110;
  */
 export class TooltipScene extends Phaser.Scene {
   private panel!: Phaser.GameObjects.Container;
-  private panelBg!: Phaser.GameObjects.Rectangle;
+  private panelBg!: Phaser.GameObjects.Graphics;
   private text!: Phaser.GameObjects.Text;
   private iconImage!: Phaser.GameObjects.Image;
   private iconGfx!: Phaser.GameObjects.Graphics;
@@ -55,9 +57,11 @@ export class TooltipScene extends Phaser.Scene {
 
     this.panel = this.add.container(panelX, panelY).setDepth(2000).setVisible(false).setAlpha(0);
 
-    this.panelBg = this.add.rectangle(0, 0, PANEL_W, PANEL_H, 0x0a1020, 0.85)
-      .setOrigin(0, 0)
-      .setStrokeStyle(1, 0xffd944, 0.7);
+    // Notched panel bg (§1.3): panel fill + 2px border, no rounded corners.
+    this.panelBg = this.add.graphics();
+    drawNotchedPanel(this.panelBg, 0, 0, PANEL_W, PANEL_H, {
+      fill: COL.panel, border: COL.border, borderWidth: 2, notch: 6,
+    });
 
     this.iconImage = this.add.image(PADDING + ICON_SIZE / 2, PANEL_H / 2, 'bomb_icons', 0)
       .setOrigin(0.5)
@@ -67,9 +71,9 @@ export class TooltipScene extends Phaser.Scene {
     this.iconGfx = this.add.graphics();
 
     this.text = this.add.text(PADDING + ICON_SIZE + PADDING, PANEL_H / 2, '', {
-      fontSize: '10px',
-      color: '#ffffff',
-      fontFamily: 'monospace',
+      fontSize: '11px',
+      color: CSS.text,
+      fontFamily: FONT.silk,
       wordWrap: { width: PANEL_W - ICON_SIZE - PADDING * 3 },
     }).setOrigin(0, 0.5);
 
@@ -206,7 +210,7 @@ export class TooltipScene extends Phaser.Scene {
   private renderText(parts: Array<{ text: string; bold?: boolean }>): void {
     // Phaser's BitmapText/Text doesn't support inline bold spans cleanly.
     // We assemble the full string, but emphasize bold parts by uppercasing
-    // and bracketing them so they read as highlighted in monospace. Cheap,
+    // them so they read as highlighted in the Silkscreen body font. Cheap,
     // readable, no extra typography work.
     const out: string[] = [];
     for (const p of parts) {
@@ -236,7 +240,7 @@ function drawShapeIcon(g: Phaser.GameObjects.Graphics, shape: string, x: number,
   const r = size * 0.4;
   switch (shape) {
     case 'heart': {
-      g.fillStyle(0xff4466, 1);
+      g.fillStyle(COL.red, 1);
       const s = r * 0.9;
       g.fillCircle(cx - s * 0.5, cy - s * 0.2, s * 0.6);
       g.fillCircle(cx + s * 0.5, cy - s * 0.2, s * 0.6);
@@ -244,29 +248,29 @@ function drawShapeIcon(g: Phaser.GameObjects.Graphics, shape: string, x: number,
       return;
     }
     case 'coin': {
-      g.fillStyle(0xffd944, 1);
+      g.fillStyle(COL.gold, 1);
       g.fillCircle(cx, cy, r);
-      g.fillStyle(0xc09020, 1);
+      g.fillStyle(COL.goldEdge, 1);
       g.fillCircle(cx, cy, r * 0.7);
-      g.fillStyle(0xffd944, 1);
+      g.fillStyle(COL.gold, 1);
       g.fillRect(cx - r * 0.1, cy - r * 0.45, r * 0.2, r * 0.9);
       return;
     }
     case 'hourglass': {
-      g.fillStyle(0x88ccff, 1);
+      g.fillStyle(COL.blue, 1);
       g.fillTriangle(cx - r, cy - r, cx + r, cy - r, cx, cy);
       g.fillTriangle(cx - r, cy + r, cx + r, cy + r, cx, cy);
-      g.lineStyle(2, 0xeeeeee, 1);
+      g.lineStyle(2, COL.text, 1);
       g.strokeRect(cx - r, cy - r - 2, r * 2, 3);
       g.strokeRect(cx - r, cy + r - 1, r * 2, 3);
       return;
     }
     case 'clock': {
-      g.fillStyle(0xeeeeee, 1);
+      g.fillStyle(COL.text, 1);
       g.fillCircle(cx, cy, r);
-      g.fillStyle(0x222233, 1);
+      g.fillStyle(COL.stageFrame, 1);
       g.fillCircle(cx, cy, r * 0.85);
-      g.lineStyle(2, 0xff6644, 1);
+      g.lineStyle(2, COL.red, 1);
       g.beginPath();
       g.moveTo(cx, cy);
       g.lineTo(cx, cy - r * 0.6);
@@ -298,7 +302,7 @@ function drawShapeIcon(g: Phaser.GameObjects.Graphics, shape: string, x: number,
     case 'door': {
       g.fillStyle(0x884422, 1);
       g.fillRect(cx - r * 0.6, cy - r, r * 1.2, r * 2);
-      g.fillStyle(0xffd944, 1);
+      g.fillStyle(COL.gold, 1);
       g.fillCircle(cx + r * 0.3, cy, 2);
       return;
     }
@@ -307,7 +311,7 @@ function drawShapeIcon(g: Phaser.GameObjects.Graphics, shape: string, x: number,
       g.fillRect(cx - r, cy - r * 0.3, r * 2, r * 1.2);
       g.fillStyle(0x6a3a12, 1);
       g.fillRect(cx - r, cy - r * 0.7, r * 2, r * 0.4);
-      g.fillStyle(0xffd944, 1);
+      g.fillStyle(COL.gold, 1);
       g.fillRect(cx - 2, cy - 2, 4, 4);
       return;
     }
@@ -320,9 +324,9 @@ function drawShapeIcon(g: Phaser.GameObjects.Graphics, shape: string, x: number,
     case 'hatch': {
       g.fillStyle(0x666666, 1);
       g.fillRect(cx - r, cy - r * 0.5, r * 2, r);
-      g.lineStyle(2, 0xaaaaaa, 1);
+      g.lineStyle(2, COL.dim, 1);
       g.strokeRect(cx - r, cy - r * 0.5, r * 2, r);
-      g.fillStyle(0xffd944, 1);
+      g.fillStyle(COL.gold, 1);
       g.fillCircle(cx, cy, 2);
       return;
     }
@@ -338,19 +342,19 @@ function drawShapeIcon(g: Phaser.GameObjects.Graphics, shape: string, x: number,
     }
     case 'key': {
       // Simple key silhouette: round head + stubby shaft.
-      g.fillStyle(0xffd944, 1);
+      g.fillStyle(COL.gold, 1);
       g.fillCircle(cx - r * 0.4, cy, r * 0.45);
-      g.fillStyle(0x000000, 1);
+      g.fillStyle(COL.stageFrame, 1);
       g.fillCircle(cx - r * 0.4, cy, r * 0.18);
-      g.fillStyle(0xffd944, 1);
+      g.fillStyle(COL.gold, 1);
       g.fillRect(cx - r * 0.1, cy - r * 0.18, r * 0.9, r * 0.36);
       g.fillRect(cx + r * 0.55, cy, r * 0.2, r * 0.45);
       return;
     }
     case 'flame': {
-      g.fillStyle(0xff6622, 1);
+      g.fillStyle(COL.orange, 1);
       g.fillTriangle(cx - r * 0.7, cy + r * 0.7, cx + r * 0.7, cy + r * 0.7, cx, cy - r);
-      g.fillStyle(0xffd944, 1);
+      g.fillStyle(COL.gold, 1);
       g.fillTriangle(cx - r * 0.4, cy + r * 0.5, cx + r * 0.4, cy + r * 0.5, cx, cy - r * 0.4);
       return;
     }
@@ -362,35 +366,35 @@ function drawShapeIcon(g: Phaser.GameObjects.Graphics, shape: string, x: number,
       return;
     }
     case 'pearl': {
-      g.fillStyle(0x55ddff, 1);
+      g.fillStyle(COL.blue, 1);
       g.fillCircle(cx, cy, r * 0.7);
-      g.fillStyle(0xffffff, 0.6);
+      g.fillStyle(COL.text, 0.6);
       g.fillCircle(cx - r * 0.2, cy - r * 0.2, r * 0.2);
       return;
     }
     case 'mess': {
       g.fillStyle(0x882222, 0.7);
       g.fillCircle(cx - r * 0.3, cy - r * 0.2, r * 0.4);
-      g.fillStyle(0x55ddff, 0.7);
+      g.fillStyle(COL.blue, 0.7);
       g.fillCircle(cx + r * 0.3, cy + r * 0.1, r * 0.35);
-      g.fillStyle(0x222222, 0.7);
+      g.fillStyle(COL.stageFrame, 0.7);
       g.fillCircle(cx, cy + r * 0.4, r * 0.3);
       return;
     }
     case 'fog': {
-      g.fillStyle(0x445566, 1);
+      g.fillStyle(COL.faint, 1);
       g.fillCircle(cx, cy, r);
       // simple "?" rendered as text would need add.text — use a stroke shape
-      g.lineStyle(3, 0xffffff, 1);
+      g.lineStyle(3, COL.text, 1);
       g.beginPath();
       g.arc(cx, cy - r * 0.2, r * 0.35, Math.PI, 0, false);
       g.strokePath();
-      g.fillStyle(0xffffff, 1);
+      g.fillStyle(COL.text, 1);
       g.fillRect(cx - 2, cy + r * 0.4, 4, 4);
       return;
     }
     default:
-      g.fillStyle(0xffffff, 1);
+      g.fillStyle(COL.text, 1);
       g.fillRect(x + 8, y + 8, size - 16, size - 16);
   }
 }

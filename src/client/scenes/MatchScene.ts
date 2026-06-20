@@ -32,6 +32,8 @@ import { TreasureListWidget } from '../systems/TreasureListWidget.ts';
 import { ShieldRenderer } from '../systems/ShieldRenderer.ts';
 import { MobileControls, type MobileHooks } from '../systems/MobileControls.ts';
 import { isMobileDevice } from '../util/isMobile.ts';
+import { COL, CSS, FONT } from '../design/tokens.ts';
+import { drawNotchedPanel, notchedPoints } from '../util/pixelPanel.ts';
 import {
   type TreasureType,
   type TreasureBundle,
@@ -795,10 +797,10 @@ export class MatchScene extends Phaser.Scene {
 
     this.errorText = this.hud(this.add.text(this.scale.width / 2, this.scale.height / 2, '', {
       fontSize: '18px',
-      color: '#ff4444',
-      fontFamily: 'monospace',
+      color: CSS.red,
+      fontFamily: FONT.silk,
       align: 'center',
-      backgroundColor: '#1a0a0a',
+      backgroundColor: CSS.stageFrame,
       padding: { x: 24, y: 16 },
     }).setOrigin(0.5).setDepth(10000).setVisible(false));
 
@@ -4324,7 +4326,7 @@ export class MatchScene extends Phaser.Scene {
 
     // Top bar — height scales with the HUD so it doesn't eat a short screen.
     const topBg = this.add.graphics().setDepth(1000);
-    topBg.fillStyle(0x0a0a14, 0.85);
+    topBg.fillStyle(COL.stageFrame, 0.85);
     topBg.fillRect(0, 0, width, Math.round(48 * hs));
     this.topBarBg = this.hud(topBg);
 
@@ -4338,31 +4340,31 @@ export class MatchScene extends Phaser.Scene {
     // feel. The objects are kept (created hidden) so the rest of the HUD code
     // can keep its references without null checks; nothing updates them anymore.
     this.turnText = this.hud(this.add.text(width / 2, Math.round(14 * hs), '', {
-      fontSize: f(16), color: '#aaaaaa', fontFamily: 'monospace',
+      fontSize: f(16), color: CSS.dim, fontFamily: FONT.press,
     }).setOrigin(0.5, 0).setDepth(1001).setVisible(false));
 
     this.phaseText = this.hud(this.add.text(width / 2 + 110, Math.round(14 * hs), '', {
-      fontSize: f(14), color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: f(14), color: CSS.blue, fontFamily: FONT.press,
     }).setOrigin(0, 0).setDepth(1001).setVisible(false));
 
     // Match clock — the only top-center readout now. Shows remaining match time
     // as M:SS (see formatMatchClock); freezes during tutorial pauses.
     this.timerText = this.hud(this.add.text(width / 2, Math.round(12 * hs), '0:00', {
-      fontSize: f(18), color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: f(18), color: CSS.text, fontFamily: FONT.press,
     }).setOrigin(0.5, 0).setDepth(1001));
 
     // Broken-hatch warning, dropped just below the top bar (phase + timer
     // now occupy the space right of the turn counter). Visible only while
     // the local bomberman is standing on a broken or under-keyed hatch.
     this.brokenHatchText = this.hud(this.add.text(width / 2, Math.round(52 * hs), 'This Hatch is Broken, you won’t be able to Escape from it', {
-      fontSize: f(11), color: '#ff4040', fontFamily: 'monospace',
+      fontSize: f(11), color: CSS.red, fontFamily: FONT.silk,
     }).setOrigin(0.5, 0).setDepth(1001).setVisible(false));
 
     // UAV indicator — sits just below the match clock at the top-center.
     // Shows a seconds countdown to the next UAV; throbs when it's <=3 turns
     // away; hidden in tutorial matches.
     this.uavText = this.hud(this.add.text(width / 2, Math.round(34 * hs), '', {
-      fontSize: f(13), color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: f(13), color: CSS.blue, fontFamily: FONT.press,
     }).setOrigin(0.5, 0).setDepth(1001).setVisible(false));
 
     // (Old top-right "HP --" text moved to the new top-left HP bar widget.)
@@ -4376,11 +4378,11 @@ export class MatchScene extends Phaser.Scene {
       const r = coinSize / 2;
       const cx = -r;
       const cy = r;
-      coinIcon.fillStyle(0xffd944, 1);
+      coinIcon.fillStyle(COL.gold, 1);
       coinIcon.fillCircle(cx, cy, r);
-      coinIcon.fillStyle(0xc09020, 1);
+      coinIcon.fillStyle(COL.goldEdge, 1);
       coinIcon.fillCircle(cx, cy, r * 0.7);
-      coinIcon.fillStyle(0xffd944, 1);
+      coinIcon.fillStyle(COL.gold, 1);
       coinIcon.fillRect(cx - r * 0.1, cy - r * 0.45, r * 0.2, r * 0.9);
       coinIcon.setPosition(width - HUD_RIGHT_MARGIN, COIN_ROW_Y);
     }
@@ -4391,10 +4393,9 @@ export class MatchScene extends Phaser.Scene {
       'x0',
       {
         fontSize: f(16),
-        color: '#ffd944',
-        fontFamily: 'monospace',
-        fontStyle: 'bold',
-        stroke: '#000000',
+        color: CSS.gold,
+        fontFamily: FONT.press,
+        stroke: CSS.stageFrame,
         strokeThickness: Math.max(2, Math.round(3 * hs)),
       },
     ).setOrigin(1, 0.5).setDepth(1001));
@@ -4430,8 +4431,8 @@ export class MatchScene extends Phaser.Scene {
       ? BALANCE.consoles.requiredToEscape
       : BALANCE.keys.requiredPerHatch;
     this.keysHudText = this.hud(this.add.text(width - keyTxtX, COIN_ROW_Y + keySize / 2, `0/${requirementCap}`, {
-      fontSize: f(14), color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
-      stroke: '#000000', strokeThickness: Math.max(2, Math.round(3 * hs)),
+      fontSize: f(14), color: CSS.gold, fontFamily: FONT.press,
+      stroke: CSS.stageFrame, strokeThickness: Math.max(2, Math.round(3 * hs)),
     }).setOrigin(0, 0.5).setDepth(1001));
 
     // Slot tray is built lazily — at this point the local Bomberman state
@@ -4442,10 +4443,10 @@ export class MatchScene extends Phaser.Scene {
     // monospace "[ < BACK ]" style used as the back button on other scenes.
     if (this.mode === 'tutorial') {
       const exitBtn = this.add.text(20, height - 30, '[ EXIT TUTORIAL ]', {
-        fontSize: f(16), color: '#888888', fontFamily: 'monospace',
+        fontSize: f(16), color: CSS.dim, fontFamily: FONT.silk,
       }).setOrigin(0, 0.5).setDepth(1001).setInteractive({ useHandCursor: true });
-      exitBtn.on('pointerover', () => exitBtn.setColor('#cccccc'));
-      exitBtn.on('pointerout', () => exitBtn.setColor('#888888'));
+      exitBtn.on('pointerover', () => exitBtn.setColor(CSS.text));
+      exitBtn.on('pointerout', () => exitBtn.setColor(CSS.dim));
       exitBtn.on('pointerdown', () => this.scene.start('MainMenuScene'));
       this.exitTutorialBtn = this.hud(exitBtn);
     }
@@ -4467,7 +4468,7 @@ export class MatchScene extends Phaser.Scene {
     // Top bar — redraw to the full new width (scaled height).
     if (this.topBarBg) {
       this.topBarBg.clear();
-      this.topBarBg.fillStyle(0x0a0a14, 0.85);
+      this.topBarBg.fillStyle(COL.stageFrame, 0.85);
       this.topBarBg.fillRect(0, 0, width, Math.round(48 * hs));
     }
     // Top-center readouts.
@@ -4720,8 +4721,9 @@ export class MatchScene extends Phaser.Scene {
     this.hudTrayY = trayY;
 
     const trayBg = this.add.graphics().setDepth(1000);
-    trayBg.fillStyle(0x0a0a14, 0.85);
-    trayBg.fillRoundedRect(trayX - pad, trayY - pad, trayWidth + pad * 2, s + pad * 2, 6);
+    drawNotchedPanel(trayBg, trayX - pad, trayY - pad, trayWidth + pad * 2, s + pad * 2, {
+      fill: COL.stageFrame, fillAlpha: 0.85, border: COL.border, borderWidth: 2, notch: Math.round(8 * hs),
+    });
     this.hudTrayBg = this.hud(trayBg);
 
     // Bomb-threat camera-edge warning — a thick stroked rectangle around
@@ -4738,18 +4740,17 @@ export class MatchScene extends Phaser.Scene {
     // status effects. Depth > slot depths (1001–1003) so it fully obscures
     // interactive elements behind it.
     const stunOverlay = this.add.graphics().setDepth(1050).setVisible(false);
-    stunOverlay.fillStyle(0x223355, 0.7);
-    stunOverlay.fillRoundedRect(trayX - pad, trayY - pad, trayWidth + pad * 2, s + pad * 2, 6);
-    stunOverlay.lineStyle(3, 0x88ccff, 0.9);
-    stunOverlay.strokeRoundedRect(trayX - pad, trayY - pad, trayWidth + pad * 2, s + pad * 2, 6);
+    drawNotchedPanel(stunOverlay, trayX - pad, trayY - pad, trayWidth + pad * 2, s + pad * 2, {
+      fill: COL.panel2, fillAlpha: 0.7, border: COL.blue, borderAlpha: 0.9, borderWidth: 3, notch: Math.round(8 * hs),
+    });
     this.stunHudOverlay = this.hud(stunOverlay);
 
     const stunLabel = this.add.text(
       trayX + trayWidth / 2, trayY + s / 2,
       'STUNNED',
       {
-        fontSize: f(24), color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
-        stroke: '#000022', strokeThickness: Math.max(2, Math.round(5 * hs)),
+        fontSize: f(24), color: CSS.blue, fontFamily: FONT.press,
+        stroke: CSS.stageFrame, strokeThickness: Math.max(2, Math.round(5 * hs)),
       },
     ).setOrigin(0.5).setDepth(1051).setVisible(false);
     this.stunHudLabel = this.hud(stunLabel);
@@ -4780,16 +4781,16 @@ export class MatchScene extends Phaser.Scene {
     for (let i = 0; i < count; i++) {
       const sx = trayX + i * (s + gap);
 
-      const rect = this.add.rectangle(sx, trayY, s, s, 0x1a1a2e, 1)
+      const rect = this.add.rectangle(sx, trayY, s, s, COL.panel2, 1)
         .setOrigin(0, 0)
-        .setStrokeStyle(2, 0x444466)
+        .setStrokeStyle(2, COL.border)
         .setDepth(1001);
       this.slotRects.push(this.hud(rect));
 
-      // Keyboard shortcut key badge — white bg, black text, bottom-left
+      // Keyboard shortcut key badge — gold bg, dark text, bottom-left
       const label = this.add.text(sx + Math.round(4 * hs), trayY + s - Math.round(4 * hs), `${i + 1}`, {
-        fontSize: f(12), color: '#000000', fontFamily: 'monospace', fontStyle: 'bold',
-        backgroundColor: '#ffffff', padding: { x: Math.max(1, Math.round(3 * hs)), y: 1 },
+        fontSize: f(12), color: CSS.goldText, fontFamily: FONT.press,
+        backgroundColor: CSS.gold, padding: { x: Math.max(1, Math.round(3 * hs)), y: 1 },
       }).setOrigin(0, 1).setDepth(1003);
       this.slotLabelTexts.push(this.hud(label));
 
@@ -4801,7 +4802,8 @@ export class MatchScene extends Phaser.Scene {
       this.slotIcons.push(this.hud(icon));
 
       const countTxt = this.add.text(sx + s / 2, trayY + s - Math.round(4 * hs), '', {
-        fontSize: f(14), color: '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
+        fontSize: f(14), color: CSS.gold, fontFamily: FONT.press,
+        stroke: CSS.stageFrame, strokeThickness: Math.max(1, Math.round(2 * hs)),
       }).setOrigin(0.5, 1).setDepth(1002);
       this.slotCountTexts.push(this.hud(countTxt));
 
@@ -4928,8 +4930,8 @@ export class MatchScene extends Phaser.Scene {
       this.keysHudText.setText(`${heldKeys}/${cap}`);
       const atCap = cap > 0 && heldKeys >= cap;
       if (onShortHatch) {
-        this.keysHudText.setColor('#ff5555');
-        this.keysHudIcon.setTint(0xff8888);
+        this.keysHudText.setColor(CSS.red);
+        this.keysHudIcon.setTint(COL.red);
         if (!this.keyHudPulseTween) {
           this.keyHudPulseTween = this.tweens.add({
             targets: [this.keysHudIcon, this.keysHudText],
@@ -4949,10 +4951,10 @@ export class MatchScene extends Phaser.Scene {
           this.keysHudText.setScale(1);
         }
         if (atCap) {
-          this.keysHudText.setColor('#44ff88');
-          this.keysHudIcon.setTint(0x88ff88);
+          this.keysHudText.setColor(CSS.green);
+          this.keysHudIcon.setTint(COL.green);
         } else {
-          this.keysHudText.setColor('#ffd944');
+          this.keysHudText.setColor(CSS.gold);
           this.keysHudIcon.clearTint();
         }
       }
@@ -5347,8 +5349,8 @@ export class MatchScene extends Phaser.Scene {
     this.uavBannerText = this.hud(this.add.text(width / 2, height / 2 - 60,
       'UAV is Revealing the whole area',
       {
-        fontSize: '24px', color: '#88ccff', fontFamily: 'monospace', fontStyle: 'bold',
-        stroke: '#000022', strokeThickness: 5,
+        fontSize: '24px', color: CSS.blue, fontFamily: FONT.press,
+        stroke: CSS.stageFrame, strokeThickness: 5,
       }).setOrigin(0.5).setDepth(10000));
     this.uavBannerTimer = this.time.delayedCall(3000, () => {
       this.uavBannerText?.destroy();
@@ -5381,17 +5383,17 @@ export class MatchScene extends Phaser.Scene {
     this.hud(container);
 
     this.hpBarLabel = this.add.text(0, barH / 2, 'HP:', {
-      fontSize: `${Math.max(9, Math.round(16 * this.hudScale))}px`, color: '#ff8888', fontFamily: 'monospace', fontStyle: 'bold',
+      fontSize: `${Math.max(9, Math.round(16 * this.hudScale))}px`, color: CSS.red, fontFamily: FONT.press,
     }).setOrigin(0, 0.5);
     container.add(this.hpBarLabel);
 
     // Dark frame + fill graphics. Both live inside the container so the
     // hurt-jitter tween can offset them together.
     const bg = this.add.graphics();
-    bg.fillStyle(0x111111, 0.85);
-    bg.fillRoundedRect(labelW, 0, barW, barH, 3);
-    bg.lineStyle(1, 0x444444, 1);
-    bg.strokeRoundedRect(labelW, 0, barW, barH, 3);
+    bg.fillStyle(COL.stageFrame, 0.85);
+    bg.fillRect(labelW, 0, barW, barH);
+    bg.lineStyle(1, COL.border, 1);
+    bg.strokeRect(labelW, 0, barW, barH);
     container.add(bg);
 
     this.hpBarFill = this.add.graphics();
@@ -5425,16 +5427,16 @@ export class MatchScene extends Phaser.Scene {
       const sx = labelW + innerPad + i * (segW + segGap);
       const sy = innerPad;
       const filled = i < current;
-      g.fillStyle(filled ? 0xdd3333 : 0x2a1a1a, 1);
+      g.fillStyle(filled ? COL.red : COL.panel2, 1);
       g.fillRect(sx, sy, segW, innerH);
     }
 
     if (dead) {
       this.hpBarLabel.setText('HP: DEAD');
-      this.hpBarLabel.setColor('#666666');
+      this.hpBarLabel.setColor(CSS.faint);
     } else {
       this.hpBarLabel.setText('HP:');
-      this.hpBarLabel.setColor('#ff8888');
+      this.hpBarLabel.setColor(CSS.red);
     }
 
     if (hpDropped) {
@@ -5524,6 +5526,14 @@ export class MatchScene extends Phaser.Scene {
       // Key badge always shows the number; dim it when slot is empty
       this.slotLabelTexts[i].setAlpha(bombType ? 1 : 0.3);
       this.slotCountTexts[i].setText(sub);
+      // Count color: green when the stack is full, gold otherwise (incl. Rock ∞).
+      if (i > 0 && bombType) {
+        const slot = me.inventory.slots[i - 1];
+        const full = !!slot && slot.count >= stackLimit;
+        this.slotCountTexts[i].setColor(full ? CSS.green : CSS.gold);
+      } else {
+        this.slotCountTexts[i].setColor(CSS.gold);
+      }
 
       // Highlight selected slot (armed for throwing, or staged throw in aim
       // mode). On mobile, the armed slot border is always shown — exactly one
@@ -5534,8 +5544,9 @@ export class MatchScene extends Phaser.Scene {
       const hl = this.slotHighlights[i];
       hl.clear();
       if (isSelected) {
-        hl.lineStyle(3, 0xff4444, 1);
-        hl.strokeRoundedRect(this.hudTrayX + i * (this.slotSize + this.slotGap), this.hudTrayY, this.slotSize, this.slotSize, 4);
+        const hx = this.hudTrayX + i * (this.slotSize + this.slotGap);
+        hl.lineStyle(3, COL.gold, 1);
+        hl.strokePoints(notchedPoints(hx, this.hudTrayY, this.slotSize, this.slotSize, 6), true);
       }
     }
   }
@@ -5696,10 +5707,9 @@ export class MatchScene extends Phaser.Scene {
 
     // Background
     const bg = this.hud(this.add.graphics().setDepth(1010));
-    bg.fillStyle(0x112211, 0.92);
-    bg.fillRoundedRect(panelX, panelY, panelWidth, panelHeight, 6);
-    bg.lineStyle(2, 0x44ff88, 0.9);
-    bg.strokeRoundedRect(panelX, panelY, panelWidth, panelHeight, 6);
+    drawNotchedPanel(bg, panelX, panelY, panelWidth, panelHeight, {
+      fill: COL.panel, fillAlpha: 0.92, border: COL.green, borderAlpha: 0.9, borderWidth: 2, notch: Math.round(8 * hs),
+    });
     this.lootPanelObjects.push(bg);
 
     // Render each source as its own slot row. Index `i` here is the row;
@@ -5708,8 +5718,8 @@ export class MatchScene extends Phaser.Scene {
     let cursorY = panelY + Math.round(8 * hs);
     for (const src of sources) {
       const rowTitle = this.hud(this.add.text(panelX + Math.round(12 * hs), cursorY, src.label, {
-        fontSize: f(11), color: src.kind === 'chest' ? '#44ff88' : '#ffaa66',
-        fontFamily: 'monospace', fontStyle: 'bold',
+        fontSize: f(11), color: src.kind === 'chest' ? CSS.green : CSS.orange,
+        fontFamily: FONT.press,
       }).setOrigin(0, 0).setDepth(1011));
       this.lootPanelObjects.push(rowTitle);
       cursorY += labelH;
@@ -5722,15 +5732,15 @@ export class MatchScene extends Phaser.Scene {
         const sx = slotStartX + i * (lootSlotSize + lootGap);
         const bomb = src.bombs[i];
 
-        const rect = this.hud(this.add.rectangle(sx, slotY, lootSlotSize, slotH, 0x1a2a1e, 1)
+        const rect = this.hud(this.add.rectangle(sx, slotY, lootSlotSize, slotH, COL.panel2, 1)
           .setOrigin(0, 0)
-          .setStrokeStyle(2, bomb ? (src.kind === 'chest' ? 0x44ff88 : 0xffaa66) : 0x333355)
+          .setStrokeStyle(2, bomb ? (src.kind === 'chest' ? COL.green : COL.orange) : COL.border)
           .setDepth(1011));
         this.lootPanelObjects.push(rect);
 
         if (!bomb) {
           const dash = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + slotH * 0.5, '—', {
-            fontSize: f(12), color: '#444', fontFamily: 'monospace',
+            fontSize: f(12), color: CSS.faint, fontFamily: FONT.silk,
           }).setOrigin(0.5).setDepth(1012));
           this.lootPanelObjects.push(dash);
           continue;
@@ -5747,14 +5757,14 @@ export class MatchScene extends Phaser.Scene {
           ? `${bomb.count}/${src.stackSize}`
           : `x${bomb.count}`;
         const countText = this.hud(this.add.text(sx + lootSlotSize / 2, slotY + slotH * 0.86, countLabel, {
-          fontSize: f(12), color: isPending ? '#ffcc44' : '#ffd944', fontFamily: 'monospace', fontStyle: 'bold',
+          fontSize: f(12), color: CSS.gold, fontFamily: FONT.press,
         }).setOrigin(0.5, 1).setDepth(1012));
         this.lootPanelObjects.push(countText);
 
         if (isPending) {
           const hlGfx = this.hud(this.add.graphics().setDepth(1013));
-          hlGfx.lineStyle(3, 0xffcc44, 1);
-          hlGfx.strokeRoundedRect(sx, slotY, lootSlotSize, slotH, 4);
+          hlGfx.lineStyle(3, COL.gold, 1);
+          hlGfx.strokePoints(notchedPoints(sx, slotY, lootSlotSize, slotH, 6), true);
           this.lootPanelObjects.push(hlGfx);
         }
       }
