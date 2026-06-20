@@ -28,6 +28,11 @@ const config: Phaser.Types.Core.GameConfig = {
   width: initialW,
   height: initialH,
   backgroundColor: '#1a1a2e',
+  // Pixel-art rendering: NEAREST texture filtering + integer pixel snapping.
+  // Kills the dark seams between 16×16 desert tiles (no atlas extrusion +
+  // bilinear filtering + fractional camera zoom bled neighbouring/edge texels).
+  // pixelArt:true already implies antialias:false + roundPixels:true; explicit for clarity.
+  render: { pixelArt: true, antialias: false, roundPixels: true },
   scale: {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
