@@ -69,7 +69,6 @@ export class BombermanShopScene extends Phaser.Scene {
   private cardViews: Map<string, CardView> = new Map();
   private cardOrder: string[] = [];
   private coinsText!: Phaser.GameObjects.Text;
-  private spText!: Phaser.GameObjects.Text;
   private wallet: TreasureListWidget | null = null;
   private walletRightEdge = 0;
   private toastText!: Phaser.GameObjects.Text;
@@ -94,8 +93,16 @@ export class BombermanShopScene extends Phaser.Scene {
   private renderedCycleId: string | null = null;
   private readonly onResize = (): void => fitSceneToViewport(this, DESIGN_W, DESIGN_H);
 
+  /** Scene to return to on Back/Esc. Set via init data so the Lobby (and any
+   *  other caller) can route the back button to itself. */
+  private backScene: string = 'MainMenuScene';
+
   constructor() {
     super({ key: 'BombermanShopScene' });
+  }
+
+  init(data?: { backScene?: string }): void {
+    this.backScene = data?.backScene ?? 'MainMenuScene';
   }
 
   preload(): void {
@@ -108,7 +115,7 @@ export class BombermanShopScene extends Phaser.Scene {
     trackScreen(this, 'BombermanShop');
     this.events.once('shutdown', this.shutdown, this);
     ensureBombermanAnims(this);
-    const { layoutH } = designViewport(this, DESIGN_W, DESIGN_H);
+    const { layoutW, layoutH } = designViewport(this, DESIGN_W, DESIGN_H);
 
     this.cameras.main.setBackgroundColor(CSS.bg);
 
@@ -123,9 +130,10 @@ export class BombermanShopScene extends Phaser.Scene {
     this.panelX = a.panelX;
     this.rightColLeft = a.rightColLeft;
     this.rightCardsCx = a.rightCardsCx;
-    // Currency always lives in the top-right corner (the two-column right edge)
-    // so it doesn't jump when the layout expands on the first purchase.
-    const rightEdge = this.computeAnchors(true).rightEdge;
+    // Wallet lives in the screen's upper-right (design-box edge), matching the
+    // Bombs Shop. The design-box edge is fixed regardless of layout, so it never
+    // jumps when the two-column layout expands on the first purchase.
+    const rightEdge = layoutW - 20;
     this.walletRightEdge = rightEdge;
 
     // Screen title — the screen is the "Bomberman" hub (its two sections are
@@ -150,16 +158,14 @@ export class BombermanShopScene extends Phaser.Scene {
       this.upgradePanel.create();
     }
 
-    // --- Currency row (top-right): coins + SP + treasure, all of which the
-    //     shop/upgrades spend. SP is the equipped Bomberman's. ---
-    this.coinsText = this.add.text(rightEdge, 8, '', {
-      fontSize: '16px', color: CSS.gold, fontFamily: FONT.press,
-    }).setOrigin(1, 0);
-    this.spText = this.add.text(rightEdge, 32, '', {
-      fontSize: '13px', color: CSS.blue, fontFamily: FONT.press,
-    }).setOrigin(1, 0);
+    // --- Wallet (top-right): coins + treasure, standardized to match the Bombs
+    //     Shop. SP is the equipped Bomberman's EXPERIENCE — it is shown in the
+    //     Upgrade panel (where it is spent), never in the wallet area. ---
+    this.coinsText = this.add.text(rightEdge, 14, '', {
+      fontSize: '18px', color: CSS.gold, fontFamily: FONT.press,
+    }).setOrigin(1, 0).setDepth(100);
     this.wallet = new TreasureListWidget(this, {
-      x: rightEdge, y: 52, anchor: 'top-left', direction: 'horizontal',
+      x: rightEdge, y: 42, anchor: 'top-left', direction: 'horizontal',
       iconScale: 0.5, fontSize: 12, rowGap: 4, depth: 10,
     });
 
@@ -172,15 +178,17 @@ export class BombermanShopScene extends Phaser.Scene {
       fontSize: '14px', color: CSS.green, fontFamily: FONT.silk,
     }).setOrigin(0.5);
 
-    // Back button
-    const backBtn = this.add.text(20, layoutH - 30, '[ < MENU ]', {
+    // Back button — labelled MENU when it returns to the Main Menu, BACK when
+    // some other screen (e.g. the Lobby) routed here, matching the Bombs Shop.
+    const backLabel = this.backScene === 'MainMenuScene' ? '[ < MENU ]' : '[ < BACK ]';
+    const backBtn = this.add.text(20, layoutH - 30, backLabel, {
       fontSize: '14px', color: CSS.dim, fontFamily: FONT.silk,
     }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
     backBtn.on('pointerover', () => backBtn.setColor(CSS.text));
     backBtn.on('pointerout', () => backBtn.setColor(CSS.dim));
-    backBtn.on('pointerdown', () => this.scene.start('MainMenuScene'));
+    backBtn.on('pointerdown', () => this.scene.start(this.backScene));
 
-    this.input.keyboard?.on('keydown-ESC', () => this.scene.start('MainMenuScene'));
+    this.input.keyboard?.on('keydown-ESC', () => this.scene.start(this.backScene));
 
     this.activity = new ActivityIndicator(this);
 
@@ -257,12 +265,7 @@ export class BombermanShopScene extends Phaser.Scene {
   private renderHeader(): void {
     const profile = ProfileStore.get();
     if (!profile) return;
-    this.coinsText.setText(`${profile.coins} C`);
-    // SP is the equipped Bomberman's EXPERIENCE (the Upgrade panel target) —
-    // rendered in blue, never as a stat. Hidden entirely when the player has no
-    // Bomberman (there is no experience to show).
-    const equipped = profile.ownedBombermen.find(b => b.id === profile.equippedBombermanId);
-    this.spText.setText(equipped ? `${equipped.sp ?? 0} SP` : '');
+    this.coinsText.setText(`${profile.coins}c`);
     this.wallet?.setBundle(profile.treasures ?? {});
     this.wallet?.rightAlignTo(this.walletRightEdge);
   }

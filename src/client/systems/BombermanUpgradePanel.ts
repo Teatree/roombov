@@ -128,6 +128,7 @@ export class BombermanUpgradePanel {
       idleAction: owned.idleAction ?? 'attack',
       maxCustomSlots: effectiveMaxCustomSlots(owned),
       stackSize: effectiveStackSize(owned),
+      hp: effectiveMaxHp(owned),
       name: owned.name,
       sp: owned.sp ?? 0,
     });
@@ -135,6 +136,12 @@ export class BombermanUpgradePanel {
     c.add(this.scene.add.text(width / 2, heroTop + 18, owned.name ?? '???', {
       fontSize: '18px', color: CSS.text, fontFamily: FONT.press,
     }).setOrigin(0.5, 0));
+
+    // Available EXPERIENCE (SP) — shown here, in the panel where it is spent,
+    // rather than in the wallet area. Blue (experience), never a stat color.
+    c.add(this.scene.add.text(width - PAD, heroTop - 2, `${owned.sp ?? 0} SP`, {
+      fontSize: '13px', color: CSS.blue, fontFamily: FONT.press,
+    }).setOrigin(1, 0));
 
     c.add(createIdleActionBadge(this.scene, width / 2, heroTop + 42, owned.idleAction ?? 'attack'));
 

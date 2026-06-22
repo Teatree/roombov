@@ -1126,7 +1126,7 @@ export class MatchScene extends Phaser.Scene {
     const me = this.state.bombermen.find(b => b.playerId === this.myPlayerId);
     if (me && me.alive) {
       const displayedHp = this.bombermanSpriteSystem?.getDisplayedHp(me.playerId) ?? me.hp;
-      this.updateHpBar(displayedHp, BALANCE.match.bombermanMaxHp, /* dead */ false);
+      this.updateHpBar(displayedHp, me.maxHp ?? BALANCE.match.bombermanMaxHp, /* dead */ false);
     }
   }
 
@@ -4416,21 +4416,27 @@ export class MatchScene extends Phaser.Scene {
     // the coin row + TreasureListWidget column. Its own column, per
     // docs/keys-system.md §9. Keys hidden (Console system live): the icon is
     // a 🖥 emoji and the count tracks consoles used instead of keys carried.
-    const keyColX = Math.round(160 * hs);
-    const keyTxtX = Math.round(146 * hs);
+    // Pushed further left (was 160/146) so the "N/3" readout clears the coin
+    // amount, which grows leftward as the player banks coins during the match.
+    const keyColX = Math.round(200 * hs);
+    const keyTxtX = Math.round(186 * hs);
+    // Center the console row on the COIN row's vertical center (coinSize/2),
+    // not its own keySize/2 — the key/console icon is smaller than the coin
+    // icon, so anchoring to keySize/2 left this row sitting a few px high.
+    const keyRowCy = COIN_ROW_Y + coinSize / 2;
     this.keysHudIcon = this.hud(
       HIDDEN_FEATURES.keys
-        ? this.add.text(width - keyColX, COIN_ROW_Y + keySize / 2, '🖥', {
+        ? this.add.text(width - keyColX, keyRowCy, '🖥', {
             fontSize: `${Math.max(10, keySize)}px`,
           }).setOrigin(0.5, 0.5).setDepth(1001)
-        : this.add.image(width - keyColX, COIN_ROW_Y + keySize / 2, 'key')
+        : this.add.image(width - keyColX, keyRowCy, 'key')
             .setOrigin(0.5, 0.5)
             .setDisplaySize(keySize, keySize)
             .setDepth(1001));
     const requirementCap = HIDDEN_FEATURES.keys
       ? BALANCE.consoles.requiredToEscape
       : BALANCE.keys.requiredPerHatch;
-    this.keysHudText = this.hud(this.add.text(width - keyTxtX, COIN_ROW_Y + keySize / 2, `0/${requirementCap}`, {
+    this.keysHudText = this.hud(this.add.text(width - keyTxtX, keyRowCy, `0/${requirementCap}`, {
       fontSize: f(14), color: CSS.gold, fontFamily: FONT.press,
       stroke: CSS.stageFrame, strokeThickness: Math.max(2, Math.round(3 * hs)),
     }).setOrigin(0, 0.5).setDepth(1001));
@@ -4483,8 +4489,10 @@ export class MatchScene extends Phaser.Scene {
     this.coinHudIcon?.setPosition(width - HUD_RIGHT_MARGIN, COIN_ROW_Y);
     this.coinHudText?.setPosition(width - HUD_RIGHT_MARGIN - coinSize - 6, COIN_ROW_Y + coinSize / 2);
     this.treasureList?.setX(width - HUD_RIGHT_MARGIN);
-    this.keysHudIcon?.setPosition(width - Math.round(160 * hs), COIN_ROW_Y + keySize / 2);
-    this.keysHudText?.setPosition(width - Math.round(146 * hs), COIN_ROW_Y + keySize / 2);
+    // Console row shares the coin row's vertical center (see buildHud).
+    const keyRowCy = COIN_ROW_Y + coinSize / 2;
+    this.keysHudIcon?.setPosition(width - Math.round(200 * hs), keyRowCy);
+    this.keysHudText?.setPosition(width - Math.round(186 * hs), keyRowCy);
 
     // Bottom-left exit-tutorial button.
     this.exitTutorialBtn?.setPosition(20, height - 30);
@@ -4787,11 +4795,12 @@ export class MatchScene extends Phaser.Scene {
         .setDepth(1001);
       this.slotRects.push(this.hud(rect));
 
-      // Keyboard shortcut key badge — gold bg, dark text, bottom-left
-      const label = this.add.text(sx + Math.round(4 * hs), trayY + s - Math.round(4 * hs), `${i + 1}`, {
+      // Keyboard shortcut key badge — gold bg, dark text, TOP-left (kept clear
+      // of the bomb-count readout that sits at the bottom of the slot).
+      const label = this.add.text(sx + Math.round(4 * hs), trayY + Math.round(4 * hs), `${i + 1}`, {
         fontSize: f(12), color: CSS.goldText, fontFamily: FONT.press,
         backgroundColor: CSS.gold, padding: { x: Math.max(1, Math.round(3 * hs)), y: 1 },
-      }).setOrigin(0, 1).setDepth(1003);
+      }).setOrigin(0, 0).setDepth(1003);
       this.slotLabelTexts.push(this.hud(label));
 
       // Bomb icon image centered in the slot
@@ -4982,13 +4991,13 @@ export class MatchScene extends Phaser.Scene {
       // delayed post-animation update instead of dropping instantly at the
       // start of the transition.
       const displayedHp = this.bombermanSpriteSystem?.getDisplayedHp(me.playerId) ?? me.hp;
-      this.updateHpBar(displayedHp, BALANCE.match.bombermanMaxHp, /* dead */ false);
+      this.updateHpBar(displayedHp, me.maxHp ?? BALANCE.match.bombermanMaxHp, /* dead */ false);
       this.treasureList.setBundle(me.treasures);
       if (this.coinHudText) this.coinHudText.setText(`x${me.coins ?? 0}`);
       this.renderBombSlots(me);
       this.renderLootPanel(me);
     } else {
-      this.updateHpBar(0, BALANCE.match.bombermanMaxHp, /* dead */ true);
+      this.updateHpBar(0, me?.maxHp ?? BALANCE.match.bombermanMaxHp, /* dead */ true);
       this.hideLootPanel();
     }
 

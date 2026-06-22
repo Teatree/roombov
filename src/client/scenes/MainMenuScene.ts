@@ -9,7 +9,7 @@ import { preloadTreasureIcons } from '../systems/TreasureIcons.ts';
 import { attachTierInfoBadge } from '../systems/TierInfoBadge.ts';
 import { createIdleActionBadge } from '../systems/IdleActionBadge.ts';
 import { bombIconFrame } from '../systems/BombIcons.ts';
-import { effectiveMaxCustomSlots, effectiveStackSize, upgradeLevel } from '@shared/utils/bomberman-stats.ts';
+import { effectiveMaxCustomSlots, effectiveMaxHp, effectiveStackSize, upgradeLevel } from '@shared/utils/bomberman-stats.ts';
 import { BALANCE } from '@shared/config/balance.ts';
 import { NotificationBadge } from '../systems/NotificationBadge.ts';
 import { FACTORY_IDS, projectedClaimable } from '@shared/types/factory.ts';
@@ -31,6 +31,13 @@ const HERO_TOP = 104;
 const HERO_H = 214;
 const PORTRAIT = 168;
 
+/** Laconic one-liners shown when the player hovers an equipped-Bomberman stat. */
+const STAT_HINT: Record<keyof typeof STAT_HEX, string> = {
+  hp: 'Health — damage you can take',
+  cap: 'Bombs you can have out at once',
+  stack: 'Bombs stacked per loadout slot',
+};
+
 /**
  * Entry point after Boot. Connects to the server, authenticates, and offers
  * navigation to the shops or to the lobby. All shop/lobby scenes return here.
@@ -49,6 +56,10 @@ export class MainMenuScene extends Phaser.Scene {
   private debugFeedback!: Phaser.GameObjects.Text;
   private factoryBadge: NotificationBadge | null = null;
   private factoryBadgeTimer: Phaser.Time.TimerEvent | null = null;
+  /** Shared hover tooltip for the equipped-Bomberman stat boxes. */
+  private statHint!: Phaser.GameObjects.Container;
+  private statHintBg!: Phaser.GameObjects.Graphics;
+  private statHintText!: Phaser.GameObjects.Text;
   private readonly onResize = (): void => fitSceneToViewport(this, DESIGN_W, DESIGN_H);
 
   constructor() {
@@ -71,24 +82,29 @@ export class MainMenuScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(CSS.bg);
 
     // Title block (§1.2): Press Start title + hard pixel shadow, Silkscreen subtitle.
-    this.add.text(cx, 46, 'ROOMBOV', {
+    this.add.text(cx, 46, 'BOMB HUNT', {
       fontSize: '36px', color: CSS.text, fontFamily: FONT.press,
     }).setOrigin(0.5).setShadow(5, 5, CSS.stageFrame, 0, true, true);
     this.add.text(cx, 84, 'MAIN MENU', {
       fontSize: '14px', color: CSS.dim, fontFamily: FONT.silk,
     }).setOrigin(0.5).setLetterSpacing(4);
 
-    // Wallet top-right (§1.8): coins in Press Start gold, treasures below.
-    this.coinsText = this.add.text(width - 20, 22, '0', {
-      fontSize: '16px', color: CSS.gold, fontFamily: FONT.press,
-    }).setOrigin(1, 0.5);
+    // Wallet top-right (§1.8) — standardized to match the Bombs Shop: coins in
+    // Press Start gold with a `c` suffix, treasures below. Same size/anchor on
+    // every screen.
+    this.coinsText = this.add.text(width - 20, 14, '0c', {
+      fontSize: '18px', color: CSS.gold, fontFamily: FONT.press,
+    }).setOrigin(1, 0).setDepth(100);
     this.treasureList = new TreasureListWidget(this, {
-      x: width - 20, y: 40, anchor: 'top-left', direction: 'horizontal',
+      x: width - 20, y: 42, anchor: 'top-left', direction: 'horizontal',
       iconScale: 0.5, fontSize: 11, rowGap: 4, depth: 100,
     });
 
     // Hero panel rebuilt per-profile (handles EQUIPPED vs empty OPERATIVE state).
     this.heroContainer = this.add.container(0, 0);
+
+    // Shared stat hover-hint, built once (survives heroContainer rebuilds).
+    this.buildStatHint();
 
     // --- Action stack ---
     this.playBtn = makePixelButton(this, {
@@ -196,12 +212,13 @@ export class MainMenuScene extends Phaser.Scene {
       this.time.delayedCall(1500, () => this.debugFeedback.setText(''));
     }
 
-    this.coinsText.setText(String(profile.coins));
+    this.coinsText.setText(`${profile.coins}c`);
     this.treasureList.setBundle(profile.treasures);
     this.treasureList.rightAlignTo(this.scale.width - 20);
     this.refreshFactoryBadge();
 
     const equipped = profile.ownedBombermen.find(b => b.id === profile.equippedBombermanId);
+    this.hideStatHint();
     this.heroContainer.removeAll(true);
     if (equipped) {
       this.buildHeroEquipped(equipped);
@@ -258,6 +275,32 @@ export class MainMenuScene extends Phaser.Scene {
     this.heroContainer.add(sprite);
   }
 
+  /** Build the (initially hidden) shared stat tooltip — a small notched panel. */
+  private buildStatHint(): void {
+    this.statHintBg = this.add.graphics();
+    this.statHintText = this.add.text(0, 0, '', {
+      fontSize: '11px', color: CSS.text, fontFamily: FONT.silk, align: 'center',
+    }).setOrigin(0.5);
+    this.statHint = this.add.container(0, 0, [this.statHintBg, this.statHintText])
+      .setDepth(500).setVisible(false);
+  }
+
+  /** Show the stat hint centered above (cx, topY), sizing the panel to the text. */
+  private showStatHint(cx: number, topY: number, text: string): void {
+    this.statHintText.setText(text);
+    const w = this.statHintText.width + 16;
+    const h = this.statHintText.height + 10;
+    this.statHintBg.clear();
+    drawNotchedPanel(this.statHintBg, -w / 2, -h / 2, w, h, {
+      fill: COL.panel, border: COL.borderHi, borderWidth: 2, notch: 5,
+    });
+    this.statHint.setPosition(cx, topY - h / 2 - 6).setVisible(true);
+  }
+
+  private hideStatHint(): void {
+    this.statHint?.setVisible(false);
+  }
+
   private buildHeroEquipped(bm: OwnedBomberman): void {
     const { left, right } = this.heroFrame('EQUIPPED');
     const portraitCx = left + 14 + PORTRAIT / 2;
@@ -278,6 +321,7 @@ export class MainMenuScene extends Phaser.Scene {
       x: colR - 18, y: y + 9, radius: 18,
       tier: bm.tier, level: upgradeLevel(bm), idleAction: bm.idleAction ?? 'attack',
       maxCustomSlots: effectiveMaxCustomSlots(bm), stackSize: effectiveStackSize(bm),
+      hp: effectiveMaxHp(bm),
       name: bm.name, sp: bm.sp ?? 0, tooltipSide: 'below',
     });
     y += 36;
@@ -290,7 +334,7 @@ export class MainMenuScene extends Phaser.Scene {
 
     // Three stat boxes (HP / CAP / STACK), color-coded.
     const stats: Array<[keyof typeof STAT_HEX, string, string]> = [
-      ['hp', 'HP', String(BALANCE.match.bombermanMaxHp)],
+      ['hp', 'HP', String(effectiveMaxHp(bm))],
       ['cap', 'CAP', String(effectiveMaxCustomSlots(bm))],
       ['stack', 'STACK', String(effectiveStackSize(bm))],
     ];
@@ -310,6 +354,14 @@ export class MainMenuScene extends Phaser.Scene {
       this.heroContainer.add(this.add.text(bx + boxW / 2, y + 30, val, {
         fontSize: '15px', color: STAT_HEX[key], fontFamily: FONT.press,
       }).setOrigin(0.5));
+
+      // Hover hint with a laconic description of the stat.
+      const boxTopY = y;
+      const zone = this.add.zone(bx, y, boxW, boxH).setOrigin(0, 0)
+        .setInteractive({ useHandCursor: true });
+      zone.on('pointerover', () => this.showStatHint(bx + boxW / 2, boxTopY, STAT_HINT[key]));
+      zone.on('pointerout', () => this.hideStatHint());
+      this.heroContainer.add(zone);
     }
     y += boxH + 10;
 
@@ -324,26 +376,30 @@ export class MainMenuScene extends Phaser.Scene {
     this.heroContainer.add(this.add.text(colX + colW - 8, y + stripH / 2, `${bm.sp ?? 0} SP`, {
       fontSize: '11px', color: CSS.text, fontFamily: FONT.press,
     }).setOrigin(1, 0.5));
-    y += stripH + 10;
+    y += stripH + 6;
 
-    // Loadout row + ▸ UPGRADE link.
-    this.heroContainer.add(this.add.text(colX, y + 6, 'LOADOUT', {
+    // Loadout — the LOADOUT header sits on its OWN line (with the ▸ UPGRADE link
+    // on the right); the bomb icons render on the row below so they never crowd
+    // or overlap the header text.
+    this.heroContainer.add(this.add.text(colX, y, 'LOADOUT', {
       fontSize: '11px', color: CSS.faint, fontFamily: FONT.silk,
-    }).setOrigin(0, 0.5).setLetterSpacing(2));
-    const upgrade = linkAction(this, colR, y + 6, '▸ UPGRADE', () => this.scene.start('BombermanShopScene'), 12);
+    }).setOrigin(0, 0).setLetterSpacing(2));
+    const upgrade = linkAction(this, colR, y + 4, '▸ UPGRADE', () => this.scene.start('BombermanShopScene'), 12);
     upgrade.setOrigin(1, 0.5);
     this.heroContainer.add(upgrade);
 
-    let ix = colX + 76;
+    const iconY = y + 28;
+    let ix = colX + 13;
     for (const slot of bm.inventory.slots) {
       if (!slot) continue;
       this.heroContainer.add(
-        this.add.image(ix, y + 4, 'bomb_icons', bombIconFrame(slot.type)).setDisplaySize(26, 26),
+        this.add.image(ix, iconY, 'bomb_icons', bombIconFrame(slot.type)).setDisplaySize(26, 26),
       );
-      this.heroContainer.add(this.add.text(ix, y + 20, String(slot.count), {
+      this.heroContainer.add(this.add.text(ix + 15, iconY - 13, String(slot.count), {
         fontSize: '9px', color: CSS.gold, fontFamily: FONT.silk,
+        stroke: CSS.stageFrame, strokeThickness: 2,
       }).setOrigin(0.5, 0));
-      ix += 36;
+      ix += 34;
     }
   }
 

@@ -28,6 +28,10 @@ const ROLL_OUT_MS = 260;
 const REFLOW_MS = 280;
 const ROLL_IN_STAGGER_MS = 70;
 
+/** What a card's action button area shows. 'none' = you're joined to a
+ *  DIFFERENT match (can't join two). 'join-disabled' = no Bomberman equipped. */
+type ActionState = 'join' | 'join-disabled' | 'unjoin' | 'none';
+
 interface CardView {
   matchId: string;
   container: Phaser.GameObjects.Container;
@@ -42,17 +46,17 @@ interface CardView {
   segmentGfx: Phaser.GameObjects.Graphics;
   /** Highest countdown observed for this card — denominator for the bar fill. */
   maxCountdown: number;
-  /** Right-aligned "JOINED ✓" tab on the top border; present only when joined. */
-  joinedTab: { label: Phaser.GameObjects.Text; bg: Phaser.GameObjects.Rectangle } | null;
-  /** Restyle the JOIN button for the current urgency (gold-promote in red phase). */
-  updateJoinUrgency: ((secs: number) => void) | null;
   /** True once a fly-off tween has been kicked off; view will be destroyed. */
   leaving: boolean;
   /** Set if this card was rendered as joined last time, so we can detect
-   *  a state-change and rebuild the action button area. */
+   *  a state-change and re-stroke the border. */
   isJoined: boolean;
-  /** Container for the action button area (JOIN / JOINED+UNJOIN). Rebuilt
-   *  in place when joined-state flips. */
+  /** Which action button the area currently shows. The area is rebuilt only
+   *  when this changes — driven by the GLOBAL joined state, not just this
+   *  card's, so a card created while joined elsewhere still gets its JOIN
+   *  button back after you leave that match (the disappearing-JOIN bug). */
+  actionState: ActionState;
+  /** Container for the action button area (JOIN / UNJOIN / empty). */
   actionContainer: Phaser.GameObjects.Container;
 }
 
@@ -438,16 +442,14 @@ export class LobbyScene extends Phaser.Scene {
       borderGfx,
       segmentGfx,
       maxCountdown: Math.max(1, secs),
-      joinedTab: null,
-      updateJoinUrgency: null,
       leaving: false,
       isJoined,
+      actionState: this.desiredActionState(isJoined),
       actionContainer,
     };
 
     this.drawSegments(view, secs);
-    this.setJoinedTab(view, isJoined);
-    this.populateActionArea(view, listing, isJoined);
+    this.populateActionArea(view, listing);
     return view;
   }
 
@@ -472,21 +474,6 @@ export class LobbyScene extends Phaser.Scene {
     });
   }
 
-  /** Add or remove the right-aligned "JOINED ✓" tab on the top border. */
-  private setJoinedTab(view: CardView, joined: boolean): void {
-    if (joined && !view.joinedTab) {
-      const t = addTabLabel(this, -CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, 'JOINED ✓', {
-        side: 'right', color: CSS.green,
-      });
-      view.container.add([t.bg, t.label]);
-      view.joinedTab = t;
-    } else if (!joined && view.joinedTab) {
-      view.joinedTab.label.destroy();
-      view.joinedTab.bg.destroy();
-      view.joinedTab = null;
-    }
-  }
-
   /** Apply per-second updates to a kept card without rebuilding the whole
    *  thing. Re-styles the border + action area only when joined-state flips. */
   private updateCardInPlace(view: CardView, listing: MatchListing): void {
@@ -500,16 +487,20 @@ export class LobbyScene extends Phaser.Scene {
     view.countdownText.setText(`${secs}`);
     view.countdownText.setColor(urgencyHex(u));
     this.drawSegments(view, secs);
-    // JOIN promotes to gold when the dying card hits the red phase.
-    view.updateJoinUrgency?.(secs);
 
+    // Border follows this card's own joined state.
     if (view.isJoined !== isJoined) {
       this.drawCardBorder(view.borderGfx, isJoined);
-      this.setJoinedTab(view, isJoined);
-      view.actionContainer.removeAll(true);
-      view.updateJoinUrgency = null;
-      this.populateActionArea(view, listing, isJoined);
       view.isJoined = isJoined;
+    }
+
+    // Action button follows the GLOBAL state (joined here / elsewhere / not at
+    // all, and whether a Bomberman is equipped). Rebuild only when it changes
+    // so we don't churn the button every tick.
+    const desired = this.desiredActionState(isJoined);
+    if (view.actionState !== desired) {
+      view.actionContainer.removeAll(true);
+      this.populateActionArea(view, listing);
     }
   }
 
@@ -557,31 +548,30 @@ export class LobbyScene extends Phaser.Scene {
     return { setVariant: (v) => { variant = v; redraw(); }, container: c };
   }
 
-  private populateActionArea(view: CardView, listing: MatchListing, isJoined: boolean): void {
+  /** The action button this card should show, given the current global state. */
+  private desiredActionState(isJoined: boolean): ActionState {
+    if (isJoined) return 'unjoin';
+    if (this.joinedMatchId !== null) return 'none';
+    return ProfileStore.get()?.equippedBombermanId ? 'join' : 'join-disabled';
+  }
+
+  private populateActionArea(view: CardView, listing: MatchListing): void {
     const cfg = listing.config;
     const ac = view.actionContainer;
-    if (isJoined) {
-      ac.add(this.add.text(0, CARD_HEIGHT / 2 - 64, 'JOINED — WAITING', {
-        fontSize: '12px', color: CSS.green, fontFamily: FONT.silk,
-      }).setOrigin(0.5).setLetterSpacing(1));
-      this.makeCardButton(ac, CARD_HEIGHT / 2 - 34, CARD_WIDTH - 36, 34, 'UNJOIN', 13, () => {
+    const state = this.desiredActionState(view.isJoined);
+    view.actionState = state;
+    if (state === 'unjoin') {
+      // Same geometry as JOIN so the button doesn't shrink / shift when joined.
+      this.makeCardButton(ac, CARD_HEIGHT / 2 - 38, CARD_WIDTH - 36, 44, 'UNJOIN', 16, () => {
         NetworkManager.getSocket().emit('leave_match');
         this.joinedMatchId = null;
         this.renderCards();
       }).setVariant('danger');
-    } else if (this.joinedMatchId === null) {
-      const profile = ProfileStore.get();
-      const canJoin = !!profile?.equippedBombermanId;
+    } else if (state === 'join' || state === 'join-disabled') {
       const join = this.makeCardButton(ac, CARD_HEIGHT / 2 - 38, CARD_WIDTH - 36, 44, 'JOIN', 16,
-        canJoin ? () => NetworkManager.getSocket().emit('join_match', { matchId: cfg.id }) : null);
-      if (!canJoin) {
-        join.container.setAlpha(0.55);
-        view.updateJoinUrgency = null;
-      } else {
-        // Promote to gold in the red phase; neutral otherwise.
-        view.updateJoinUrgency = (secs: number) => join.setVariant(urgencyOf(secs) === 'urgent' ? 'gold' : 'neutral');
-        view.updateJoinUrgency(Math.ceil(listing.countdown));
-      }
+        state === 'join' ? () => NetworkManager.getSocket().emit('join_match', { matchId: cfg.id }) : null);
+      if (state === 'join-disabled') join.container.setAlpha(0.55);
     }
+    // 'none' → empty action area (joined to a different match).
   }
 }

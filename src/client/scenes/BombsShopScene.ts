@@ -13,7 +13,7 @@ import type { PlayerProfile } from '@shared/types/player-profile.ts';
 import { attachTierInfoBadge } from '../systems/TierInfoBadge.ts';
 import { preloadBombIcons, bombIconFrame } from '../systems/BombIcons.ts';
 import { BombShopTooltip } from '../systems/BombShopTooltip.ts';
-import { effectiveMaxCustomSlots, effectiveStackSize, upgradeLevel } from '@shared/utils/bomberman-stats.ts';
+import { effectiveMaxCustomSlots, effectiveMaxHp, effectiveStackSize, upgradeLevel } from '@shared/utils/bomberman-stats.ts';
 import { createIdleActionBadge } from '../systems/IdleActionBadge.ts';
 import { designViewport, fitSceneToViewport } from '../util/responsiveScene.ts';
 import { COL, CSS, FONT } from '../design/tokens.ts';
@@ -404,76 +404,94 @@ export class BombsShopScene extends Phaser.Scene {
 
     // Content (non-interactive). Compact layout to fit 5 rows in the panel
     // without scrolling on standard window heights.
-    parent.add(this.add.image(x + w / 2, y + 18, 'bomb_icons', bombIconFrame(entry.type))
-      .setDisplaySize(28, 28).setAlpha(tileAlpha));
+    const bombIcon = this.add.image(x + w / 2, y + 18, 'bomb_icons', bombIconFrame(entry.type))
+      .setDisplaySize(28, 28).setAlpha(tileAlpha);
+    parent.add(bombIcon);
 
     parent.add(this.add.text(x + w / 2, y + 36, entry.name, {
       fontSize: '9px', color: CSS.text, fontFamily: FONT.silk,
       align: 'center', wordWrap: { width: w - 6 },
     }).setOrigin(0.5, 0).setAlpha(tileAlpha));
 
-    // Price row (centered)
-    const priceY = y + h - 24;
-    const coinsLabel = this.add.text(0, 0, `${entry.price}c`, {
-      fontSize: '11px', color: coinsShort ? CSS.red : CSS.gold,
-      fontFamily: FONT.press,
-    }).setOrigin(0, 0.5);
-
-    let treasureLabel: Phaser.GameObjects.Text | null = null;
-    let treasureIcon: Phaser.GameObjects.Image | null = null;
+    // Secondary treasure cost (only while the treasure economy is live) sits
+    // just above the button as a small centered row. The coin price now lives
+    // INSIDE the BUY button (clearer than a separate price line).
     if (entry.treasureCost) {
-      treasureLabel = this.add.text(0, 0, `${entry.treasureCost.amount}`, {
+      const treasureY = y + h - 30;
+      const treasureLabel = this.add.text(0, 0, `${entry.treasureCost.amount}`, {
         fontSize: '11px', color: treasureShort ? CSS.red : CSS.text,
         fontFamily: FONT.press,
       }).setOrigin(0, 0.5);
-      treasureIcon = this.add.image(0, 0, TREASURE_TEXTURE_KEY, treasureIconFrame(entry.treasureCost.type))
+      const treasureIcon = this.add.image(0, 0, TREASURE_TEXTURE_KEY, treasureIconFrame(entry.treasureCost.type))
         .setDisplaySize(12, 12).setOrigin(0, 0.5);
-    }
-    const rowGap = 3;
-    const totalRowW =
-      coinsLabel.width +
-      (treasureLabel ? 8 + treasureLabel.width + rowGap + 12 : 0);
-    let rowX = x + (w - totalRowW) / 2;
-    coinsLabel.setPosition(rowX, priceY);
-    rowX += coinsLabel.width + 8;
-    if (treasureLabel && treasureIcon) {
-      treasureLabel.setPosition(rowX, priceY);
+      const rowGap = 3;
+      const totalRowW = treasureLabel.width + rowGap + 12;
+      let rowX = x + (w - totalRowW) / 2;
+      treasureLabel.setPosition(rowX, treasureY);
       rowX += treasureLabel.width + rowGap;
-      treasureIcon.setPosition(rowX, priceY);
+      treasureIcon.setPosition(rowX, treasureY);
+      parent.add(treasureLabel);
+      parent.add(treasureIcon);
     }
-    parent.add(coinsLabel);
-    if (treasureLabel) parent.add(treasureLabel);
-    if (treasureIcon) parent.add(treasureIcon);
 
     // BUY button on top — wins clicks AND fires hover to keep tooltip visible.
-    // Gold notched chip when affordable; dim faint chip otherwise.
-    const btnY = y + h - 9;
-    const btnW = 40;
-    const btnH = 16;
+    // Price is rendered inside the button. Gold notched chip when affordable;
+    // dim faint chip otherwise.
+    const buyLabel = `BUY  ${entry.price}c`;
+    const btnW = w - 8;
+    const btnH = 20;
+    const btnCy = y + h - 13;
+    const btnX = x + w / 2 - btnW / 2;
     const btnG = this.add.graphics();
     if (affordable) {
-      drawNotchedPanel(btnG, x + w / 2 - btnW / 2, btnY - btnH / 2, btnW, btnH, {
-        fill: COL.gold, border: COL.goldEdge, borderWidth: 2, notch: 4,
-      });
       parent.add(btnG);
-      const btn = this.add.text(x + w / 2, btnY, 'BUY', {
-        fontSize: '10px', color: CSS.goldText, fontFamily: FONT.press,
-      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-      btn.on('pointerdown', () => {
+      const btn = this.add.text(x + w / 2, btnCy, buyLabel, {
+        fontSize: '9px', color: CSS.goldText, fontFamily: FONT.press,
+      }).setOrigin(0.5);
+      parent.add(btn);
+      // Full-chip hit zone. A Text's hit area is only its glyph box, so the
+      // chip's margins weren't hoverable/clickable — the zone covers the whole
+      // button. Origin (0,0) so the input-local rect lines up with the chip.
+      const hit = this.add.zone(btnX, btnCy - btnH / 2, btnW, btnH)
+        .setOrigin(0, 0).setInteractive({ useHandCursor: true });
+      // Hover lightens the border; press sinks the whole chip 2px (matches
+      // makePixelButton). Redrawn here rather than once so it can react.
+      let hover = false;
+      let pressed = false;
+      const drawBtn = () => {
+        btnG.clear();
+        const off = pressed ? 2 : 0;
+        drawNotchedPanel(btnG, btnX, btnCy - btnH / 2 + off, btnW, btnH, {
+          fill: COL.gold, border: hover && !pressed ? 0xffffff : COL.goldEdge,
+          borderWidth: 2, notch: 4,
+        });
+        btn.setY(btnCy + off);
+      };
+      drawBtn();
+      hit.on('pointerover', () => { hover = true; drawBtn(); });
+      hit.on('pointerout', () => { hover = false; pressed = false; drawBtn(); });
+      hit.on('pointerup', () => { pressed = false; drawBtn(); });
+      hit.on('pointerdown', () => {
+        pressed = true; drawBtn();
         NetworkManager.track('buy_bomb', 'profile');
         NetworkManager.getSocket().emit('buy_bomb', { type: entry.type, quantity: 1 });
-        this.flyBombToStockpile(entry.type, x + w / 2, btnY);
+        // Fly from the bomb icon's actual on-screen position (its world
+        // transform), not the tile-local coords — the catalog lives inside a
+        // scrolled/offset container, so passing local coords launched it from
+        // the upper-left corner of the scene.
+        const m = bombIcon.getWorldTransformMatrix();
+        this.flyBombToStockpile(entry.type, m.tx, m.ty);
       });
-      this.wireHover(btn, entry);
-      parent.add(btn);
+      this.wireHover(hit, entry);
+      parent.add(hit);
     } else {
       btnG.setAlpha(0.55);
-      drawNotchedPanel(btnG, x + w / 2 - btnW / 2, btnY - btnH / 2, btnW, btnH, {
+      drawNotchedPanel(btnG, btnX, btnCy - btnH / 2, btnW, btnH, {
         fill: COL.panel2, border: COL.border, borderWidth: 2, notch: 4,
       });
       parent.add(btnG);
-      parent.add(this.add.text(x + w / 2, btnY, 'BUY', {
-        fontSize: '10px', color: CSS.faint, fontFamily: FONT.press,
+      parent.add(this.add.text(x + w / 2, btnCy, buyLabel, {
+        fontSize: '9px', color: CSS.faint, fontFamily: FONT.press,
       }).setOrigin(0.5).setAlpha(0.55));
     }
   }
@@ -648,6 +666,7 @@ export class BombsShopScene extends Phaser.Scene {
       idleAction: equipped.idleAction ?? 'attack',
       maxCustomSlots: effSlots,
       stackSize: effStack,
+      hp: effectiveMaxHp(equipped),
       name: equipped.name,
       sp: equipped.sp ?? 0,
       tooltipSide: 'left',
@@ -788,38 +807,66 @@ export class BombsShopScene extends Phaser.Scene {
         }
       }
 
-      const countText = isRock ? '∞' : `${slot.count}/${stackLimit}`;
-      const countColor = !isRock && slot.count >= stackLimit ? CSS.green : CSS.gold;
-      const countX = innerX + innerW - (isRock ? 14 : 56);
-      parent.add(this.add.text(countX, y + h / 2, countText, {
-        fontSize: '10px', color: countColor, fontFamily: FONT.press,
-      }).setOrigin(0.5, 0.5));
-
-      // UNEQUIP button on top of hover zone — wins clicks.
-      if (!isRock) {
+      // Right side: the "count/cap" readout sits just LEFT of a proper notched
+      // UNEQUIP button anchored to the row's right edge. (Previously the count
+      // and the UNEQUIP label overlapped, so "2/5" read as "2/ UNEQUIP".)
+      if (isRock) {
+        parent.add(this.add.text(innerX + innerW - 14, y + h / 2, '∞', {
+          fontSize: '10px', color: CSS.gold, fontFamily: FONT.press,
+        }).setOrigin(0.5, 0.5));
+      } else {
         const useIconBtn = colW < UNEQUIP_ICON_BREAKPOINT;
-        const btnX = innerX + innerW - 4;
-        const btn = useIconBtn
-          ? this.add.text(btnX, y + h / 2, '×', {
-              fontSize: '14px', color: CSS.red, fontFamily: FONT.press,
-              backgroundColor: CSS.panel2, padding: { x: 4, y: 0 },
-            }).setOrigin(1, 0.5)
-          : this.add.text(btnX, y + h / 2, 'UNEQUIP', {
-              fontSize: '8px', color: CSS.red, fontFamily: FONT.silk,
-              backgroundColor: CSS.panel2, padding: { x: 5, y: 2 },
-            }).setOrigin(1, 0.5);
-        btn.setInteractive({ useHandCursor: true });
+        const uneqW = useIconBtn ? 22 : 64;
+        const uneqH = 20;
+        const uneqRight = innerX + innerW - 4;
+        const uneqCx = uneqRight - uneqW / 2;
+        const uneqCy = y + h / 2;
         const bombType = slot.type;
-        btn.on('pointerdown', () => {
+
+        // Count "2/5" right-aligned, with an 8px gap before the button.
+        const countColor = slot.count >= stackLimit ? CSS.green : CSS.gold;
+        parent.add(this.add.text(uneqRight - uneqW - 8, y + h / 2, `${slot.count}/${stackLimit}`, {
+          fontSize: '10px', color: countColor, fontFamily: FONT.press,
+        }).setOrigin(1, 0.5));
+
+        // Notched red button with hover/press feedback (matches the BUY chip).
+        const ug = this.add.graphics();
+        parent.add(ug);
+        const label = this.add.text(uneqCx, uneqCy, useIconBtn ? '×' : 'UNEQUIP', {
+          fontSize: useIconBtn ? '14px' : '8px', color: CSS.red,
+          fontFamily: useIconBtn ? FONT.press : FONT.silk,
+        }).setOrigin(0.5);
+        parent.add(label);
+        let hover = false;
+        let pressed = false;
+        const drawUneq = () => {
+          ug.clear();
+          const off = pressed ? 2 : 0;
+          drawNotchedPanel(ug, uneqCx - uneqW / 2, uneqCy - uneqH / 2 + off, uneqW, uneqH, {
+            fill: COL.panel2, border: hover && !pressed ? COL.red : COL.border,
+            borderWidth: 2, notch: 3,
+          });
+          label.setY(uneqCy + off);
+        };
+        drawUneq();
+        // Full-button hit zone — added last so it wins clicks over the equip
+        // zone inserted below it.
+        const hit = this.add.zone(uneqCx - uneqW / 2, uneqCy - uneqH / 2, uneqW, uneqH)
+          .setOrigin(0, 0).setInteractive({ useHandCursor: true });
+        hit.on('pointerover', () => { hover = true; drawUneq(); });
+        hit.on('pointerout', () => { hover = false; pressed = false; drawUneq(); });
+        hit.on('pointerup', () => { pressed = false; drawUneq(); });
+        hit.on('pointerdown', () => {
+          pressed = true; drawUneq();
           NetworkManager.track('unequip_bomb', 'profile');
           NetworkManager.getSocket().emit('unequip_bomb', { slotIndex: slotIdx });
-          // Fly from the slot's screen-space center, not the small × button —
-          // it reads better as "the equipped bomb moves to storage."
-          const m = btn.getWorldTransformMatrix();
+          // Fly from the button's screen-space center — reads as "the equipped
+          // bomb moves to storage."
+          const m = hit.getWorldTransformMatrix();
           this.flyBombToStockpile(bombType, m.tx, m.ty);
         });
-        if (entry) this.wireHover(btn, entry);
-        parent.add(btn);
+        if (entry) this.wireHover(hit, entry);
+        parent.add(hit);
       }
     } else {
       parent.add(this.add.text(innerX + 48, y + h / 2, 'empty', {

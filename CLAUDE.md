@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npm run dev          # Vite client dev server on :5173 (proxies /socket.io → :3000)
 npm run dev:server   # tsx --watch server on :3000
 npm run build        # Vite build → dist/
-npm start            # Run built server (serves dist/ + runs Socket.IO)
+npm start            # Run server directly via tsx (Socket.IO + static serve of dist/ if built)
 npm test             # Vitest run (single pass)
 npx vitest run tests/BombResolver.test.ts   # Run a single test file
 npx vitest --watch                          # Watch mode
@@ -118,6 +118,7 @@ An optional Tiled `Objects2` layer drives **decorative map objects** (`MapData.d
 - **Server-authoritative**: never put gameplay decisions in client code except inside `TutorialMatchBackend`.
 - **Derive, don't store**: if something can be computed from `MatchState` each frame, compute it. Only persist what the resolver needs next turn.
 - **Seeded RNG**: use `src/shared/utils/seeded-random.ts` for any in-match randomness so tutorials/tests are reproducible.
+- **Pixel Panel UI** (restyle landed 2026-06-20/21): all client UI goes through the design system — colors/fonts from `src/client/design/tokens.ts` (`COL.*` numbers for Graphics/tints, `CSS.*` strings for Text; `STAT_*` for the HP=red/CAP=blue/STACK=green coding; `FONT.*`), and panels/buttons/tabs from `src/client/util/pixelPanel.ts` (notched 8-point-polygon panels, `makePixelButton` with hover/press/disabled states). **No inline hex, no monospace, no `fillRoundedRect`/`add.rectangle`-with-bg, no rounded corners in client UI** — reuse the closest semantic token or add one to `tokens.ts` once. Spec: `docs/PIXEL_PANEL_STYLE_HANDOFF.md`. Note: Phaser hit-areas on notched buttons must cover the full surface (a past bug left only the top-left clickable) — use the `makePixelButton` helper rather than hand-rolling `setInteractive`.
 
 ## Included sub-docs
 

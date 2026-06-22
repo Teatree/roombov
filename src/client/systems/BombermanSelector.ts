@@ -17,9 +17,9 @@ import { attachTierInfoBadge } from './TierInfoBadge.ts';
 import { createIdleActionBadge } from './IdleActionBadge.ts';
 import { BALANCE } from '@shared/config/balance.ts';
 import { HIDDEN_FEATURES } from '@shared/config/features.ts';
-import { tiersRemaining, effectiveMaxCustomSlots, effectiveStackSize, upgradeLevel } from '@shared/utils/bomberman-stats.ts';
+import { tiersRemaining, effectiveMaxCustomSlots, effectiveMaxHp, effectiveStackSize, upgradeLevel } from '@shared/utils/bomberman-stats.ts';
 import { COL, CSS, FONT } from '../design/tokens.ts';
-import { drawNotchedPanel, linkAction, notchedPoints } from '../util/pixelPanel.ts';
+import { drawNotchedPanel, linkAction } from '../util/pixelPanel.ts';
 
 const SELECTOR_CARD_W = 140;
 const SELECTOR_CARD_H = 180;
@@ -135,22 +135,25 @@ export class BombermanSelector {
     });
     container.add(bg);
 
-    // Card-wide hit target — click opens the Upgrade popup. Added before
-    // child interactives (EQUIP / loadout) so those win clicks when over
-    // them. Phaser's topOnly=true sends pointerover to whichever interactive
-    // is topmost under the cursor — the gold outline therefore appears
-    // ONLY when the pointer is over the "bare" card area, not over EQUIP
-    // or the loadout button.
+    // Avatar hit target — clicking the animated avatar opens the Bomberman
+    // Shop (Upgrade panel). Scoped to a box around the sprite (not the whole
+    // card) so the name, badges and loadout stay separately interactive. Hover
+    // shows a gold outline around the avatar box, mirroring the loadout button.
+    // Added before child interactives (EQUIP / loadout) so those win clicks.
+    const AVATAR_W = 76;
+    const AVATAR_H = 76;
+    const avatarCx = 0;
+    const avatarCy = -40;
+    const avatarLeft = avatarCx - AVATAR_W / 2;
+    const avatarTop = avatarCy - AVATAR_H / 2;
     const cardHover = this.scene.add.graphics();
     container.add(cardHover);
-    const cardZone = this.scene.add.zone(0, 0, SELECTOR_CARD_W, SELECTOR_CARD_H)
+    const cardZone = this.scene.add.zone(avatarCx, avatarCy, AVATAR_W, AVATAR_H)
       .setInteractive({ useHandCursor: true });
     cardZone.on('pointerover', () => {
       cardHover.clear();
       cardHover.lineStyle(2, COL.borderHi, 1);
-      cardHover.strokePoints(notchedPoints(
-        -SELECTOR_CARD_W / 2 + 1, -SELECTOR_CARD_H / 2 + 1,
-        SELECTOR_CARD_W - 2, SELECTOR_CARD_H - 2, 6), true);
+      cardHover.strokeRect(avatarLeft, avatarTop, AVATAR_W, AVATAR_H);
     });
     cardZone.on('pointerout', () => cardHover.clear());
     cardZone.on('pointerdown', () => {
@@ -159,10 +162,13 @@ export class BombermanSelector {
       } else {
         // Default: open the Bomberman Shop, which hosts the Upgrade panel
         // (the standalone upgrade popup was removed). Equips this Bomberman
-        // first so the panel targets the one the player clicked.
+        // first so the panel targets the one the player clicked. Route the
+        // shop's Back button back to wherever we came from (e.g. the Lobby).
         NetworkManager.track('equip_bomberman', 'profile');
         NetworkManager.getSocket().emit('equip_bomberman', { ownedId: owned.id });
-        this.scene.scene.start('BombermanShopScene');
+        const fromKey = this.scene.scene.key;
+        const backScene = fromKey === 'BombermanShopScene' ? 'MainMenuScene' : fromKey;
+        this.scene.scene.start('BombermanShopScene', { backScene });
       }
     });
     container.add(cardZone);
@@ -183,6 +189,7 @@ export class BombermanSelector {
       idleAction: owned.idleAction ?? 'attack',
       maxCustomSlots: effectiveMaxCustomSlots(owned),
       stackSize: effectiveStackSize(owned),
+      hp: effectiveMaxHp(owned),
       name: owned.name,
       sp: owned.sp ?? 0,
     });
